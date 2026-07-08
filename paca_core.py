@@ -49,7 +49,9 @@ class PacaCompiler:
         self.parser = Lark(alfa_grammar, parser='lalr', transformer=AlfaTreeBuilder())
         
     def compile_to_ast(self, text: str) -> PolicyAST:
-        return self.parser.parse(text)
+        # Lark wraps the result in a root 'Tree'. We extract our PolicyAST from its children.
+        parsed_tree = self.parser.parse(text)
+        return parsed_tree.children[0]
         
     def emit_cedar(self, ast: PolicyAST) -> str:
         effect = "forbid" if ast.effect == "deny" else "permit"
