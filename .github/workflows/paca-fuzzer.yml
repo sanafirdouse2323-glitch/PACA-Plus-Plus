@@ -29,4 +29,4 @@ jobs:
 
     - name: Run Differential Fuzzer
       run: |
-        python paca_core.py
+        PYTHONPATH=. python tests/test_fuzzer.py
