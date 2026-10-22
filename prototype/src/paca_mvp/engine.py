@@ -11,6 +11,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 _MISSING = object()
+_UNBOUND = object()
 _IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]*$")
 _MAX_PERMIT_TTL_SECONDS = 300.0
 
@@ -238,7 +239,7 @@ class AuthorizationEngine:
         ttl_seconds: float = 30.0,
         *,
         principal_id: str | None = None,
-        arguments: Any = None,
+        arguments: Any = _UNBOUND,
     ) -> Decision:
         """Evaluate a request. Supplying principal_id and arguments enables operation binding."""
         if not isinstance(action, str) or not _IDENTIFIER.fullmatch(action):
@@ -258,7 +259,7 @@ class AuthorizationEngine:
             valid_ttl = False
         if not valid_ttl:
             return Decision(False, "invalid_permit_ttl", policy_version=self.policy_version)
-        if (principal_id is None) != (arguments is None):
+        if (principal_id is None) != (arguments is _UNBOUND):
             return Decision(False, "principal_and_arguments_must_be_supplied_together",
                             policy_version=self.policy_version)
         if principal_id is not None:
@@ -327,7 +328,7 @@ class AuthorizationEngine:
         effect: Callable[[], Any],
         *,
         principal_id: str | None = None,
-        arguments: Any = None,
+        arguments: Any = _UNBOUND,
     ) -> Any:
         """Validate, consume, and invoke an effect under the local commit lock.
 
@@ -359,8 +360,6 @@ class AuthorizationEngine:
                     raise AuthorizationError("invalid_arguments") from exc
                 if digest != permit.arguments_digest:
                     raise AuthorizationError("arguments_mismatch")
-            elif principal_id is not None or arguments is not None:
-                raise AuthorizationError("permit_binding_mode_mismatch")
             if permit.policy_fingerprint != self._policy_fingerprint:
                 raise AuthorizationError("stale_policy")
             if permit.state_version != self._state_version:
