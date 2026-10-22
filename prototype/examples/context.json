@@ -1,0 +1,10 @@
+{
+  "user": {
+    "id": "user-17",
+    "role": "analyst",
+    "suspended": false
+  },
+  "resource": {
+    "owner": "user-17"
+  }
+}
