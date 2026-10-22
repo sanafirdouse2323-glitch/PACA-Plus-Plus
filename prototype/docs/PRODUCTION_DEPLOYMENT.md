@@ -8,7 +8,7 @@
 - **Protected execution:** `ProtectedToolGateway` registers action handlers on the server. It does not let a caller choose a Python callback or destination URL. It checks OPA, records an operation durably, re-fetches trusted context, re-evaluates OPA, then atomically claims before calling the handler.
 - **Downstream API adapter:** `HTTPJsonActionAdapter` sends JSON to a fixed, configured endpoint over HTTPS; rejects redirects; sends the idempotency key and operation ID; and uses a service credential provider.
 - **Durable coordination:** `PostgresOperationStore` uses a unique idempotency key and row locking for multi-process/multi-host coordination. `SQLiteOperationStore` is useful for local development and single-host deployment.
-- **Audit and recovery:** operation state is persisted, audit events form a hash chain, stale in-progress operations can be marked unknown, and an operator can reconcile an unknown result after verifying the downstream system's authoritative record.
+- **Audit and recovery:** operation state is persisted, cached JSON tool responses are Fernet-encrypted when configured, audit events form a hash chain, stale in-progress operations can be marked unknown, and an operator can reconcile an unknown result after verifying the downstream system's authoritative record.
 
 The baseline Rego policy deliberately permits only an active analyst reading a resource they own in the same tenant. Adapt it to your real business rules after reviewing the claims and resource attributes supplied by your actual application.
 
@@ -32,12 +32,15 @@ Configure the application using secrets from your secret manager or deployment p
     export PACA_OIDC_AUDIENCE='your-api-audience'
     export PACA_OIDC_JWKS_URL='https://your-identity-provider.example/.well-known/jwks.json'
     export PACA_POSTGRES_DSN='postgresql://paca:URL_ENCODED_PASSWORD@127.0.0.1:5432/paca'
+    # Generate once in a trusted environment; store in your secret manager.
+    # Keep the active key first; append retiring keys during rotation.
+    export PACA_RESULT_ENCRYPTION_KEYS="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
     export PACA_OPA_BASE_URL='http://127.0.0.1:8181'
     export PACA_CONTEXT_PROVIDER='your_application.authz:build_context_provider'
     export PACA_FILE_READ_ENDPOINT='https://your-downstream-service.example/v1/read'
     export PACA_DOWNSTREAM_SERVICE_TOKEN='inject-this-from-a-secret-manager'
 
-The module named by `PACA_CONTEXT_PROVIDER` must be available on `PYTHONPATH` and its factory must return an object implementing `load(principal, action, resource, arguments)`. That implementation is application-specific and is intentionally not fabricated here: it must query the authoritative user/tenant/resource store. The example policy expects the returned subject attributes to contain `status`, `role`, and `tenant_id`, and the resource attributes to contain `owner_id`, `tenant_id`, and `canonical_path` (for the example `file.read` policy). The canonical path must be resolved from authoritative resource storage; do not copy it from the request.
+The module named by `PACA_CONTEXT_PROVIDER` must be available on `PYTHONPATH` and its factory must return an object implementing `load(principal, action, resource, arguments)`. `PACA_RESULT_ENCRYPTION_KEYS` is required by the production launcher and operator CLI: provide one or more comma-separated Fernet keys, with the current encryption key first and retiring decrypt-only keys after it. Generate the key once, keep it in a secret manager, and never regenerate it on each service restart; loss of a key makes affected cached responses unreadable. That implementation is application-specific and is intentionally not fabricated here: it must query the authoritative user/tenant/resource store. The example policy expects the returned subject attributes to contain `status`, `role`, and `tenant_id`, and the resource attributes to contain `owner_id`, `tenant_id`, and `canonical_path` (for the example `file.read` policy). The canonical path must be resolved from authoritative resource storage; do not copy it from the request.
 
 Start the HTTP API (defaults to loopback only):
 
