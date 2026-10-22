@@ -184,8 +184,8 @@ class DurableStoreTests(unittest.TestCase):
     def test_storage_rejects_malformed_action_resource_principal_and_digests(self):
         bad_cases = [
             {"action": "../admin"},
-            {"resource": "bad\\nresource"},
-            {"principal_id": "bad\\nprincipal"},
+            {"resource": "bad\nresource"},
+            {"principal_id": "bad\nprincipal"},
             {"arguments_digest": "not-a-digest"},
             {"context_digest": "f" * 63},
         ]
