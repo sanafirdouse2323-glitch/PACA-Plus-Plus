@@ -108,5 +108,15 @@ class HTTPAdapterTests(unittest.TestCase):
         self.assertEqual(first.downstream_idempotency_key, self.operation().downstream_idempotency_key)
 
 
+    def test_preflight_rejects_invalid_downstream_bearer_token(self):
+        adapter = HTTPJsonActionAdapter(
+            self.base + "/execute",
+            allow_insecure_loopback_for_tests=True,
+            service_token_provider=lambda: "bad\\r\\nInjected: yes",
+        )
+        with self.assertRaises(RemoteToolError):
+            adapter.preflight()
+
+
 if __name__ == "__main__":
     unittest.main()
