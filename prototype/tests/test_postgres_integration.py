@@ -116,5 +116,9 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
         self.assertTrue(self.store.verify_audit_chain())
 
 
+    def test_postgres_readiness_checks_required_tables(self):
+        self.assertIsNone(self.store.check_ready())
+
+
 if __name__ == "__main__":
     unittest.main()
