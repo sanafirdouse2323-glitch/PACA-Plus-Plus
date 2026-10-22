@@ -325,7 +325,7 @@ class AuthorizationEngine:
         """Authorize an operation while binding the permit to principal and exact JSON arguments."""
         return self.authorize(
             action, resource, context, ttl_seconds,
-            principal_id=principal_id, arguments=arguments, context=context,
+            principal_id=principal_id, arguments=arguments,
         )
 
     def execute(
