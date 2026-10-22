@@ -67,7 +67,7 @@ class JWTAuthenticator:
             if not jwks_url:
                 raise ValueError("jwks_url is required when no key_resolver is injected")
             parsed = urlparse(jwks_url)
-            if parsed.scheme != "https" or not parsed.hostname:
+            if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
                 raise ValueError("JWKS URL must use HTTPS")
         try:
             import jwt
@@ -93,6 +93,8 @@ class JWTAuthenticator:
         if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1]:
             raise AuthenticationError("invalid_authorization_header")
         token = parts[1]
+        if len(token) > 16_384:
+            raise AuthenticationError("token_too_large")
         try:
             if self._key_resolver is not None:
                 signing_key = self._key_resolver(token)
