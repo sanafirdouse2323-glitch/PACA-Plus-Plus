@@ -309,6 +309,8 @@ class AuthorizationEngine:
                 raise AuthorizationError("unknown_permit")
             if permit.consumed:
                 raise AuthorizationError("permit_replayed")
+            if permit.principal_id is None or permit.arguments_digest is None:
+                raise AuthorizationError("operation_binding_required")
             if datetime.now(timezone.utc) >= permit.expires_at:
                 self.audit_log.append({"event": "permit_rejected", "permit_id": permit_id,
                                        "reason": "permit_expired"})
