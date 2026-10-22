@@ -23,6 +23,21 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _resolve_bind_host() -> str:
+    """Require explicit acknowledgement before exposing the plain-HTTP listener off-host."""
+    host = os.environ.get("PACA_BIND_HOST", "127.0.0.1").strip()
+    if not host:
+        raise RuntimeError("PACA_BIND_HOST must not be blank")
+    if host not in {"127.0.0.1", "::1", "localhost"}:
+        acknowledged = os.environ.get("PACA_TRUSTED_INGRESS_TERMINATES_TLS", "").lower() == "true"
+        if not acknowledged:
+            raise RuntimeError(
+                "non-loopback HTTP bind requires a trusted TLS-terminating ingress and "
+                "PACA_TRUSTED_INGRESS_TERMINATES_TLS=true"
+            )
+    return host
+
+
 def _load_factory(spec: str):
     module_name, separator, attribute = spec.partition(":")
     if not separator or not module_name or not attribute:
@@ -77,7 +92,7 @@ def main() -> int:
     adapter.preflight()
     gateway.register_action("file.read", adapter)
 
-    host = os.environ.get("PACA_BIND_HOST", "127.0.0.1")
+    host = _resolve_bind_host()
     port = int(os.environ.get("PACA_BIND_PORT", "8080"))
     server = make_server(gateway, host=host, port=port)
     print("PACA++ gateway listening on " + host + ":" + str(port))
