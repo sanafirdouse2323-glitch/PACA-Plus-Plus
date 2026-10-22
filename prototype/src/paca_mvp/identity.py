@@ -23,7 +23,7 @@ class ContextRetrievalError(RuntimeError):
 
 def _json_copy(value: Any) -> Any:
     try:
-        return json.loads(json.dumps(value, ensure_ascii=False, allow_nan=False))
+        return json.loads(json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True))
     except (TypeError, ValueError, UnicodeError) as exc:
         raise ContextRetrievalError("authorization context must be finite JSON") from exc
 
