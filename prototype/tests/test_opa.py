@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 from urllib.error import URLError
 from io import BytesIO
 
-from paca_mvp.opa import OPAError, OPAPolicyDecisionPoint
+from paca_mvp.opa import OPAError, OPADecision, OPAPolicyDecisionPoint
 
 
 class Response:
@@ -99,6 +99,34 @@ class OPATests(unittest.TestCase):
         )
         with self.assertRaises(OPAError):
             self.client.evaluate({"action": "file.read"})
+
+
+    def test_preflight_accepts_a_defined_default_deny(self):
+        with patch.object(self.client, "evaluate", return_value=OPADecision(
+            False, "subject_not_active", {"allow": False, "reason": "subject_not_active"}
+        )) as mocked:
+            result = self.client.preflight()
+        mocked.assert_called_once_with({})
+        self.assertFalse(result.allowed)
+
+    def test_preflight_rejects_undefined_policy_decision(self):
+        with patch.object(self.client, "evaluate", return_value=OPADecision(
+            False, "undefined_decision", {}
+        )):
+            with self.assertRaisesRegex(OPAError, "decision is undefined"):
+                self.client.preflight()
+
+    def test_preflight_rejects_permissive_empty_input(self):
+        with patch.object(self.client, "evaluate", return_value=OPADecision(
+            True, "permitted", {"allow": True, "reason": "permitted"}
+        )):
+            with self.assertRaisesRegex(OPAError, "allowed empty input"):
+                self.client.preflight()
+
+    def test_preflight_fails_if_opa_is_unavailable(self):
+        with patch.object(self.client, "evaluate", side_effect=OPAError("offline")):
+            with self.assertRaises(OPAError):
+                self.client.preflight()
 
 
 if __name__ == "__main__":
