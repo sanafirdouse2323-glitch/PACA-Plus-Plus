@@ -10,7 +10,7 @@ The isolated [prototype](prototype/README.md) directory contains a Python resear
 - fail-closed handling of missing attributes;
 - permits bound to an exact action, resource, policy version, and state version;
 - short-lived, one-use permits and replay rejection;
-- a simulated protected effect, audit events, unit tests, and deterministic scenarios.
+- a simulated protected effect, audit events, unit tests, deterministic scenarios, and a command-line interface.
 
 The prototype is intentionally separate so it does not silently replace or misrepresent the original ALFA/UCON+ compiler work.
 
@@ -25,6 +25,7 @@ cd prototype
 python -m unittest discover -s tests -v
 python examples/demo.py
 python experiments/run_experiments.py
+python examples/authorize.py --policy examples/policy.json --context examples/context.json --action file.read --resource file:report-1 --execute
 ```
 
 GitHub Actions runs these checks for pushes to the prototype branch and pull requests targeting `main`.
