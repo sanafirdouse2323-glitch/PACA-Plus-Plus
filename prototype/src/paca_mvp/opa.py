@@ -81,6 +81,20 @@ class OPAPolicyDecisionPoint:
         self.bearer_token = bearer_token
         self.max_response_bytes = max_response_bytes
 
+    def preflight(self) -> OPADecision:
+        """Check OPA availability and require a defined default-deny decision.
+
+        The empty input is intentionally invalid for the application's protected
+        operations. If it is allowed, or the configured decision is undefined, stop
+        service startup rather than silently starting with a missing/permissive policy.
+        """
+        decision = self.evaluate({})
+        if decision.allowed:
+            raise OPAError("OPA preflight unexpectedly allowed empty input")
+        if decision.reason == "undefined_decision":
+            raise OPAError("OPA preflight decision is undefined; verify the policy is loaded")
+        return decision
+
     def evaluate(self, opa_input: dict[str, Any]) -> OPADecision:
         """Return allow only when OPA returns an object with allow exactly true.
 
