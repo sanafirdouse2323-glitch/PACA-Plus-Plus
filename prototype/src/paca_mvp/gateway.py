@@ -262,7 +262,10 @@ class ProtectedToolGateway:
             raise AuthorizationDenied("request_denied_at_dispatch")
 
         try:
-            claimed = self.operation_store.claim(operation.operation_id)
+            claimed = self.operation_store.claim(
+                operation.operation_id,
+                policy_decision={"allow": True, "reason": current_decision.reason[:128]},
+            )
         except OperationOutcomeUnknown as exc:
             raise OperationOutcomeUnresolved(str(exc)) from exc
         request = ActionRequest(
