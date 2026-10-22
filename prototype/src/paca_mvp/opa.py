@@ -6,6 +6,7 @@ closed on transport/protocol errors. It intentionally does not manage/deploy pol
 from __future__ import annotations
 
 from dataclasses import dataclass
+import http.client
 import json
 import math
 import re
@@ -68,8 +69,8 @@ class OPAPolicyDecisionPoint:
             raise ValueError("decision_path must contain only safe path segments")
         if not isinstance(timeout_seconds, (int, float)) or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
-        if max_response_bytes < 256:
-            raise ValueError("max_response_bytes must be at least 256")
+        if max_response_bytes < 256 or max_response_bytes > 4_194_304:
+            raise ValueError("max_response_bytes must be between 256 bytes and 4 MiB")
         if bearer_token is not None:
             if (not isinstance(bearer_token, str) or not bearer_token
                     or len(bearer_token) > 8192
@@ -106,8 +107,8 @@ class OPAPolicyDecisionPoint:
         except HTTPError as exc:
             # Do not include response bodies in exceptions; they may contain policy data.
             raise OPAError(f"OPA returned HTTP {exc.code}") from exc
-        except (URLError, TimeoutError, OSError, ssl.SSLError) as exc:
-            raise OPAError("OPA decision endpoint unavailable") from exc
+        except (URLError, TimeoutError, OSError, ssl.SSLError, http.client.HTTPException) as exc:
+            raise OPAError("OPA decision endpoint unavailable or response incomplete") from exc
         if len(raw) > self.max_response_bytes:
             raise OPAError("OPA response exceeded configured size limit")
         try:
