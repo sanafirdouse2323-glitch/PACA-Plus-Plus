@@ -26,6 +26,7 @@ class OPADecision:
     reason: str
     result: dict[str, Any]
     http_status: int = 200
+    decision_id: str | None = None
 
 
 class OPAPolicyDecisionPoint:
@@ -114,4 +115,7 @@ class OPAPolicyDecisionPoint:
             clean_result = json.loads(json.dumps(result, allow_nan=False))
         except (TypeError, ValueError) as exc:
             raise OPAError("OPA decision contains non-finite or unsupported values") from exc
-        return OPADecision(allowed, reason, clean_result, status)
+        decision_id = document.get("decision_id")
+        if not isinstance(decision_id, str) or not decision_id or len(decision_id) > 128:
+            decision_id = None
+        return OPADecision(allowed, reason, clean_result, status, decision_id)
