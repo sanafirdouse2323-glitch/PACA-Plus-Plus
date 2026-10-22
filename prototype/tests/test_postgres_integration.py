@@ -38,6 +38,25 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
         self.assertTrue(self.store.verify_audit_chain())
 
 
+    def test_idempotency_keys_are_scoped_by_principal_in_postgres(self):
+        key = "pg-shared-" + uuid.uuid4().hex
+        common = {
+            "idempotency_key": key,
+            "action": "file.read",
+            "resource": "file:r-same-key",
+            "arguments_digest": "a" * 64,
+            "context_digest": "b" * 64,
+            "policy_decision": {"allow": True, "reason": "integration_test"},
+            "ttl_seconds": 30,
+        }
+        first, first_created = self.store.create_or_get(**common, principal_id="postgres-user-a")
+        second, second_created = self.store.create_or_get(**common, principal_id="postgres-user-b")
+        self.assertTrue(first_created)
+        self.assertTrue(second_created)
+        self.assertNotEqual(first.operation_id, second.operation_id)
+        self.assertTrue(self.store.verify_audit_chain())
+
+
     def test_concurrent_create_and_claim_are_coordinated_across_clients(self):
         import threading
 
