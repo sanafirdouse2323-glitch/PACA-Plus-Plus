@@ -1,0 +1,40 @@
+{
+  "version": "example-v1",
+  "rules": [
+    {
+      "id": "analyst_reads_owned_file",
+      "effect": "permit",
+      "action": "file.read",
+      "conditions": [
+        {
+          "path": "user.role",
+          "op": "eq",
+          "value": "analyst"
+        },
+        {
+          "path": "resource.owner",
+          "op": "eq",
+          "value_from_path": "user.id"
+        }
+      ]
+    },
+    {
+      "id": "suspended_users_cannot_read",
+      "effect": "deny",
+      "action": "file.read",
+      "conditions": [
+        {
+          "path": "user.suspended",
+          "op": "eq",
+          "value": true
+        }
+      ]
+    },
+    {
+      "id": "delete_is_denied",
+      "effect": "deny",
+      "action": "file.delete",
+      "conditions": []
+    }
+  ]
+}
