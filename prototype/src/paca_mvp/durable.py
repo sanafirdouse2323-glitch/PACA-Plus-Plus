@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import stat
 from typing import Any, Iterator
 from uuid import uuid4
 
@@ -576,10 +577,29 @@ class SQLiteOperationStore(_BaseOperationStore):
         response_protector: FernetResponseProtector | None = None,
     ):
         self._configure_response_protector(response_protector)
-        self.path = str(Path(path).expanduser())
-        if self.path == ":memory:":
+        raw_path = os.fspath(path)
+        if raw_path == ":memory:":
             raise ValueError("Use a file-backed database so operation state is durable")
-        Path(self.path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+        requested_path = Path(raw_path).expanduser()
+        if requested_path.is_symlink():
+            raise ValueError("SQLite database path must not be a symlink")
+        parent = requested_path.parent.resolve()
+        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.path = str(parent / requested_path.name)
+        # Create/open the DB with owner-only permissions and reject final-component
+        # symlinks/non-regular files. O_NOFOLLOW is available on normal POSIX hosts.
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        try:
+            descriptor = os.open(self.path, flags, 0o600)
+            try:
+                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                    raise ValueError("SQLite database path must be a regular file")
+                if os.name == "posix":
+                    os.fchmod(descriptor, 0o600)
+            finally:
+                os.close(descriptor)
+        except OSError as exc:
+            raise ValueError("SQLite database path must be a regular, non-symlink file") from exc
         self._initialize()
 
     def _connect(self):
