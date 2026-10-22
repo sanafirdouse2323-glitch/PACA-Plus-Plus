@@ -25,7 +25,7 @@ def _store(args: argparse.Namespace):
             raise ValueError("Use --dsn or set PACA_POSTGRES_DSN")
         if protector is None:
             raise ValueError("Set PACA_RESULT_ENCRYPTION_KEYS to the current response-encryption key and any retiring decrypt keys")
-        return PostgresOperationStore(dsn, response_protector=protector)
+        return PostgresOperationStore(dsn, response_protector=protector, initialize_schema=False)
     path = args.path or os.environ.get("PACA_SQLITE_PATH", "")
     if not path:
         raise ValueError("Use --path or set PACA_SQLITE_PATH")
