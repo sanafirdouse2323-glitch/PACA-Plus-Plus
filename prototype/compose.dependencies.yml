@@ -3,7 +3,7 @@
 services:
   opa:
     image: openpolicyagent/opa:1.21.3
-    command: ["run", "--server", "--addr=0.0.0.0:8181", "/policies"]
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "/policies/authz.rego"]
     volumes:
       - ./policies:/policies:ro
     ports:
