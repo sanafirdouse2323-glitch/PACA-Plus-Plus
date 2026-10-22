@@ -42,6 +42,14 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Audit a clean production dependency environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/paca-audit"
+          "$RUNNER_TEMP/paca-audit/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/paca-audit/bin/python" -m pip install -e ".[production]" pip-audit==2.10.1
+          "$RUNNER_TEMP/paca-audit/bin/pip-audit" --local
       - name: Install production dependencies
         run: python -m pip install --upgrade pip && python -m pip install -e ".[production]"
       - name: Install pinned OPA binary and verify checksum
