@@ -1,0 +1,86 @@
+name: PACA++ production integration checks
+
+on:
+  push:
+    branches:
+      - main
+      - production/phase-1-security-hardening
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: paca_test
+          POSTGRES_USER: paca
+          POSTGRES_PASSWORD: paca_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U paca -d paca_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      PACA_TEST_DATABASE_URL: postgresql://paca:paca_test_password@127.0.0.1:5432/paca_test
+      PACA_OPA_BASE_URL: http://127.0.0.1:8181
+    defaults:
+      run:
+        working-directory: prototype
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install production dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[production]"
+      - name: Install pinned OPA binary and verify checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          OPA_VERSION="1.21.3"
+          OPA_SHA256="add7c9dcf56e1ce1538426a6ee595ea1cc7ee830bbedd4c23219825b02b19a79"
+          curl --fail --silent --show-error --location "https://openpolicyagent.org/downloads/v${OPA_VERSION}/opa_linux_amd64_static" --output "$RUNNER_TEMP/opa"
+          printf '%s  %s\n' "$OPA_SHA256" "$RUNNER_TEMP/opa" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/opa"
+          sudo install "$RUNNER_TEMP/opa" /usr/local/bin/opa
+          opa version
+      - name: Validate and test Rego policies
+        run: |
+          opa check --strict policies/authz.rego
+          opa test policies -v
+      - name: Start OPA with the project policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          opa run --server --addr=127.0.0.1:8181 policies/authz.rego > "$RUNNER_TEMP/opa.log" 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8181/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/opa.log"
+          exit 1
+      - name: Run unit, adversarial and local HTTP integration tests
+        run: python -m unittest discover -s tests -v
+      - name: Run simulated demo
+        run: python examples/demo.py
+      - name: Exercise operation-bound CLI
+        run: >-
+          python examples/authorize.py --policy examples/policy.json
+          --context examples/context.json --action file.read
+          --resource file:report-1 --principal-id demo-user
+          --arguments-json '{"path":"report-1","mode":"read"}' --execute
+      - name: Run deterministic authorization scenarios
+        run: python experiments/run_experiments.py
