@@ -30,6 +30,6 @@ jobs:
       - name: Run demonstration
         run: python examples/demo.py
       - name: Exercise JSON-policy CLI
-        run: python examples/authorize.py --policy examples/policy.json --context examples/context.json --action file.read --resource file:report-1 --execute
+        run: python examples/authorize.py --policy examples/policy.json --context examples/context.json --action file.read --resource file:report-1 --principal-id demo-user --arguments-json '{"path":"report-1","mode":"read"}' --execute
       - name: Run deterministic scenarios
         run: python experiments/run_experiments.py
