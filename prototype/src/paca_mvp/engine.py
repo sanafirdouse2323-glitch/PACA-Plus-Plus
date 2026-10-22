@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
+import json
+import math
+import re
 from threading import RLock
 from typing import Any, Callable
 from uuid import uuid4
-import re
 
 _MISSING = object()
 _IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]*$")
@@ -77,7 +80,13 @@ class Policy:
                     other = condition["value_from_path"]
                     if not isinstance(other, str) or not other or any(not p for p in other.split(".")):
                         raise PolicyError(f"Rule {rid!r}: invalid value_from_path.")
-                checked.append(dict(condition))
+                # Copy nested JSON-compatible policy values so later edits to the caller's
+                # input cannot silently change the policy after validation.
+                try:
+                    copied = json.loads(json.dumps(condition, allow_nan=False))
+                except (TypeError, ValueError) as exc:
+                    raise PolicyError(f"Rule {rid!r}: condition values must be JSON-compatible.") from exc
+                checked.append(copied)
             rules.append(Rule(rid, effect, action, tuple(checked)))
         return cls(version=version, rules=tuple(rules))
 
@@ -98,6 +107,8 @@ class _Permit:
     policy_version: str
     state_version: int
     expires_at: datetime
+    principal_id: str | None = None
+    arguments_digest: str | None = None
     consumed: bool = False
 
 
@@ -108,6 +119,17 @@ def _resolve(context: dict[str, Any], dotted_path: str) -> Any:
             return _MISSING
         current = current[segment]
     return current
+
+
+def _canonical_digest(value: Any) -> str:
+    """Hash JSON arguments deterministically; reject NaN and non-JSON objects."""
+    try:
+        encoded = json.dumps(
+            value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError) as exc:
+        raise ValueError("arguments_must_be_finite_json") from exc
+    return sha256(encoded).hexdigest()
 
 
 def _compare(actual: Any, condition: dict[str, Any], context: dict[str, Any]) -> bool:
@@ -139,7 +161,12 @@ def _compare(actual: Any, condition: dict[str, Any], context: dict[str, Any]) ->
 
 
 class AuthorizationEngine:
-    """In-memory research engine with one-use, action-bound execution permits."""
+    """In-memory research engine; not a distributed or production authorization service.
+
+    The legacy authorize/execute API remains for the existing MVP examples. New code
+    should use authorize_operation/execute_operation so permits bind a principal and
+    canonicalized operation arguments as well as action and resource.
+    """
 
     def __init__(self, policy: Policy):
         self._policy = policy
@@ -169,16 +196,39 @@ class AuthorizationEngine:
             self.audit_log.append({"event": "state_advanced", "state_version": self._state_version})
             return self._state_version
 
-    def authorize(self, action: str, resource: str, context: dict[str, Any],
-                  ttl_seconds: float = 30.0) -> Decision:
+    def authorize(
+        self,
+        action: str,
+        resource: str,
+        context: dict[str, Any],
+        ttl_seconds: float = 30.0,
+        *,
+        principal_id: str | None = None,
+        arguments: Any = None,
+    ) -> Decision:
+        """Evaluate a request. Supplying principal_id and arguments enables operation binding."""
         if not isinstance(action, str) or not _IDENTIFIER.fullmatch(action):
             return Decision(False, "invalid_action", policy_version=self.policy_version)
         if not isinstance(resource, str) or not resource.strip():
             return Decision(False, "invalid_resource", policy_version=self.policy_version)
         if not isinstance(context, dict):
             return Decision(False, "invalid_context", policy_version=self.policy_version)
-        if ttl_seconds <= 0:
+        if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, (int, float)) \
+                or not math.isfinite(ttl_seconds) or ttl_seconds <= 0:
             return Decision(False, "invalid_permit_ttl", policy_version=self.policy_version)
+        if (principal_id is None) != (arguments is None):
+            return Decision(False, "principal_and_arguments_must_be_supplied_together",
+                            policy_version=self.policy_version)
+        if principal_id is not None:
+            if not isinstance(principal_id, str) or not principal_id.strip():
+                return Decision(False, "invalid_principal", policy_version=self.policy_version)
+            try:
+                arguments_digest = _canonical_digest(arguments)
+            except ValueError:
+                return Decision(False, "invalid_arguments", policy_version=self.policy_version)
+        else:
+            arguments_digest = None
+
         with self._lock:
             matching: list[Rule] = []
             for rule in self._policy.rules:
@@ -206,22 +256,44 @@ class AuthorizationEngine:
                 action=action, resource=resource, policy_version=self._policy.version,
                 state_version=self._state_version,
                 expires_at=datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds),
+                principal_id=principal_id, arguments_digest=arguments_digest,
             )
             self.audit_log.append({
                 "event": "permit_issued", "permit_id": permit_id, "action": action,
                 "resource": resource, "matched_rules": [r.id for r in permits],
                 "policy_version": self._policy.version, "state_version": self._state_version,
+                "principal_id": principal_id,
+                "arguments_digest": arguments_digest,
             })
             return Decision(True, "permitted", tuple(r.id for r in permits), permit_id, self._policy.version)
 
-    def execute(self, permit_id: str, action: str, resource: str,
-                effect: Callable[[], Any]) -> Any:
+    def authorize_operation(
+        self, principal_id: str, action: str, resource: str, arguments: Any,
+        context: dict[str, Any], ttl_seconds: float = 30.0,
+    ) -> Decision:
+        """Authorize an operation while binding the permit to principal and exact JSON arguments."""
+        return self.authorize(
+            action, resource, context, ttl_seconds,
+            principal_id=principal_id, arguments=arguments,
+        )
+
+    def execute(
+        self,
+        permit_id: str,
+        action: str,
+        resource: str,
+        effect: Callable[[], Any],
+        *,
+        principal_id: str | None = None,
+        arguments: Any = None,
+    ) -> Any:
         """Validate, consume, and invoke an effect under the local commit lock.
 
-        This serializes this engine's policy/state updates against the callback in
-        one process only. It does not provide a distributed transaction or roll
-        back a remote side effect if the callback partially fails.
+        The lock only serializes this engine's local state and callback. It is not a
+        distributed transaction and cannot roll back a partially completed remote effect.
         """
+        if not callable(effect):
+            raise AuthorizationError("effect_not_callable")
         with self._lock:
             permit = self._permits.get(permit_id)
             if permit is None:
@@ -229,9 +301,22 @@ class AuthorizationEngine:
             if permit.consumed:
                 raise AuthorizationError("permit_replayed")
             if datetime.now(timezone.utc) >= permit.expires_at:
+                self.audit_log.append({"event": "permit_rejected", "permit_id": permit_id,
+                                       "reason": "permit_expired"})
                 raise AuthorizationError("permit_expired")
             if action != permit.action or resource != permit.resource:
                 raise AuthorizationError("action_or_resource_mismatch")
+            if permit.principal_id is not None:
+                if principal_id != permit.principal_id:
+                    raise AuthorizationError("principal_mismatch")
+                try:
+                    digest = _canonical_digest(arguments)
+                except ValueError as exc:
+                    raise AuthorizationError("invalid_arguments") from exc
+                if digest != permit.arguments_digest:
+                    raise AuthorizationError("arguments_mismatch")
+            elif principal_id is not None or arguments is not None:
+                raise AuthorizationError("permit_binding_mode_mismatch")
             if permit.policy_version != self._policy.version:
                 raise AuthorizationError("stale_policy")
             if permit.state_version != self._state_version:
@@ -241,6 +326,8 @@ class AuthorizationEngine:
                 "event": "effect_authorized", "permit_id": permit_id,
                 "action": action, "resource": resource,
                 "policy_version": self._policy.version, "state_version": self._state_version,
+                "principal_id": permit.principal_id,
+                "arguments_digest": permit.arguments_digest,
             })
             try:
                 result = effect()
@@ -255,3 +342,13 @@ class AuthorizationEngine:
                 "action": action, "resource": resource,
             })
             return result
+
+    def execute_operation(
+        self, permit_id: str, principal_id: str, action: str, resource: str,
+        arguments: Any, effect: Callable[[], Any],
+    ) -> Any:
+        """Execute only the principal/action/resource/arguments tuple that was authorized."""
+        return self.execute(
+            permit_id, action, resource, effect,
+            principal_id=principal_id, arguments=arguments,
+        )
