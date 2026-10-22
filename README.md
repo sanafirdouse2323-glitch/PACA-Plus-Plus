@@ -1,45 +1,34 @@
-# PACA++ — research prototype
+# PACA++ — authorization research prototype
 
-This repository is an early research scaffold for exploring authorization correctness in LLM-agent systems. The existing root-level description refers to compiling ALFA/UCON+ policies to ASP and Cedar; that compiler integration is **not implemented by the new prototype yet**.
+PACA++ is an early research project exploring authorization correctness at the LLM-agent execution boundary. The repository's original ALFA/UCON+ to ASP/Cedar compiler goal is **not implemented by the current prototype**, and this branch does not claim otherwise.
 
-## Current runnable component
+## What this branch adds
 
-The isolated [prototype](prototype/README.md) directory contains a Python research MVP for testing the authorization-to-effect boundary:
+The `prototype/` directory now contains two layers:
 
-- default-deny decisions and deny-overrides;
-- fail-closed handling of missing attributes;
-- permits bound to an exact action, resource, policy version, and state version;
-- short-lived, one-use permits and replay rejection;
-- a simulated protected effect, audit events, unit tests, deterministic scenarios, and a command-line interface.
+- A small, dependency-free research engine for deterministic authorization tests.
+- A production-oriented integration layer with OPA/Rego, verified OIDC/JWT identity, server-side authorization-context interfaces, a protected HTTP operation API, fixed-destination downstream HTTP adapter, durable SQLite/PostgreSQL operation stores, idempotency handling, unknown-outcome recovery, and a hash-chained audit log.
 
-The prototype is intentionally separate so it does not silently replace or misrepresent the original ALFA/UCON+ compiler work.
+The integration layer remains incomplete for any particular deployment until a real application-specific context provider, identity-provider configuration, downstream tool service, and operational controls are implemented and reviewed. See [the production deployment guide](prototype/docs/PRODUCTION_DEPLOYMENT.md) and [phase-one hardening notes](prototype/docs/PRODUCTION_HARDENING_PHASE_1.md).
 
-## Run it
+## Run the local test suite
 
-Requires Python 3.10 or newer. No third-party runtime dependencies are required.
-
-From a clone of this repository:
+Requires Python 3.10 or newer:
 
 ```bash
 cd prototype
 python -m unittest discover -s tests -v
 python examples/demo.py
 python experiments/run_experiments.py
-python examples/authorize.py --policy examples/policy.json --context examples/context.json --action file.read --resource file:report-1 --execute
+python examples/authorize.py --policy examples/policy.json --context examples/context.json --action file.read --resource file:report-1 --principal-id demo-user --execute
 ```
 
-GitHub Actions runs these checks for pushes to the prototype branch and pull requests targeting `main`.
+The demo and command-line example perform only simulated effects. To run live OPA and PostgreSQL integration tests, install the production extras and follow the [deployment guide](prototype/docs/PRODUCTION_DEPLOYMENT.md). GitHub Actions in this branch is configured to validate Rego, start OPA and PostgreSQL, and execute the integration suite. A configured workflow is not evidence of a passing run; check the recorded workflow status.
 
-## What the results mean
+## Security properties and limitations
 
-The included scenario suite is a small, hand-authored test set. Passing it only shows that the current implementation behaves as expected for those cases; it is not a formal proof, an external-system benchmark, production-security validation, standards compliance, or proof of research novelty.
+The integration is designed to deny by default, verify the caller token, retrieve authorization attributes from trusted server-side readers, ask OPA for a decision, re-check context immediately before dispatch, and atomically claim a durable idempotency record before invoking a registered handler.
 
-## Important remaining work
+It cannot promise exactly-once execution of an arbitrary remote side effect. When an operation's outcome is ambiguous, it records an unknown result and requires reconciliation from the downstream system's authoritative evidence. A hash chain is tamper-evident, not tamper-proof. A policy update can still race with an external action after the last policy evaluation unless the enforcement boundary shares an appropriate transactional or versioned-policy mechanism.
 
-1. Integrate and test the original ALFA/UCON+ policy syntax, parser, compiler, and evaluator (rather than claiming the MVP already does this).
-2. Add differential tests for parser/compiler/evaluator semantic consistency.
-3. Add independently reviewed adversarial cases and compare supported features against relevant existing systems.
-4. Define tool-specific canonicalization, trusted identity/context, durable audit, and deployment assumptions before considering real side effects.
-5. Decide the final research contribution only after the baseline and literature comparisons.
-
-See [the design specification](prototype/docs/PACA_Prototype_Full_Design.md), [threat model](prototype/THREAT_MODEL.md), and [local verification report](prototype/docs/LOCAL_VERIFICATION_REPORT.md).
+The test scenarios are not a formal proof, external benchmark, independent penetration test, standards certification, or proof of research novelty.
