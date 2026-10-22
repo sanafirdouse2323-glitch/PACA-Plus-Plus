@@ -110,6 +110,13 @@ GRANT USAGE, SELECT ON SEQUENCE paca.audit_events_seq TO paca_operator;
 ALTER DEFAULT PRIVILEGES FOR ROLE paca_migrator IN SCHEMA paca REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES FOR ROLE paca_migrator IN SCHEMA paca REVOKE ALL ON SEQUENCES FROM PUBLIC;
 
--- The database owner must set suitable authentication (passwords, cloud IAM, or
--- certificates) separately, then grant CONNECT on the target database to runtime/operator.
-GRANT CONNECT ON DATABASE paca TO paca_runtime, paca_operator;
+-- Grant connection to whichever database this migration was run against,
+-- so CI and deployments with a non-default database name use the same migration.
+DO $grant_connect$
+BEGIN
+    EXECUTE format(
+        'GRANT CONNECT ON DATABASE %I TO paca_runtime, paca_operator',
+        current_database()
+    );
+END
+$grant_connect$;
