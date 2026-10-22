@@ -60,6 +60,11 @@ class OPAPolicyDecisionPoint:
             raise ValueError("timeout_seconds must be positive")
         if max_response_bytes < 256:
             raise ValueError("max_response_bytes must be at least 256")
+        if bearer_token is not None:
+            if (not isinstance(bearer_token, str) or not bearer_token
+                    or len(bearer_token) > 8192
+                    or any(ord(ch) < 0x21 or ord(ch) > 0x7e for ch in bearer_token)):
+                raise ValueError("bearer_token must be a bounded printable ASCII token")
         self.endpoint = base_url.rstrip("/") + "/v1/data/" + path
         self.timeout_seconds = timeout_seconds
         self.bearer_token = bearer_token
@@ -108,7 +113,8 @@ class OPAPolicyDecisionPoint:
             raise OPAError("OPA decision result must be an object")
         allowed = result.get("allow") is True
         reason = result.get("reason")
-        if not isinstance(reason, str) or not reason:
+        # Keep audit/API reason codes bounded and free of arbitrary policy output.
+        if not isinstance(reason, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", reason):
             reason = "permitted" if allowed else "policy_denied"
         # Copy the response through JSON so caller-owned nested values cannot leak in.
         try:
