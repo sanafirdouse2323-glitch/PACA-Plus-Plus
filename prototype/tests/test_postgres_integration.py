@@ -6,7 +6,7 @@ import os
 import unittest
 import uuid
 
-from paca_mvp.durable import PostgresOperationStore
+from paca_mvp.durable import OperationStateError, PostgresOperationStore
 
 
 DSN = os.environ.get("PACA_TEST_DATABASE_URL")
@@ -35,6 +35,65 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
         result = self.store.complete(record.operation_id, {"integration": True})
         self.assertEqual(result.status, "succeeded")
         self.assertEqual(result.response, {"integration": True})
+        self.assertTrue(self.store.verify_audit_chain())
+
+
+    def test_concurrent_create_and_claim_are_coordinated_across_clients(self):
+        import threading
+
+        key = "pg-race-" + uuid.uuid4().hex
+        common = {
+            "idempotency_key": key,
+            "principal_id": "integration-racer",
+            "action": "file.read",
+            "resource": "file:r-race",
+            "arguments_digest": "d" * 64,
+            "context_digest": "e" * 64,
+            "policy_decision": {"allow": True, "reason": "integration_test"},
+            "ttl_seconds": 30,
+        }
+        barrier = threading.Barrier(2)
+        created = []
+        errors = []
+
+        def create():
+            try:
+                barrier.wait(timeout=5)
+                created.append(PostgresOperationStore(DSN).create_or_get(**common))
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=create) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(errors, [])
+        self.assertEqual(sum(1 for _, was_created in created if was_created), 1)
+        self.assertEqual(len({record.operation_id for record, _ in created}), 1)
+
+        operation_id = created[0][0].operation_id
+        barrier = threading.Barrier(2)
+        claims = []
+        claim_errors = []
+
+        def claim():
+            try:
+                barrier.wait(timeout=5)
+                claims.append(PostgresOperationStore(DSN).claim(operation_id))
+            except Exception as exc:
+                claim_errors.append(exc)
+
+        threads = [threading.Thread(target=claim) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(sum(1 for record in claims if record.status == "in_progress"), 1)
+        self.assertEqual(len(claim_errors), 1)
+        self.assertIsInstance(claim_errors[0], OperationStateError)
         self.assertTrue(self.store.verify_audit_chain())
 
 
