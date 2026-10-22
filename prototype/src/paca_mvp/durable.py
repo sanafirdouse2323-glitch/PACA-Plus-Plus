@@ -699,10 +699,18 @@ class PostgresOperationStore(_BaseOperationStore):
 
     dialect = "postgres"
 
-    def __init__(self, dsn: str, *, response_protector: FernetResponseProtector | None = None):
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        response_protector: FernetResponseProtector | None = None,
+        initialize_schema: bool = True,
+    ):
         self._configure_response_protector(response_protector)
         if not isinstance(dsn, str) or not dsn.strip():
             raise ValueError("PostgreSQL DSN is required")
+        if not isinstance(initialize_schema, bool):
+            raise ValueError("initialize_schema must be boolean")
         try:
             import psycopg
             from psycopg.rows import dict_row
@@ -711,7 +719,8 @@ class PostgresOperationStore(_BaseOperationStore):
         self._psycopg = psycopg
         self._dict_row = dict_row
         self.dsn = dsn
-        self._initialize()
+        if initialize_schema:
+            self._initialize()
 
     def _connect(self):
         return self._psycopg.connect(self.dsn, row_factory=self._dict_row, connect_timeout=5)
