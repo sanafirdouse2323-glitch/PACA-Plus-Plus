@@ -42,11 +42,35 @@ class OperationOutcomeUnknown(StoreError):
     """An effect may have happened, but its final outcome cannot safely be inferred."""
 
 
+def _validate_json_value(value: Any, depth: int = 0) -> None:
+    """Reject values whose JSON encoding would be ambiguous or non-standard."""
+    if depth > 64:
+        raise ValueError("json_nesting_limit_exceeded")
+    if value is None or isinstance(value, (str, bool, int)):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("non_finite_json_number")
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError("json_object_keys_must_be_strings")
+            _validate_json_value(item, depth + 1)
+        return
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            _validate_json_value(item, depth + 1)
+        return
+    raise ValueError("unsupported_json_value_type")
+
+
 def canonical_json(value: Any) -> str:
     try:
+        _validate_json_value(value)
         return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
-    except (TypeError, ValueError, UnicodeError) as exc:
-        raise ValueError("value_must_be_finite_json") from exc
+    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+        raise ValueError("value_must_be_finite_unambiguous_json") from exc
 
 
 def canonical_digest(value: Any) -> str:
@@ -440,7 +464,8 @@ class SQLiteOperationStore(_BaseOperationStore):
         return connection
 
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        connection = self._connect()
+        try:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript("""
             CREATE TABLE IF NOT EXISTS operations (
@@ -479,6 +504,8 @@ class SQLiteOperationStore(_BaseOperationStore):
             );
             INSERT OR IGNORE INTO audit_head(singleton,head_hash) VALUES(1,'0000000000000000000000000000000000000000000000000000000000000000');
             """)
+        finally:
+            connection.close()
 
     @contextmanager
     def _transaction(self) -> Iterator[_Session]:
