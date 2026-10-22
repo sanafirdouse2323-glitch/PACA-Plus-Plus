@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "paca-mvp"
 version = "0.1.0"
 description = "Research MVP for testing action-bound authorization and guarded effects"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = []
 
 [tool.setuptools]
@@ -17,8 +17,9 @@ where = ["src"]
 
 [project.optional-dependencies]
 production = [
-  "PyJWT[crypto]>=2.10,<3",
-  "psycopg[binary]>=3.2,<4",
+  "PyJWT[crypto]==2.15.1",
+  "psycopg[binary]==3.3.6",
+  "cryptography==50.0.2",
 ]
 
 [project.scripts]
