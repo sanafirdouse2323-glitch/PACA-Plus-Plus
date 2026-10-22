@@ -27,6 +27,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--context", required=True, help="Path to a request context JSON file")
     parser.add_argument("--action", required=True, help="Exact action identifier, e.g. file.read")
     parser.add_argument("--resource", required=True, help="Exact resource identifier, e.g. file:report-1")
+    parser.add_argument("--principal-id", required=True, help="Authenticated principal identifier supplied by the trusted caller")
+    parser.add_argument("--arguments-json", default="{}", help="JSON object/value representing the exact operation arguments (default: {})")
     parser.add_argument("--execute", action="store_true",
                         help="Run a simulated effect if authorized; never calls an external tool")
     parser.add_argument("--ttl-seconds", type=float, default=30.0,
@@ -36,8 +38,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         policy = Policy.from_dict(_read_json(args.policy))
         context = _read_json(args.context)
+        try:
+            operation_arguments = json.loads(args.arguments_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid JSON in --arguments-json: {exc}") from exc
         engine = AuthorizationEngine(policy)
-        decision = engine.authorize(args.action, args.resource, context, args.ttl_seconds)
+        decision = engine.authorize_operation(
+            args.principal_id, args.action, args.resource, operation_arguments, context, args.ttl_seconds
+        )
         result: dict[str, Any] = {
             "allowed": decision.allowed,
             "reason": decision.reason,
@@ -48,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.execute and decision.allowed:
             try:
                 effect_result = engine.execute(
-                    decision.permit_id, args.action, args.resource,
+                    decision.permit_id, args.principal_id, args.action, args.resource, operation_arguments,
                     lambda: {"simulated": True, "action": args.action, "resource": args.resource},
                 )
                 result["effect"] = "simulated_success"
