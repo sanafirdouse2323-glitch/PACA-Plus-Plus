@@ -353,7 +353,7 @@ class HTTPJsonActionAdapter:
         token = self.service_token_provider()
         if (not isinstance(token, str) or not token
                 or len(token) > 8192
-                or not re.fullmatch(r"[A-Za-z0-9._~+/-]+=*", token)):
+                or not re.fullmatch(r"[-A-Za-z0-9._~+/]+=*", token)):
             raise RemoteToolError("downstream_service_credentials_invalid")
         return token
 
@@ -365,6 +365,7 @@ class HTTPJsonActionAdapter:
         body = canonical_json({
             "operation_id": operation.operation_id,
             "principal_id": operation.principal.subject,
+            "principal_issuer": operation.principal.issuer,
             "action": operation.action,
             "resource": operation.resource,
             "arguments": operation.arguments,
