@@ -112,7 +112,7 @@ class HTTPAdapterTests(unittest.TestCase):
         adapter = HTTPJsonActionAdapter(
             self.base + "/execute",
             allow_insecure_loopback_for_tests=True,
-            service_token_provider=lambda: "bad\\r\\nInjected: yes",
+            service_token_provider=lambda: "bad\r\nInjected: yes",
         )
         with self.assertRaises(RemoteToolError):
             adapter.preflight()
