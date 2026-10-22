@@ -93,5 +93,26 @@ class JWTAuthenticationTests(unittest.TestCase):
             )
 
 
+    def test_storage_identity_is_scoped_to_issuer_and_subject_without_exposing_them(self):
+        principal = self.authenticator.authenticate("Bearer " + self.make_token())
+        another_issuer = type(principal)(
+            subject=principal.subject,
+            issuer="https://second-issuer.example",
+            claims=principal.claims,
+        )
+        another_subject = type(principal)(
+            subject="user-2",
+            issuer=principal.issuer,
+            claims={"sub": "user-2"},
+        )
+        self.assertTrue(principal.storage_id.startswith("oidc:"))
+        self.assertNotIn(principal.subject, principal.storage_id)
+        self.assertNotEqual(principal.storage_id, another_issuer.storage_id)
+        self.assertNotEqual(principal.storage_id, another_subject.storage_id)
+        self.assertEqual(principal.storage_id, type(principal)(
+            subject=principal.subject, issuer=principal.issuer, claims=principal.claims
+        ).storage_id)
+
+
 if __name__ == "__main__":
     unittest.main()
