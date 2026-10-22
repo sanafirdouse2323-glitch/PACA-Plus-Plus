@@ -77,5 +77,19 @@ class OPATests(unittest.TestCase):
         self.assertIsNone(self.client.evaluate({}).decision_id)
 
 
+    @patch("paca_mvp.opa.urlopen")
+    def test_reason_is_replaced_when_it_is_not_a_bounded_code(self, mocked):
+        mocked.return_value = Response(
+            b'{"result":{"allow":true,"reason":"private data should not be returned"}}'
+        )
+        result = self.client.evaluate({})
+        self.assertTrue(result.allowed)
+        self.assertEqual(result.reason, "permitted")
+
+    def test_bearer_token_with_header_control_characters_is_rejected(self):
+        with self.assertRaises(ValueError):
+            OPAPolicyDecisionPoint(bearer_token="secret\\r\\nInjected: yes")
+
+
 if __name__ == "__main__":
     unittest.main()
