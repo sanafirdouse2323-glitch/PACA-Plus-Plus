@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
+import re
 import ssl
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -51,9 +53,9 @@ class OPAPolicyDecisionPoint:
         if parsed.scheme != "https" and not loopback and not allow_insecure_remote_http:
             raise ValueError("Remote OPA must use HTTPS; HTTP is permitted only for loopback")
         path = decision_path.strip("/")
-        if not path or any(not part or part in {".", ".."} for part in path.split("/")):
-            raise ValueError("decision_path must be a non-empty dotted-path equivalent")
-        if timeout_seconds <= 0:
+        if not re.fullmatch(r"[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*", path):
+            raise ValueError("decision_path must contain only safe path segments")
+        if not isinstance(timeout_seconds, (int, float)) or not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         if max_response_bytes < 256:
             raise ValueError("max_response_bytes must be at least 256")
@@ -91,8 +93,8 @@ class OPAPolicyDecisionPoint:
         if len(raw) > self.max_response_bytes:
             raise OPAError("OPA response exceeded configured size limit")
         try:
-            document = json.loads(raw)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            document = json.loads(raw, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
             raise OPAError("OPA returned invalid JSON") from exc
         if not isinstance(document, dict):
             raise OPAError("OPA response must be a JSON object")
@@ -106,5 +108,8 @@ class OPAPolicyDecisionPoint:
         if not isinstance(reason, str) or not reason:
             reason = "permitted" if allowed else "policy_denied"
         # Copy the response through JSON so caller-owned nested values cannot leak in.
-        clean_result = json.loads(json.dumps(result, allow_nan=False))
+        try:
+            clean_result = json.loads(json.dumps(result, allow_nan=False))
+        except (TypeError, ValueError) as exc:
+            raise OPAError("OPA decision contains non-finite or unsupported values") from exc
         return OPADecision(allowed, reason, clean_result, status)
