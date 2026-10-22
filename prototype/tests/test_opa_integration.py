@@ -51,5 +51,11 @@ class LiveOPATests(unittest.TestCase):
         ).allowed)
 
 
+    def test_real_opa_preflight_requires_a_defined_default_deny(self):
+        result = self.opa.preflight()
+        self.assertFalse(result.allowed)
+        self.assertNotEqual(result.reason, "undefined_decision")
+
+
 if __name__ == "__main__":
     unittest.main()
