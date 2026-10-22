@@ -180,5 +180,22 @@ class DurableStoreTests(unittest.TestCase):
         self.assertNotIn(["idempotency_key"], unique_columns)
 
 
+    def test_storage_rejects_malformed_action_resource_principal_and_digests(self):
+        bad_cases = [
+            {"action": "../admin"},
+            {"resource": "bad\\nresource"},
+            {"principal_id": "bad\\nprincipal"},
+            {"arguments_digest": "not-a-digest"},
+            {"context_digest": "f" * 63},
+        ]
+        for overrides in bad_cases:
+            with self.subTest(overrides=overrides):
+                kwargs = dict(self.kwargs)
+                kwargs["idempotency_key"] = "validate-" + uuid.uuid4().hex
+                kwargs.update(overrides)
+                with self.assertRaises(ValueError):
+                    self.store.create_or_get(**kwargs)
+
+
 if __name__ == "__main__":
     unittest.main()
