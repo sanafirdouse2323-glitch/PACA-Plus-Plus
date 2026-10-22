@@ -29,10 +29,11 @@ class OPATests(unittest.TestCase):
 
     @patch("paca_mvp.opa.urlopen")
     def test_allow_only_on_boolean_true(self, mocked):
-        mocked.return_value = Response(b'{"result":{"allow":true,"reason":"permitted"}}')
+        mocked.return_value = Response(b'{"result":{"allow":true,"reason":"permitted"},"decision_id":"decision-123"}')
         result = self.client.evaluate({"action": "file.read"})
         self.assertTrue(result.allowed)
         self.assertEqual(result.reason, "permitted")
+        self.assertEqual(result.decision_id, "decision-123")
         sent = json.loads(mocked.call_args.args[0].data)
         self.assertEqual(sent, {"input": {"action": "file.read"}})
 
@@ -66,6 +67,14 @@ class OPATests(unittest.TestCase):
 
     def test_loopback_http_is_accepted_for_sidecar_development(self):
         OPAPolicyDecisionPoint(base_url="http://127.0.0.1:8181")
+
+
+    @patch("paca_mvp.opa.urlopen")
+    def test_invalid_decision_id_is_ignored(self, mocked):
+        mocked.return_value = Response(
+            ('{"result":{"allow":true,"reason":"permitted"},"decision_id":"' + ("x" * 129) + '"}').encode()
+        )
+        self.assertIsNone(self.client.evaluate({}).decision_id)
 
 
 if __name__ == "__main__":
