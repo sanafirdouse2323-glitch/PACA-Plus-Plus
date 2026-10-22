@@ -13,7 +13,7 @@ The integration layer remains incomplete for any particular deployment until a r
 
 ## Run the local test suite
 
-Requires Python 3.10 or newer:
+Requires Python 3.11 or newer:
 
 ```bash
 cd prototype
