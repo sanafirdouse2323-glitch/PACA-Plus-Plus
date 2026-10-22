@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 import re
 import ssl
 from typing import Any, Callable, Mapping
@@ -99,8 +100,15 @@ class ProtectedToolGateway:
         self.operation_store = operation_store
         self.permit_ttl_seconds = permit_ttl_seconds
         self._handlers: dict[str, Callable[[ActionRequest], Any]] = {}
-        if not isinstance(permit_ttl_seconds, (int, float)) or not 0 < permit_ttl_seconds <= 300:
-            raise ValueError("permit_ttl_seconds must be in (0, 300]")
+        try:
+            valid_ttl = (not isinstance(permit_ttl_seconds, bool)
+                         and isinstance(permit_ttl_seconds, (int, float))
+                         and math.isfinite(float(permit_ttl_seconds))
+                         and 0 < permit_ttl_seconds <= 300)
+        except (OverflowError, TypeError, ValueError):
+            valid_ttl = False
+        if not valid_ttl:
+            raise ValueError("permit_ttl_seconds must be finite and in (0, 300]")
 
     def register_action(self, action: str, handler: Callable[[ActionRequest], Any]) -> None:
         if not isinstance(action, str) or not _ACTION_RE.fullmatch(action):
@@ -229,7 +237,7 @@ class ProtectedToolGateway:
                                  str(operation.policy_decision.get("reason", "permitted")))
         if not created:
             if operation.status == "unknown":
-                raise OperationOutcomeUnknown("operation_outcome_unknown; reconcile before retry")
+                raise OperationOutcomeUnresolved("operation_outcome_unknown; reconcile before retry", operation.operation_id)
             if operation.status == "in_progress":
                 raise OperationStateError("operation_in_progress")
             raise OperationStateError("idempotency_key_already_used:" + operation.status)
@@ -309,8 +317,10 @@ class HTTPJsonActionAdapter:
         loopback = parsed.hostname.lower() in {"127.0.0.1", "::1", "localhost"}
         if parsed.scheme != "https" and not (loopback and allow_insecure_loopback_for_tests):
             raise ValueError("HTTP tool endpoints must use HTTPS except explicitly enabled loopback tests")
-        if timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be positive")
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be finite and positive")
+        if max_response_bytes < 256 or max_response_bytes > _MAX_TOOL_RESPONSE_BYTES:
+            raise ValueError("max_response_bytes must be between 256 bytes and 1 MiB")
         self.endpoint = endpoint
         self.service_token_provider = service_token_provider
         self.timeout_seconds = timeout_seconds
