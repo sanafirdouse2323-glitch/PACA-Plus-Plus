@@ -236,7 +236,7 @@ class _BaseOperationStore:
         result_row = None
         with self._transaction() as session:
             existing = session.one(
-                "SELECT * FROM operations WHERE idempotency_key=?", (idempotency_key,), for_update=True
+                "SELECT * FROM operations WHERE principal_id=? AND idempotency_key=?", (principal_id, idempotency_key), for_update=True
             )
             if existing is None:
                 session.execute(
@@ -245,12 +245,12 @@ class _BaseOperationStore:
                      arguments_digest,context_digest,policy_decision_json,status,created_at,expires_at,
                      started_at,finished_at,response_json,error_code)
                     VALUES (?,?,?,?,?,?,?,?,?,'issued',?,?,NULL,NULL,NULL,NULL)
-                    ON CONFLICT (idempotency_key) DO NOTHING""",
+                    ON CONFLICT (principal_id, idempotency_key) DO NOTHING""",
                     (operation_id, idempotency_key, fingerprint, principal_id, action, resource,
                      arguments_digest, context_digest, policy_json, created_at, expires_at),
                 )
                 result_row = session.one(
-                    "SELECT * FROM operations WHERE idempotency_key=?", (idempotency_key,), for_update=True
+                    "SELECT * FROM operations WHERE principal_id=? AND idempotency_key=?", (principal_id, idempotency_key), for_update=True
                 )
                 created = result_row["operation_id"] == operation_id
             else:
@@ -470,7 +470,7 @@ class SQLiteOperationStore(_BaseOperationStore):
             connection.executescript("""
             CREATE TABLE IF NOT EXISTS operations (
                 operation_id TEXT PRIMARY KEY,
-                idempotency_key TEXT NOT NULL UNIQUE,
+                idempotency_key TEXT NOT NULL,
                 request_fingerprint TEXT NOT NULL,
                 principal_id TEXT NOT NULL,
                 action TEXT NOT NULL,
@@ -504,8 +504,67 @@ class SQLiteOperationStore(_BaseOperationStore):
             );
             INSERT OR IGNORE INTO audit_head(singleton,head_hash) VALUES(1,'0000000000000000000000000000000000000000000000000000000000000000');
             """)
+            self._migrate_idempotency_scope(connection)
         finally:
             connection.close()
+
+    @staticmethod
+    def _migrate_idempotency_scope(connection: sqlite3.Connection) -> None:
+        """Scope caller idempotency keys to the principal, preserving existing records."""
+        indexes = connection.execute("PRAGMA index_list('operations')").fetchall()
+        unique_columns = []
+        for index in indexes:
+            if not index["unique"]:
+                continue
+            safe_name = str(index["name"]).replace('"', '""')
+            columns = connection.execute(f'PRAGMA index_info("{safe_name}")').fetchall()
+            unique_columns.append([column["name"] for column in columns])
+        legacy_global_unique = ["idempotency_key"] in unique_columns
+        composite_unique = ["principal_id", "idempotency_key"] in unique_columns
+        if legacy_global_unique:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                connection.execute("ALTER TABLE operations RENAME TO operations_legacy_global_idempotency")
+                connection.execute("DROP INDEX IF EXISTS operations_status_started")
+                connection.execute("""
+                    CREATE TABLE operations (
+                        operation_id TEXT PRIMARY KEY,
+                        idempotency_key TEXT NOT NULL,
+                        request_fingerprint TEXT NOT NULL,
+                        principal_id TEXT NOT NULL,
+                        action TEXT NOT NULL,
+                        resource TEXT NOT NULL,
+                        arguments_digest TEXT NOT NULL,
+                        context_digest TEXT NOT NULL,
+                        policy_decision_json TEXT NOT NULL,
+                        status TEXT NOT NULL CHECK(status IN ('issued','in_progress','succeeded','unknown','failed','cancelled','expired')),
+                        created_at TEXT NOT NULL,
+                        expires_at TEXT NOT NULL,
+                        started_at TEXT,
+                        finished_at TEXT,
+                        response_json TEXT,
+                        error_code TEXT,
+                        UNIQUE(principal_id, idempotency_key)
+                    )
+                """)
+                connection.execute("""
+                    INSERT INTO operations
+                    SELECT operation_id,idempotency_key,request_fingerprint,principal_id,action,resource,
+                           arguments_digest,context_digest,policy_decision_json,status,created_at,expires_at,
+                           started_at,finished_at,response_json,error_code
+                    FROM operations_legacy_global_idempotency
+                """)
+                connection.execute("DROP TABLE operations_legacy_global_idempotency")
+                connection.execute("CREATE INDEX IF NOT EXISTS operations_status_started ON operations(status, started_at)")
+                connection.execute("COMMIT")
+            except Exception:
+                if connection.in_transaction:
+                    connection.execute("ROLLBACK")
+                raise
+        elif not composite_unique:
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS operations_principal_idempotency_idx ON operations(principal_id,idempotency_key)"
+            )
 
     @contextmanager
     def _transaction(self) -> Iterator[_Session]:
@@ -549,7 +608,7 @@ class PostgresOperationStore(_BaseOperationStore):
             session.execute("""
                 CREATE TABLE IF NOT EXISTS operations (
                     operation_id TEXT PRIMARY KEY,
-                    idempotency_key TEXT NOT NULL UNIQUE,
+                    idempotency_key TEXT NOT NULL,
                     request_fingerprint TEXT NOT NULL,
                     principal_id TEXT NOT NULL,
                     action TEXT NOT NULL,
@@ -566,6 +625,26 @@ class PostgresOperationStore(_BaseOperationStore):
                     error_code TEXT
                 )
             """)
+            constraints = session.all("""
+                SELECT c.conname, array_agg(a.attname ORDER BY key_column.ordinality) AS columns
+                FROM pg_constraint c
+                JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS key_column(attnum, ordinality) ON TRUE
+                JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=key_column.attnum
+                WHERE c.conrelid='operations'::regclass AND c.contype='u'
+                GROUP BY c.conname
+            """)
+            composite_unique = False
+            for constraint in constraints:
+                columns = list(constraint["columns"])
+                if columns == ["principal_id", "idempotency_key"]:
+                    composite_unique = True
+                elif columns == ["idempotency_key"]:
+                    constraint_name = str(constraint["conname"]).replace('"', '""')
+                    session.execute('ALTER TABLE operations DROP CONSTRAINT "' + constraint_name + '"')
+            if not composite_unique:
+                session.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS operations_principal_idempotency_idx ON operations(principal_id,idempotency_key)"
+                )
             session.execute("CREATE INDEX IF NOT EXISTS operations_status_started ON operations(status, started_at)")
             session.execute("""
                 CREATE TABLE IF NOT EXISTS audit_events (
