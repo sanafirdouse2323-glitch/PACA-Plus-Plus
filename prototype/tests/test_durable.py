@@ -14,6 +14,7 @@ from paca_mvp.durable import (
     OperationOutcomeUnknown,
     OperationStateError,
     SQLiteOperationStore,
+    canonical_json,
 )
 
 
@@ -110,6 +111,22 @@ class DurableStoreTests(unittest.TestCase):
         second_store.claim(record.operation_id)
         with self.assertRaisesRegex(OperationStateError, "operation_in_progress"):
             self.store.claim(record.operation_id)
+
+
+    def test_canonical_json_rejects_non_string_keys_and_non_finite_values(self):
+        for value in ({1: "one"}, {"nan": float("nan")}, {"infinity": float("inf")}):
+            with self.subTest(value=str(value)):
+                with self.assertRaises(ValueError):
+                    canonical_json(value)
+
+    def test_canonical_json_enforces_nesting_limit(self):
+        value = {}
+        cursor = value
+        for _ in range(67):
+            cursor["child"] = {}
+            cursor = cursor["child"]
+        with self.assertRaises(ValueError):
+            canonical_json(value)
 
 
 if __name__ == "__main__":
