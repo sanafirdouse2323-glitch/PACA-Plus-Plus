@@ -106,6 +106,7 @@ class _Permit:
     action: str
     resource: str
     policy_version: str
+    policy_fingerprint: str
     state_version: int
     expires_at: datetime
     principal_id: str | None = None
@@ -120,6 +121,19 @@ def _resolve(context: dict[str, Any], dotted_path: str) -> Any:
             return _MISSING
         current = current[segment]
     return current
+
+
+def _policy_fingerprint(policy: Policy) -> str:
+    """Fingerprint policy content as well as its declared version label."""
+    payload = {
+        "version": policy.version,
+        "rules": [
+            {"id": rule.id, "effect": rule.effect, "action": rule.action,
+             "conditions": list(rule.conditions)}
+            for rule in policy.rules
+        ],
+    }
+    return _canonical_digest(payload)
 
 
 def _canonical_digest(value: Any) -> str:
@@ -171,6 +185,7 @@ class AuthorizationEngine:
 
     def __init__(self, policy: Policy):
         self._policy = policy
+        self._policy_fingerprint = _policy_fingerprint(policy)
         self._state_version = 0
         self._permits: dict[str, _Permit] = {}
         self._lock = RLock()
@@ -188,8 +203,11 @@ class AuthorizationEngine:
 
     def update_policy(self, policy: Policy) -> None:
         with self._lock:
+            fingerprint = _policy_fingerprint(policy)
             self._policy = policy
-            self.audit_log.append({"event": "policy_updated", "policy_version": policy.version})
+            self._policy_fingerprint = fingerprint
+            self.audit_log.append({"event": "policy_updated", "policy_version": policy.version,
+                                   "policy_fingerprint": fingerprint})
 
     def advance_state(self) -> int:
         with self._lock:
@@ -263,7 +281,7 @@ class AuthorizationEngine:
             permit_id = uuid4().hex
             self._permits[permit_id] = _Permit(
                 action=action, resource=resource, policy_version=self._policy.version,
-                state_version=self._state_version,
+                policy_fingerprint=self._policy_fingerprint, state_version=self._state_version,
                 expires_at=datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds),
                 principal_id=principal_id, arguments_digest=arguments_digest,
             )
@@ -328,7 +346,7 @@ class AuthorizationEngine:
                     raise AuthorizationError("arguments_mismatch")
             elif principal_id is not None or arguments is not None:
                 raise AuthorizationError("permit_binding_mode_mismatch")
-            if permit.policy_version != self._policy.version:
+            if permit.policy_fingerprint != self._policy_fingerprint:
                 raise AuthorizationError("stale_policy")
             if permit.state_version != self._state_version:
                 raise AuthorizationError("stale_state")
