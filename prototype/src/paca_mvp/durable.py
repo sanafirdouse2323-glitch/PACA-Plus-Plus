@@ -333,6 +333,47 @@ class _BaseOperationStore:
             self._append_audit(session, "operation_cancelled", operation_id, row["principal_id"],
                                {"reason": safe_reason})
 
+    def get_operation(self, operation_id: str) -> OperationRecord | None:
+        with self._transaction() as session:
+            row = session.one("SELECT * FROM operations WHERE operation_id=?", (operation_id,))
+        return None if row is None else self._record(row)
+
+    def reconcile_unknown(
+        self, operation_id: str, *, outcome: str, reason: str, response: Any = None,
+    ) -> OperationRecord:
+        """Privileged operator action for a separately verified external outcome.
+
+        Never call this merely because a timeout occurred. The operator must establish
+        the downstream result using that system's authoritative record.
+        """
+        if outcome not in {"succeeded", "failed"}:
+            raise ValueError("outcome must be 'succeeded' or 'failed'")
+        safe_reason = re.sub(r"[^A-Za-z0-9_.:-]", "_", str(reason))[:120] or "operator_reconciliation"
+        response_json = None
+        if outcome == "succeeded":
+            response_json = canonical_json(response)
+            if len(response_json.encode("utf-8")) > _MAX_RESULT_BYTES:
+                raise ValueError("effect_result_exceeds_1MiB")
+        updated = None
+        with self._transaction() as session:
+            row = session.one("SELECT * FROM operations WHERE operation_id=?", (operation_id,), for_update=True)
+            if row is None:
+                raise StoreError("operation_not_found")
+            if row["status"] != "unknown":
+                raise OperationStateError("only_unknown_operations_can_be_reconciled")
+            finished_at = _iso(utc_now())
+            session.execute(
+                "UPDATE operations SET status=?,finished_at=?,response_json=?,error_code=? WHERE operation_id=?",
+                (outcome, finished_at, response_json,
+                 None if outcome == "succeeded" else "reconciled_failed", operation_id),
+            )
+            self._append_audit(session, "operator_reconciliation", operation_id, row["principal_id"], {
+                "outcome": outcome, "reason": safe_reason,
+                "response_digest": canonical_digest(response) if outcome == "succeeded" else None,
+            })
+            updated = session.one("SELECT * FROM operations WHERE operation_id=?", (operation_id,))
+        return self._record(updated)
+
     def recover_incomplete(self, older_than_seconds: float = 60.0) -> int:
         if not math.isfinite(older_than_seconds) or older_than_seconds <= 0:
             raise ValueError("older_than_seconds must be positive and finite")
