@@ -112,6 +112,7 @@ class _Permit:
     expires_at: datetime
     principal_id: str | None = None
     arguments_digest: str | None = None
+    context_digest: str | None = None
     consumed: bool = False
 
 
@@ -193,9 +194,9 @@ def _compare(actual: Any, condition: dict[str, Any], context: dict[str, Any]) ->
 class AuthorizationEngine:
     """In-memory research engine; not a distributed or production authorization service.
 
-    The legacy authorize/execute API remains for the existing MVP examples. New code
-    should use authorize_operation/execute_operation so permits bind a principal and
-    canonicalized operation arguments as well as action and resource.
+    The legacy authorize API remains for decision-only compatibility; its unbound permits
+    cannot execute effects. Use authorize_operation/execute_operation to bind the principal,
+    exact JSON arguments, and authorization context as well as action and resource.
     """
 
     def __init__(self, policy: Policy):
@@ -267,10 +268,12 @@ class AuthorizationEngine:
                 return Decision(False, "invalid_principal", policy_version=self.policy_version)
             try:
                 arguments_digest = _canonical_digest(arguments)
+                context_digest = _canonical_digest(context)
             except ValueError:
-                return Decision(False, "invalid_arguments", policy_version=self.policy_version)
+                return Decision(False, "invalid_arguments_or_context", policy_version=self.policy_version)
         else:
             arguments_digest = None
+            context_digest = None
 
         with self._lock:
             matching: list[Rule] = []
@@ -300,6 +303,7 @@ class AuthorizationEngine:
                 policy_fingerprint=self._policy_fingerprint, state_version=self._state_version,
                 expires_at=datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds),
                 principal_id=principal_id, arguments_digest=arguments_digest,
+                context_digest=context_digest,
             )
             self.audit_log.append({
                 "event": "permit_issued", "permit_id": permit_id, "action": action,
@@ -307,6 +311,7 @@ class AuthorizationEngine:
                 "policy_version": self._policy.version, "state_version": self._state_version,
                 "principal_id": principal_id,
                 "arguments_digest": arguments_digest,
+                "context_digest": context_digest,
             })
             return Decision(True, "permitted", tuple(r.id for r in permits), permit_id, self._policy.version)
 
@@ -317,7 +322,7 @@ class AuthorizationEngine:
         """Authorize an operation while binding the permit to principal and exact JSON arguments."""
         return self.authorize(
             action, resource, context, ttl_seconds,
-            principal_id=principal_id, arguments=arguments,
+            principal_id=principal_id, arguments=arguments, context=context,
         )
 
     def execute(
@@ -329,6 +334,7 @@ class AuthorizationEngine:
         *,
         principal_id: str | None = None,
         arguments: Any = _UNBOUND,
+        context: Any = _UNBOUND,
     ) -> Any:
         """Validate, consume, and invoke an effect under the local commit lock.
 
@@ -360,6 +366,14 @@ class AuthorizationEngine:
                     raise AuthorizationError("invalid_arguments") from exc
                 if digest != permit.arguments_digest:
                     raise AuthorizationError("arguments_mismatch")
+                if context is _UNBOUND:
+                    raise AuthorizationError("context_binding_required")
+                try:
+                    current_context_digest = _canonical_digest(context)
+                except ValueError as exc:
+                    raise AuthorizationError("invalid_context") from exc
+                if current_context_digest != permit.context_digest:
+                    raise AuthorizationError("context_mismatch")
             if permit.policy_fingerprint != self._policy_fingerprint:
                 raise AuthorizationError("stale_policy")
             if permit.state_version != self._state_version:
@@ -371,6 +385,7 @@ class AuthorizationEngine:
                 "policy_version": self._policy.version, "state_version": self._state_version,
                 "principal_id": permit.principal_id,
                 "arguments_digest": permit.arguments_digest,
+                "context_digest": permit.context_digest,
             })
             try:
                 result = effect()
@@ -388,7 +403,7 @@ class AuthorizationEngine:
 
     def execute_operation(
         self, permit_id: str, principal_id: str, action: str, resource: str,
-        arguments: Any, effect: Callable[[], Any],
+        arguments: Any, context: dict[str, Any], effect: Callable[[], Any],
     ) -> Any:
         """Execute only the principal/action/resource/arguments tuple that was authorized."""
         return self.execute(
