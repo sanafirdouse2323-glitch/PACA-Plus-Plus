@@ -87,6 +87,10 @@ REVOKE ALL ON TABLE paca.operations FROM PUBLIC;
 REVOKE ALL ON TABLE paca.audit_events FROM PUBLIC;
 REVOKE ALL ON TABLE paca.audit_head FROM PUBLIC;
 REVOKE ALL ON SEQUENCE paca.audit_events_seq FROM PUBLIC;
+-- Also remove table-level UPDATE grants left by an earlier revision of this
+-- bootstrap script; column grants below do not override broader old grants.
+REVOKE UPDATE ON TABLE paca.operations FROM paca_runtime, paca_operator;
+REVOKE UPDATE ON TABLE paca.audit_head FROM paca_runtime, paca_operator;
 
 GRANT SELECT, INSERT ON TABLE paca.operations TO paca_runtime;
 GRANT UPDATE (status, started_at, finished_at, response_json, error_code, policy_decision_json)
