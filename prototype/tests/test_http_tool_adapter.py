@@ -74,7 +74,7 @@ class HTTPAdapterTests(unittest.TestCase):
         result = adapter(self.operation())
         self.assertEqual(result["accepted"], True)
         seen = DownstreamHandler.seen[-1]
-        self.assertEqual(seen["idempotency_key"], "idem-adapter-test")
+        self.assertEqual(seen["idempotency_key"], self.operation().downstream_idempotency_key)
         self.assertEqual(seen["operation_id"], "a" * 32)
         self.assertEqual(seen["body"]["arguments"], {"path": "report.csv"})
         self.assertEqual(seen["authorization"], "Bearer service-secret")
@@ -91,6 +91,21 @@ class HTTPAdapterTests(unittest.TestCase):
     def test_remote_http_requires_explicit_loopback_test_opt_in(self):
         with self.assertRaises(ValueError):
             HTTPJsonActionAdapter("http://example.com/action")
+
+
+    def test_downstream_idempotency_key_is_scoped_to_verified_principal(self):
+        first = self.operation()
+        second = ActionRequest(
+            operation_id="b" * 32,
+            idempotency_key=first.idempotency_key,
+            principal=AuthenticatedPrincipal("user-2", first.principal.issuer, {"sub": "user-2"}),
+            action=first.action,
+            resource=first.resource,
+            arguments=first.arguments,
+            opa_input=first.opa_input,
+        )
+        self.assertNotEqual(first.downstream_idempotency_key, second.downstream_idempotency_key)
+        self.assertEqual(first.downstream_idempotency_key, self.operation().downstream_idempotency_key)
 
 
 if __name__ == "__main__":
