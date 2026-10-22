@@ -57,7 +57,7 @@ Use the returned operation ID to query non-sensitive status:
     curl -H 'Authorization: Bearer <OIDC_ACCESS_TOKEN>' \
       http://127.0.0.1:8080/v1/operations/<OPERATION_ID>
 
-The `Idempotency-Key` value must uniquely identify one logical operation. Reusing the same key for a different principal/action/resource/arguments/context is rejected.
+The `Idempotency-Key` value must uniquely identify one logical operation for the authenticated principal. Keys are scoped to that principal, so different principals can use the same client key without colliding. Reusing a key for a different action/resource/arguments/context for the same principal is rejected.
 
 ## Context provider contract
 
@@ -83,6 +83,32 @@ The downstream service should:
 - treat the received idempotency key as unique and retain its result durably;
 - return a JSON response within the configured size limit; and
 - expose an authoritative status/log lookup for operator reconciliation.
+
+## Operator recovery commands
+
+Install the production package, then configure a restricted operator shell with one backend:
+
+    export PACA_POSTGRES_DSN='postgresql://...'
+    # or, for a single-host SQLite deployment:
+    export PACA_SQLITE_PATH='/var/lib/paca/state.db'
+
+Verify that the stored audit chain has not been altered:
+
+    paca-ops --backend postgres verify-audit
+
+Mark in-progress operations older than a carefully selected threshold as unknown; this never resubmits the external effect:
+
+    paca-ops --backend postgres recover-incomplete --older-than-seconds 120
+
+Inspect an operation's non-sensitive metadata:
+
+    paca-ops --backend postgres show-operation --operation-id <32-hex-operation-id>
+
+After checking the downstream system's authoritative evidence, reconcile an unknown outcome. Successful outcomes require the verified JSON response, which is durably stored and later replayed for the same authorized request:
+
+    paca-ops --backend postgres reconcile-unknown --operation-id <32-hex-operation-id> --outcome succeeded --reason ticket-INC123-verified --response-json '{"remote_id":"r-123"}'
+
+This CLI is a privileged local tool; it is not exposed through the public HTTP API. Restrict its database credentials and retain operator-session/audit records. Reconciliation is only as trustworthy as the evidence and operator process used to select the outcome.
 
 ## Failure and recovery semantics
 
