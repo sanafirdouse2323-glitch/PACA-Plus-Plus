@@ -80,16 +80,26 @@ ON CONFLICT (singleton) DO NOTHING;
 
 RESET ROLE;
 
--- The runtime can operate rows, but cannot delete operations or update/delete prior
--- audit events. The operator can inspect operations and reconcile UNKNOWN operations.
-GRANT SELECT, INSERT, UPDATE ON TABLE paca.operations TO paca_runtime;
+-- Use column-level UPDATE grants rather than table-level UPDATE. This prevents
+-- runtime/operator SQL access from rewriting immutable request identity, idempotency
+-- fingerprints, creation/expiry timestamps, action/resource, or argument/context digests.
+REVOKE ALL ON TABLE paca.operations FROM PUBLIC;
+REVOKE ALL ON TABLE paca.audit_events FROM PUBLIC;
+REVOKE ALL ON TABLE paca.audit_head FROM PUBLIC;
+REVOKE ALL ON SEQUENCE paca.audit_events_seq FROM PUBLIC;
+
+GRANT SELECT, INSERT ON TABLE paca.operations TO paca_runtime;
+GRANT UPDATE (status, started_at, finished_at, response_json, error_code, policy_decision_json)
+    ON TABLE paca.operations TO paca_runtime;
 GRANT SELECT, INSERT ON TABLE paca.audit_events TO paca_runtime;
-GRANT SELECT, UPDATE ON TABLE paca.audit_head TO paca_runtime;
+GRANT SELECT, UPDATE (head_hash) ON TABLE paca.audit_head TO paca_runtime;
 GRANT USAGE, SELECT ON SEQUENCE paca.audit_events_seq TO paca_runtime;
 
-GRANT SELECT, UPDATE ON TABLE paca.operations TO paca_operator;
+GRANT SELECT ON TABLE paca.operations TO paca_operator;
+GRANT UPDATE (status, finished_at, response_json, error_code)
+    ON TABLE paca.operations TO paca_operator;
 GRANT SELECT, INSERT ON TABLE paca.audit_events TO paca_operator;
-GRANT SELECT, UPDATE ON TABLE paca.audit_head TO paca_operator;
+GRANT SELECT, UPDATE (head_hash) ON TABLE paca.audit_head TO paca_operator;
 GRANT USAGE, SELECT ON SEQUENCE paca.audit_events_seq TO paca_operator;
 
 -- Ensure new tables created by a future migration are not accidentally PUBLIC-writable.
