@@ -1,35 +1,40 @@
-# PACA++ Research Prototype MVP
+# PACA++ prototype
 
-This is a runnable research prototype kept separate from the repository's original ALFA/UCON+ goal. It currently uses a small JSON policy format; it does **not** yet parse or compile ALFA/UCON+ policies or invoke real external tools.
+This directory contains a research MVP and a production-oriented integration scaffold. It is **not yet a production-certified authorization service** and it does not parse or compile the repository's original ALFA/UCON+ language.
 
-## Requirements
-- Python 3.10 or newer
-- No third-party runtime dependencies for direct execution
+## Research MVP
 
-## Run from this directory
+The local engine demonstrates deny-by-default policy evaluation, deny override, short-lived permits, action/resource/context binding and in-process concurrency checks. Its effects remain simulated.
+
+Run:
 
 ```bash
 python -m unittest discover -s tests -v
 python examples/demo.py
 python experiments/run_experiments.py
-python examples/authorize.py --policy examples/policy.json --context examples/context.json --action file.read --resource file:report-1 --execute
+python examples/authorize.py --policy examples/policy.json --context examples/context.json --action file.read --resource file:report-1 --principal-id demo-user --execute
 ```
 
-The final command evaluates the JSON policy and, when permitted, performs only a **simulated** effect. It never reads a real file or calls an external tool.
+## Production-oriented integration layer
 
-To try a denied action, change `--action file.read` to `--action file.delete`. The CLI prints a JSON decision and does not execute the simulated effect after denial.
+- `opa.py`: OPA Data API decision client; undefined decisions and service failures do not allow access.
+- `identity.py`: JWT verification against a configured HTTPS JWKS URL, plus a trusted server-side context-provider interface.
+- `gateway.py`: registered action gateway; re-fetches context and re-evaluates OPA immediately before dispatch.
+- `http_api.py`: bounded HTTP JSON API with `POST /v1/execute` and authenticated operation-status lookup.
+- `HTTPJsonActionAdapter`: sends calls only to a fixed configured HTTPS endpoint and rejects redirects.
+- `durable.py`: durable SQLite store for single-host use and PostgreSQL store for coordinated multi-instance operation state. Includes idempotency, recovery states and a hash-chained audit log.
+- `policies/authz.rego`: baseline example policy; intentionally narrow and must be adapted to verified business rules.
+- `compose.dependencies.yml`: OPA and PostgreSQL dependencies for local integration.
+- `.github/workflows/production-integration.yml`: checksum-pinned OPA validation plus live OPA/PostgreSQL integration tests.
 
-## Implemented safeguards
-- Default deny when no permit rule matches.
-- Missing attributes fail closed, including `ne`.
-- Exact action and resource binding at effect time.
-- Deny-overrides policy combination.
-- Short-lived, one-use permits.
-- Policy/state version revalidation.
-- A local lock around permit validation and the effect callback.
-- Tests for substitution, replay, stale state/policy, namespace confusion, and concurrent replay.
+Install the production dependencies and start the supporting services by following [the production deployment guide](docs/PRODUCTION_DEPLOYMENT.md).
 
-## Limitations
-This is a research scaffold, not a production authorization service. It uses an in-memory, process-local permit store and assumes trusted identity/context and stable resource identifiers. The local lock does not provide distributed transactions or undo a remote side effect. There is no production identity provider, durable tamper-resistant audit, complete ALFA/UCON+ DSL, real ASP/Cedar backend, external tool adapter, formal proof, or independently validated novelty claim.
+## Critical guarantees and limits
 
-See [the design specification](docs/PACA_Prototype_Full_Design.md), [threat model](THREAT_MODEL.md), and [local verification report](docs/LOCAL_VERIFICATION_REPORT.md).
+The HTTP caller cannot supply policy context or choose a Python handler. The authenticated subject ID comes from JWT claims verified against a configured issuer, audience, and signing key. Roles, status, tenant, resource owner and environment attributes must be loaded from authoritative server-side data by the application's context provider. The gateway does not invent your database schema or treat client-provided claims as trusted authorization attributes.
+
+Idempotency and state transitions are coordinated by PostgreSQL across service instances; SQLite is intended for local/single-host use. If a remote tool times out or an effect handler raises after dispatch starts, the operation is marked unknown and is not automatically retried. Operators must confirm the true remote outcome before reconciling the record.
+
+Remaining deployment work includes implementing and reviewing the real context-provider plugin, configuring the real identity provider and downstream service, applying network/TLS/secret controls, adding external audit anchoring and operational metrics, setting up retention/migrations/backups, and testing in the target environment. Re-evaluation immediately before dispatch narrows but does not eliminate the race where policy changes after an OPA answer and before a remote side effect. The audit hash chain detects many accidental edits but does not prevent a sufficiently privileged database administrator from rebuilding it.
+
+No CI or independent security review should be described as passing until its actual result is available.
