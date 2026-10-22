@@ -131,15 +131,30 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
                     has_column_privilege('paca_runtime', 'paca.operations', 'request_fingerprint', 'UPDATE'),
                     has_table_privilege('paca_operator', 'paca.operations', 'UPDATE'),
                     has_column_privilege('paca_operator', 'paca.operations', 'status', 'UPDATE'),
-                    has_column_privilege('paca_operator', 'paca.operations', 'request_fingerprint', 'UPDATE')
+                    has_column_privilege('paca_operator', 'paca.operations', 'request_fingerprint', 'UPDATE'),
+                    has_table_privilege('paca_runtime', 'paca.operations', 'DELETE'),
+                    has_table_privilege('paca_operator', 'paca.operations', 'DELETE'),
+                    has_table_privilege('paca_runtime', 'paca.audit_events', 'UPDATE'),
+                    has_table_privilege('paca_operator', 'paca.audit_events', 'UPDATE'),
+                    has_column_privilege('paca_runtime', 'paca.audit_head', 'head_hash', 'UPDATE'),
+                    has_column_privilege('paca_operator', 'paca.audit_head', 'head_hash', 'UPDATE')
             """).fetchone()
-            self.assertEqual(tuple(permissions), (False, True, False, False, True, False))
+            self.assertEqual(tuple(permissions), (
+                False, True, False, False, True, False,
+                False, False, False, False, True, True,
+            ))
 
             connection.execute("SET ROLE paca_runtime")
             connection.execute("UPDATE paca.operations SET status=status WHERE false")
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 connection.execute(
                     "UPDATE paca.operations SET request_fingerprint=request_fingerprint WHERE false"
+                )
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                connection.execute("DELETE FROM paca.operations WHERE false")
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                connection.execute(
+                    "UPDATE paca.audit_events SET payload_json=payload_json WHERE false"
                 )
 
             connection.execute("RESET ROLE")
@@ -148,6 +163,12 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 connection.execute(
                     "UPDATE paca.operations SET request_fingerprint=request_fingerprint WHERE false"
+                )
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                connection.execute("DELETE FROM paca.operations WHERE false")
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                connection.execute(
+                    "UPDATE paca.audit_events SET payload_json=payload_json WHERE false"
                 )
 
 
