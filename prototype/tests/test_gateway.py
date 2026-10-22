@@ -218,6 +218,39 @@ class GatewayTests(unittest.TestCase):
             self.gateway.get_operation_status("Bearer valid-token", result.operation_id)
 
 
+    def test_same_client_idempotency_key_is_independent_across_principals(self):
+        key = "idem-shared-" + uuid.uuid4().hex
+        first = self.call(key=key)
+
+        class OtherPrincipalAuth:
+            def authenticate(self, header):
+                if header != "Bearer valid-token":
+                    raise AuthenticationError("bad_token")
+                return AuthenticatedPrincipal("u2", "https://identity.example", {"sub": "u2"})
+
+        other = ProtectedToolGateway(
+            authenticator=OtherPrincipalAuth(),
+            context_provider=ContextFixture([
+                TrustedAuthorizationContext(
+                    subject_attributes={"status": "active", "role": "analyst", "tenant_id": "t1"},
+                    resource_attributes={"owner_id": "u2", "tenant_id": "t1"},
+                    environment={},
+                )
+            ]),
+            policy_decision_point=FakeOPA(),
+            operation_store=self.store,
+        )
+        other.register_action("file.read", lambda request: {"user": request.principal.subject})
+        second = other.execute(
+            "Bearer valid-token", action="file.read", resource="file:r1",
+            arguments={"path": "report.csv"}, idempotency_key=key,
+        )
+        self.assertNotEqual(first.operation_id, second.operation_id)
+        self.assertEqual(len(self.effects), 1)
+        self.assertEqual(second.result, {"user": "u2"})
+        self.assertTrue(self.store.verify_audit_chain())
+
+
     def test_issued_operation_can_resume_if_interrupted_before_claim(self):
         key = "idem-" + uuid.uuid4().hex
         original_claim = self.store.claim
