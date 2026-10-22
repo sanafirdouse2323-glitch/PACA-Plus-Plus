@@ -22,6 +22,8 @@ from uuid import uuid4
 
 _ROOT_HASH = "0" * 64
 _IDEMPOTENCY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_ACTION_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
+_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 _MAX_TTL_SECONDS = 300.0
 _MAX_RESULT_BYTES = 1_048_576
 
@@ -207,12 +209,19 @@ class _BaseOperationStore:
     ) -> tuple[OperationRecord, bool]:
         if not isinstance(idempotency_key, str) or not _IDEMPOTENCY_RE.fullmatch(idempotency_key):
             raise ValueError("idempotency_key must be 1-128 safe ASCII characters")
-        if not isinstance(principal_id, str) or not principal_id.strip():
-            raise ValueError("principal_id is required")
-        if not isinstance(action, str) or not action.strip():
-            raise ValueError("action is required")
-        if not isinstance(resource, str) or not resource.strip():
-            raise ValueError("resource is required")
+        if (not isinstance(principal_id, str) or not principal_id.strip()
+                or len(principal_id) > 512
+                or any(ord(character) < 0x20 or ord(character) == 0x7f for character in principal_id)):
+            raise ValueError("principal_id must be a bounded printable identifier")
+        if not isinstance(action, str) or not _ACTION_RE.fullmatch(action):
+            raise ValueError("action must be a valid exact identifier")
+        if (not isinstance(resource, str) or not resource.strip() or len(resource) > 2048
+                or any(ord(character) < 0x20 or ord(character) == 0x7f for character in resource)):
+            raise ValueError("resource must be a bounded printable identifier")
+        if not isinstance(arguments_digest, str) or not _DIGEST_RE.fullmatch(arguments_digest):
+            raise ValueError("arguments_digest must be a lowercase SHA-256 hex digest")
+        if not isinstance(context_digest, str) or not _DIGEST_RE.fullmatch(context_digest):
+            raise ValueError("context_digest must be a lowercase SHA-256 hex digest")
         try:
             valid_ttl = (not isinstance(ttl_seconds, bool)
                          and isinstance(ttl_seconds, (int, float))
