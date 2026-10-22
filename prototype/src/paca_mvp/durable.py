@@ -222,8 +222,21 @@ class _BaseOperationStore:
             valid_ttl = False
         if not valid_ttl:
             raise ValueError("ttl_seconds must be finite, positive, and at most 300")
-        # Only digests and the policy reason are stored; raw tool arguments/context are not logged.
-        policy_json = canonical_json(policy_decision)
+        # Persist only a bounded allow result, reason, and optional OPA decision ID.
+        # Raw tool arguments/context and arbitrary policy output are intentionally not stored.
+        if not isinstance(policy_decision, dict) or policy_decision.get("allow") is not True:
+            raise ValueError("operation creation requires an explicit allow decision")
+        decision_reason = policy_decision.get("reason", "permitted")
+        if not isinstance(decision_reason, str):
+            decision_reason = "permitted"
+        decision_id = policy_decision.get("decision_id")
+        if not isinstance(decision_id, str) or not decision_id or len(decision_id) > 128:
+            decision_id = None
+        policy_json = canonical_json({
+            "allow": True,
+            "reason": decision_reason[:128],
+            "decision_id": decision_id,
+        })
         fingerprint = canonical_digest({
             "principal_id": principal_id, "action": action, "resource": resource,
             "arguments_digest": arguments_digest, "context_digest": context_digest,
@@ -279,11 +292,18 @@ class _BaseOperationStore:
     ) -> OperationRecord:
         """Atomically claim an issued operation and persist the final pre-dispatch decision."""
         if policy_decision is not None:
-            if policy_decision.get("allow") is not True:
+            if not isinstance(policy_decision, dict) or policy_decision.get("allow") is not True:
                 raise ValueError("claim_requires_an_allow_decision")
+            reason = policy_decision.get("reason", "permitted")
+            if not isinstance(reason, str):
+                reason = "permitted"
+            decision_id = policy_decision.get("decision_id")
+            if not isinstance(decision_id, str) or not decision_id or len(decision_id) > 128:
+                decision_id = None
             decision_json = canonical_json({
                 "allow": True,
-                "reason": str(policy_decision.get("reason", "permitted"))[:128],
+                "reason": reason[:128],
+                "decision_id": decision_id,
             })
         else:
             decision_json = None
