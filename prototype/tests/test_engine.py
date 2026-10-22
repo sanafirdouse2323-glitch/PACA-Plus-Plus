@@ -141,7 +141,7 @@ class AuthorizationTests(unittest.TestCase):
         self.assertEqual(ran, [])
 
     def test_non_finite_or_non_positive_ttl_is_denied(self):
-        for ttl in (0, -1, float("nan"), float("inf"), float("-inf")):
+        for ttl in (0, -1, 301, 10**100, float("nan"), float("inf"), float("-inf")):
             with self.subTest(ttl=ttl):
                 d = self.engine.authorize("file.read", "file:r1", self.ctx, ttl)
                 self.assertFalse(d.allowed)
