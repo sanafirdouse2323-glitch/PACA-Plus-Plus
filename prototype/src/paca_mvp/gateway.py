@@ -42,6 +42,10 @@ class PolicyEvaluationFailed(RuntimeError):
 class OperationOutcomeUnresolved(RuntimeError):
     """The external action may have happened; do not automatically resubmit it."""
 
+    def __init__(self, message: str, operation_id: str | None = None):
+        super().__init__(message)
+        self.operation_id = operation_id
+
 
 class ContextChanged(RuntimeError):
     """Trusted context changed between the initial check and dispatch."""
@@ -269,7 +273,7 @@ class ProtectedToolGateway:
                 pass
             raise OperationOutcomeUnresolved(
                 "effect_dispatch_outcome_unknown; do not automatically retry; reconcile operation_id="
-                + operation.operation_id
+                + operation.operation_id, operation.operation_id
             ) from exc
         return GatewayResult(completed.operation_id, "succeeded", completed.response, False,
                              current_decision.reason)
