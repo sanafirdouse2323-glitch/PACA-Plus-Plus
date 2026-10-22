@@ -1,0 +1,114 @@
+import sys
+import unittest
+from pathlib import Path
+from threading import Thread
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from paca_mvp import AuthorizationEngine, Policy, PolicyError, AuthorizationError
+
+
+def make_policy(version="v1", include_deny=False):
+    rules = [{
+        "id": "read_owned", "effect": "permit", "action": "file.read",
+        "conditions": [
+            {"path": "user.role", "op": "eq", "value": "analyst"},
+            {"path": "resource.owner", "op": "eq", "value_from_path": "user.id"},
+        ],
+    }]
+    if include_deny:
+        rules.append({"id": "deny_suspended", "effect": "deny", "action": "file.read",
+                      "conditions": [{"path": "user.suspended", "op": "eq", "value": True}]})
+    return Policy.from_dict({"version": version, "rules": rules})
+
+
+def context():
+    return {"user": {"id": "u1", "role": "analyst", "suspended": False},
+            "resource": {"owner": "u1"}}
+
+
+class AuthorizationTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = AuthorizationEngine(make_policy())
+        self.ctx = context()
+
+    def test_permit_for_matching_user_and_owned_resource(self):
+        d = self.engine.authorize("file.read", "file:r1", self.ctx)
+        self.assertTrue(d.allowed)
+        self.assertIsNotNone(d.permit_id)
+
+    def test_default_deny_for_unknown_action(self):
+        d = self.engine.authorize("file.delete", "file:r1", self.ctx)
+        self.assertFalse(d.allowed)
+        self.assertEqual(d.reason, "no_matching_permit")
+
+    def test_missing_namespaced_attribute_does_not_fall_back(self):
+        ctx = {"role": "analyst", "user": {"id": "u1"}, "resource": {"owner": "u1"}}
+        self.assertFalse(self.engine.authorize("file.read", "file:r1", ctx).allowed)
+
+    def test_missing_attribute_ne_does_not_pass(self):
+        policy = Policy.from_dict({"version": "v1", "rules": [{
+            "id": "r", "effect": "permit", "action": "file.read",
+            "conditions": [{"path": "user.role", "op": "ne", "value": "blocked"}],
+        }]})
+        self.assertFalse(AuthorizationEngine(policy).authorize("file.read", "file:r1", {"user": {}}).allowed)
+
+    def test_action_substitution_is_blocked_before_effect(self):
+        d = self.engine.authorize("file.read", "file:r1", self.ctx)
+        ran = []
+        with self.assertRaisesRegex(AuthorizationError, "action_or_resource_mismatch"):
+            self.engine.execute(d.permit_id, "file.delete", "file:r1", lambda: ran.append("executed"))
+        self.assertEqual(ran, [])
+
+    def test_resource_substitution_is_blocked(self):
+        d = self.engine.authorize("file.read", "file:r1", self.ctx)
+        with self.assertRaisesRegex(AuthorizationError, "action_or_resource_mismatch"):
+            self.engine.execute(d.permit_id, "file.read", "file:r2", lambda: "bad")
+
+    def test_permit_is_one_use(self):
+        d = self.engine.authorize("file.read", "file:r1", self.ctx)
+        self.assertEqual(self.engine.execute(d.permit_id, "file.read", "file:r1", lambda: 7), 7)
+        with self.assertRaisesRegex(AuthorizationError, "permit_replayed"):
+            self.engine.execute(d.permit_id, "file.read", "file:r1", lambda: 8)
+
+    def test_state_change_invalidates_permit(self):
+        d = self.engine.authorize("file.read", "file:r1", self.ctx)
+        self.engine.advance_state()
+        with self.assertRaisesRegex(AuthorizationError, "stale_state"):
+            self.engine.execute(d.permit_id, "file.read", "file:r1", lambda: "bad")
+
+    def test_policy_change_invalidates_permit(self):
+        d = self.engine.authorize("file.read", "file:r1", self.ctx)
+        self.engine.update_policy(make_policy(version="v2"))
+        with self.assertRaisesRegex(AuthorizationError, "stale_policy"):
+            self.engine.execute(d.permit_id, "file.read", "file:r1", lambda: "bad")
+
+    def test_deny_overrides_permit(self):
+        engine = AuthorizationEngine(make_policy(include_deny=True))
+        ctx = context()
+        ctx["user"]["suspended"] = True
+        d = engine.authorize("file.read", "file:r1", ctx)
+        self.assertFalse(d.allowed)
+        self.assertEqual(d.reason, "deny_override")
+
+    def test_empty_permit_rule_rejected(self):
+        with self.assertRaises(PolicyError):
+            Policy.from_dict({"version": "v1", "rules": [{
+                "id": "unsafe", "effect": "permit", "action": "file.read", "conditions": [],
+            }]})
+
+    def test_concurrent_replay_allows_at_most_one_effect(self):
+        d = self.engine.authorize("file.read", "file:r1", self.ctx)
+        outcomes, rejected = [], []
+        def attempt():
+            try:
+                self.engine.execute(d.permit_id, "file.read", "file:r1", lambda: outcomes.append("effect"))
+            except AuthorizationError:
+                rejected.append("rejected")
+        t1, t2 = Thread(target=attempt), Thread(target=attempt)
+        t1.start(); t2.start(); t1.join(); t2.join()
+        self.assertEqual(outcomes, ["effect"])
+        self.assertEqual(len(rejected), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
