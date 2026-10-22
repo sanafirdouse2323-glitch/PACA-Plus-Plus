@@ -3,6 +3,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import datetime
+import hashlib
 import json
 import os
 import threading
@@ -125,7 +126,12 @@ class FullStackIntegrationTests(unittest.TestCase):
         self.assertTrue(replay.replayed)
         self.assertEqual(first.result, {"remote_ok": True, "resource": "file:r1"})
         self.assertEqual(len(DownstreamHandler.calls), 1)
-        self.assertEqual(DownstreamHandler.calls[0]["idempotency_key"], key)
+        expected_downstream_key = hashlib.sha256(json.dumps(
+            {"issuer": "https://identity.integration.example",
+             "subject": "integration-user", "client_idempotency_key": key},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        self.assertEqual(DownstreamHandler.calls[0]["idempotency_key"], expected_downstream_key)
 
         with self.assertRaises(AuthorizationDenied):
             gateway.execute(
