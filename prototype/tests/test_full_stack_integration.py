@@ -91,6 +91,7 @@ class FullStackIntegrationTests(unittest.TestCase):
             resource_lookup=lambda _principal, _action, resource, _args: {
                 "owner_id": "integration-user" if resource == "file:r1" else "another-user",
                 "tenant_id": "tenant-a",
+                "canonical_path": "report-1" if resource == "file:r1" else "other-user-report",
             },
         )
         opa = OPAPolicyDecisionPoint(base_url=OPA_BASE_URL)
