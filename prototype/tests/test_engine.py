@@ -87,6 +87,23 @@ class AuthorizationTests(unittest.TestCase):
         with self.assertRaisesRegex(AuthorizationError, "stale_policy"):
             self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, lambda: "bad")
 
+    def test_policy_content_change_invalidates_permit_even_if_version_label_is_reused(self):
+        args = {"path": "report-1"}
+        d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
+        changed = Policy.from_dict({"version": "v1", "rules": [{
+            "id": "read_owned", "effect": "permit", "action": "file.read",
+            "conditions": [
+                {"path": "user.role", "op": "eq", "value": "engineer"},
+                {"path": "resource.owner", "op": "eq", "value_from_path": "user.id"},
+            ],
+        }]})
+        self.engine.update_policy(changed)
+        with self.assertRaisesRegex(AuthorizationError, "stale_policy"):
+            self.engine.execute_operation(
+                d.permit_id, "user-1", "file.read", "file:r1", args, lambda: "must not run"
+            )
+
+
     def test_deny_overrides_permit(self):
         engine = AuthorizationEngine(make_policy(include_deny=True))
         ctx = context()
