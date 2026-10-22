@@ -106,8 +106,13 @@ def main(argv: list[str] | None = None) -> int:
                     "finished_at": operation.finished_at, "error_code": operation.error_code})
             return 0
         raise RuntimeError("unhandled_command")
+    except ValueError as exc:
+        print(json.dumps({"error": "invalid_input", "message": str(exc)}, ensure_ascii=False),
+              file=sys.stderr)
+        return 2
     except Exception as exc:
-        print(json.dumps({"error": type(exc).__name__, "message": str(exc)}, ensure_ascii=False),
+        # Database exceptions may contain DSNs, SQL, or data. Do not print them to stdout/stderr.
+        print(json.dumps({"error": type(exc).__name__, "message": "operation_failed; consult protected operator logs"}),
               file=sys.stderr)
         return 2
 
