@@ -37,7 +37,7 @@ Configure the application using secrets from your secret manager or deployment p
     export PACA_FILE_READ_ENDPOINT='https://your-downstream-service.example/v1/read'
     export PACA_DOWNSTREAM_SERVICE_TOKEN='inject-this-from-a-secret-manager'
 
-The module named by `PACA_CONTEXT_PROVIDER` must be available on `PYTHONPATH` and its factory must return an object implementing `load(principal, action, resource, arguments)`. That implementation is application-specific and is intentionally not fabricated here: it must query the authoritative user/tenant/resource store. The example policy expects the returned subject attributes to contain `status`, `role`, and `tenant_id`, and the resource attributes to contain `owner_id` and `tenant_id`.
+The module named by `PACA_CONTEXT_PROVIDER` must be available on `PYTHONPATH` and its factory must return an object implementing `load(principal, action, resource, arguments)`. That implementation is application-specific and is intentionally not fabricated here: it must query the authoritative user/tenant/resource store. The example policy expects the returned subject attributes to contain `status`, `role`, and `tenant_id`, and the resource attributes to contain `owner_id`, `tenant_id`, and `canonical_path` (for the example `file.read` policy). The canonical path must be resolved from authoritative resource storage; do not copy it from the request.
 
 Start the HTTP API (defaults to loopback only):
 
@@ -71,7 +71,7 @@ Implement a trusted provider in your application:
             #     resource_attributes=..., environment=...)
             ...
 
-The `resource` identifier is caller-supplied input; the lookup must enforce tenant scoping and return an empty/denied resource context when it does not exist or the principal must not discover it. Do not return secrets or unnecessary personal data to OPA.
+The `resource` identifier is caller-supplied input; the lookup must enforce tenant scoping and return an empty/denied resource context when it does not exist or the principal must not discover it. The baseline file-read policy additionally requires `arguments.path` to equal the server-resolved `resource.canonical_path`, so authorization for a logical resource cannot silently be reused to read a different caller-selected path. Real file integrations must still resolve and enforce the trusted resource handle/path at the downstream effect boundary, including symlink and canonicalization rules. Do not return secrets or unnecessary personal data to OPA.
 
 ## Tool/API adapter contract
 
