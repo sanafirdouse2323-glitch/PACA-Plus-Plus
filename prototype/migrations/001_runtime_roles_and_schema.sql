@@ -86,7 +86,7 @@ RESET ROLE;
 REVOKE ALL ON TABLE paca.operations FROM PUBLIC;
 REVOKE ALL ON TABLE paca.audit_events FROM PUBLIC;
 REVOKE ALL ON TABLE paca.audit_head FROM PUBLIC;
-REVOKE ALL ON SEQUENCE paca.audit_events_seq FROM PUBLIC;
+REVOKE ALL ON SEQUENCE paca.audit_events_seq_seq FROM PUBLIC;
 -- Also remove table-level UPDATE grants left by an earlier revision of this
 -- bootstrap script; column grants below do not override broader old grants.
 REVOKE UPDATE ON TABLE paca.operations FROM paca_runtime, paca_operator;
@@ -97,14 +97,14 @@ GRANT UPDATE (status, started_at, finished_at, response_json, error_code, policy
     ON TABLE paca.operations TO paca_runtime;
 GRANT SELECT, INSERT ON TABLE paca.audit_events TO paca_runtime;
 GRANT SELECT, UPDATE (head_hash) ON TABLE paca.audit_head TO paca_runtime;
-GRANT USAGE, SELECT ON SEQUENCE paca.audit_events_seq TO paca_runtime;
+GRANT USAGE, SELECT ON SEQUENCE paca.audit_events_seq_seq TO paca_runtime;
 
 GRANT SELECT ON TABLE paca.operations TO paca_operator;
 GRANT UPDATE (status, finished_at, response_json, error_code)
     ON TABLE paca.operations TO paca_operator;
 GRANT SELECT, INSERT ON TABLE paca.audit_events TO paca_operator;
 GRANT SELECT, UPDATE (head_hash) ON TABLE paca.audit_head TO paca_operator;
-GRANT USAGE, SELECT ON SEQUENCE paca.audit_events_seq TO paca_operator;
+GRANT USAGE, SELECT ON SEQUENCE paca.audit_events_seq_seq TO paca_operator;
 
 -- Ensure new tables created by a future migration are not accidentally PUBLIC-writable.
 ALTER DEFAULT PRIVILEGES FOR ROLE paca_migrator IN SCHEMA paca REVOKE ALL ON TABLES FROM PUBLIC;
