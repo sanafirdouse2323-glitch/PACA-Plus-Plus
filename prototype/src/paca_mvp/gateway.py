@@ -347,6 +347,20 @@ class HTTPJsonActionAdapter:
         self.max_response_bytes = max_response_bytes
         self._opener = build_opener(_NoRedirect)
 
+    def _service_token(self) -> str | None:
+        if self.service_token_provider is None:
+            return None
+        token = self.service_token_provider()
+        if (not isinstance(token, str) or not token
+                or len(token) > 8192
+                or not re.fullmatch(r"[A-Za-z0-9\\-._~+/]+=*", token)):
+            raise RemoteToolError("downstream_service_credentials_invalid")
+        return token
+
+    def preflight(self) -> None:
+        """Validate static adapter configuration/credentials before any operation is claimed."""
+        self._service_token()
+
     def __call__(self, operation: ActionRequest) -> Any:
         body = canonical_json({
             "operation_id": operation.operation_id,
@@ -361,10 +375,8 @@ class HTTPJsonActionAdapter:
             "Idempotency-Key": operation.downstream_idempotency_key,
             "X-PACA-Operation-ID": operation.operation_id,
         }
-        if self.service_token_provider is not None:
-            token = self.service_token_provider()
-            if not isinstance(token, str) or not token.strip():
-                raise RemoteToolError("downstream_service_credentials_unavailable")
+        token = self._service_token()
+        if token is not None:
             headers["Authorization"] = "Bearer " + token
         request = Request(self.endpoint, data=body, headers=headers, method="POST")
         try:
