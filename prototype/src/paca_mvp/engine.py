@@ -12,6 +12,7 @@ from uuid import uuid4
 
 _MISSING = object()
 _IDENTIFIER = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]*$")
+_MAX_PERMIT_TTL_SECONDS = 300.0
 
 
 class PolicyError(ValueError):
@@ -213,8 +214,16 @@ class AuthorizationEngine:
             return Decision(False, "invalid_resource", policy_version=self.policy_version)
         if not isinstance(context, dict):
             return Decision(False, "invalid_context", policy_version=self.policy_version)
-        if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, (int, float)) \
-                or not math.isfinite(ttl_seconds) or ttl_seconds <= 0:
+        try:
+            valid_ttl = (
+                not isinstance(ttl_seconds, bool)
+                and isinstance(ttl_seconds, (int, float))
+                and math.isfinite(float(ttl_seconds))
+                and 0 < ttl_seconds <= _MAX_PERMIT_TTL_SECONDS
+            )
+        except (OverflowError, TypeError, ValueError):
+            valid_ttl = False
+        if not valid_ttl:
             return Decision(False, "invalid_permit_ttl", policy_version=self.policy_version)
         if (principal_id is None) != (arguments is None):
             return Decision(False, "principal_and_arguments_must_be_supplied_together",
