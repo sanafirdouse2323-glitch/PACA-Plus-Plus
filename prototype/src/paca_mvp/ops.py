@@ -59,8 +59,8 @@ def main(argv: list[str] | None = None) -> int:
     reconcile.add_argument("--outcome", choices=("succeeded", "failed"), required=True)
     reconcile.add_argument("--reason", required=True,
                            help="Concise reference to independently verified downstream evidence")
-    reconcile.add_argument("--response-json",
-                           help="Verified JSON response only when outcome=succeeded; avoid secrets")
+    reconcile.add_argument("--response-stdin", action="store_true",
+                           help="Read verified JSON response from stdin when outcome=succeeded")
     reconcile.set_defaults(handler="reconcile_unknown")
 
     args = parser.parse_args(argv)
@@ -95,16 +95,22 @@ def main(argv: list[str] | None = None) -> int:
             })
             return 0
         if args.handler == "reconcile_unknown":
-            if args.outcome == "succeeded" and args.response_json is None:
-                raise ValueError("--response-json is required for outcome=succeeded")
-            if args.outcome == "failed" and args.response_json is not None:
-                raise ValueError("--response-json is valid only for outcome=succeeded")
+            if args.outcome == "succeeded" and not args.response_stdin:
+                raise ValueError("--response-stdin is required for outcome=succeeded")
+            if args.outcome == "failed" and args.response_stdin:
+                raise ValueError("--response-stdin is valid only for outcome=succeeded")
             response = None
-            if args.response_json is not None:
+            if args.response_stdin:
                 try:
-                    response = json.loads(args.response_json, parse_constant=lambda x: (_ for _ in ()).throw(ValueError(x)))
+                    raw_response = sys.stdin.read(1_048_577)
+                    if len(raw_response.encode("utf-8")) > 1_048_576:
+                        raise ValueError("response exceeds 1 MiB")
+                    response = json.loads(
+                        raw_response,
+                        parse_constant=lambda x: (_ for _ in ()).throw(ValueError(x)),
+                    )
                 except (json.JSONDecodeError, ValueError) as exc:
-                    raise ValueError("--response-json must be finite JSON") from exc
+                    raise ValueError("--response-stdin must contain finite JSON up to 1 MiB") from exc
             operation = store.reconcile_unknown(
                 args.operation_id, outcome=args.outcome, reason=args.reason, response=response
             )
