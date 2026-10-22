@@ -240,7 +240,11 @@ class ProtectedToolGateway:
                 raise OperationOutcomeUnresolved("operation_outcome_unknown; reconcile before retry", operation.operation_id)
             if operation.status == "in_progress":
                 raise OperationStateError("operation_in_progress")
-            raise OperationStateError("idempotency_key_already_used:" + operation.status)
+            if operation.status != "issued":
+                raise OperationStateError("idempotency_key_already_used:" + operation.status)
+            # An issued row proves claim() had not committed, so no handler was allowed
+            # to start through this gateway. Re-authorize and safely resume that request.
+            # A claimed row is never resumed automatically; it becomes UNKNOWN on recovery.
 
         # Re-fetch authoritative attributes immediately before dispatch.
         try:
