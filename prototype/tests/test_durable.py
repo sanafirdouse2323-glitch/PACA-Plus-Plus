@@ -129,5 +129,56 @@ class DurableStoreTests(unittest.TestCase):
             canonical_json(value)
 
 
+    def test_same_idempotency_key_is_scoped_to_principal(self):
+        first, first_created = self.store.create_or_get(**self.kwargs)
+        second_kwargs = dict(self.kwargs)
+        second_kwargs["principal_id"] = "different-user"
+        second, second_created = self.store.create_or_get(**second_kwargs)
+        self.assertTrue(first_created)
+        self.assertTrue(second_created)
+        self.assertNotEqual(first.operation_id, second.operation_id)
+        self.assertEqual(first.idempotency_key, second.idempotency_key)
+
+    def test_existing_sqlite_global_idempotency_constraint_is_migrated(self):
+        legacy_path = str(Path(self.temp.name) / "legacy.db")
+        with sqlite3.connect(legacy_path) as connection:
+            connection.execute("""
+                CREATE TABLE operations (
+                    operation_id TEXT PRIMARY KEY,
+                    idempotency_key TEXT NOT NULL UNIQUE,
+                    request_fingerprint TEXT NOT NULL,
+                    principal_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    resource TEXT NOT NULL,
+                    arguments_digest TEXT NOT NULL,
+                    context_digest TEXT NOT NULL,
+                    policy_decision_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    response_json TEXT,
+                    error_code TEXT
+                )
+            """)
+            connection.execute("CREATE INDEX operations_status_started ON operations(status, started_at)")
+        migrated = SQLiteOperationStore(legacy_path)
+        first_kwargs = dict(self.kwargs, idempotency_key="shared-after-migration")
+        second_kwargs = dict(first_kwargs, principal_id="different-user")
+        first, _ = migrated.create_or_get(**first_kwargs)
+        second, _ = migrated.create_or_get(**second_kwargs)
+        self.assertNotEqual(first.operation_id, second.operation_id)
+        with sqlite3.connect(legacy_path) as connection:
+            unique_indexes = connection.execute("PRAGMA index_list('operations')").fetchall()
+            unique_columns = []
+            for idx in unique_indexes:
+                if idx[2]:
+                    columns = connection.execute(f'PRAGMA index_info("{idx[1]}")').fetchall()
+                    unique_columns.append([col[2] for col in columns])
+        self.assertIn(["principal_id", "idempotency_key"], unique_columns)
+        self.assertNotIn(["idempotency_key"], unique_columns)
+
+
 if __name__ == "__main__":
     unittest.main()
