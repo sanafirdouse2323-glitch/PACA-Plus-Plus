@@ -68,7 +68,7 @@ Implement a trusted provider in your application:
 
     class YourContextProvider:
         def load(self, principal, action, resource, arguments):
-            # Query authoritative user and resource data using principal.subject.
+            # Query authoritative user and resource data using both principal.issuer and principal.subject as the identity key; never assume subject is globally unique across issuers.
             # Do not take role, tenant, owner, status, or permissions from request JSON.
             # Return TrustedAuthorizationContext(subject_attributes=...,
             #     resource_attributes=..., environment=...)
@@ -109,7 +109,7 @@ Inspect an operation's non-sensitive metadata:
 
 After checking the downstream system's authoritative evidence, reconcile an unknown outcome. Successful outcomes require the verified JSON response, which is durably stored and later replayed for the same authorized request:
 
-    paca-ops --backend postgres reconcile-unknown --operation-id <32-hex-operation-id> --outcome succeeded --reason ticket-INC123-verified --response-json '{"remote_id":"r-123"}'
+    printf '%s' '{"remote_id":"r-123"}' | paca-ops --backend postgres reconcile-unknown --operation-id <32-hex-operation-id> --outcome succeeded --reason ticket-INC123-verified --response-stdin
 
 This CLI is a privileged local tool; it is not exposed through the public HTTP API. Restrict its database credentials and retain operator-session/audit records. Reconciliation is only as trustworthy as the evidence and operator process used to select the outcome.
 
