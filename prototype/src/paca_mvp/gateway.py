@@ -217,15 +217,15 @@ class ProtectedToolGateway:
         try:
             input_snapshot = self._build_input(principal, action, resource, args_snapshot)
         except Exception:
-            self.operation_store.record_denial(principal.subject, action, resource, "trusted_context_unavailable")
+            self.operation_store.record_denial(principal.storage_id, action, resource, "trusted_context_unavailable")
             raise PolicyEvaluationFailed("trusted_context_unavailable") from None
         try:
             initial_decision = self.policy_decision_point.evaluate(input_snapshot)
         except OPAError:
-            self.operation_store.record_denial(principal.subject, action, resource, "opa_unavailable")
+            self.operation_store.record_denial(principal.storage_id, action, resource, "opa_unavailable")
             raise PolicyEvaluationFailed("policy_decision_unavailable") from None
         if not initial_decision.allowed:
-            self.operation_store.record_denial(principal.subject, action, resource, initial_decision.reason)
+            self.operation_store.record_denial(principal.storage_id, action, resource, initial_decision.reason)
             raise AuthorizationDenied("request_denied")
 
         try:
@@ -270,7 +270,7 @@ class ProtectedToolGateway:
             raise ContextChanged("trusted_authorization_context_changed")
         if not current_decision.allowed:
             self.operation_store.cancel_issued(operation.operation_id, "pre_dispatch_policy_denied")
-            self.operation_store.record_denial(principal.subject, action, resource, current_decision.reason)
+            self.operation_store.record_denial(principal.storage_id, action, resource, current_decision.reason)
             raise AuthorizationDenied("request_denied_at_dispatch")
 
         try:
