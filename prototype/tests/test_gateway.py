@@ -218,5 +218,28 @@ class GatewayTests(unittest.TestCase):
             self.gateway.get_operation_status("Bearer valid-token", result.operation_id)
 
 
+    def test_issued_operation_can_resume_if_interrupted_before_claim(self):
+        key = "idem-" + uuid.uuid4().hex
+        original_claim = self.store.claim
+        fail_once = {"value": True}
+
+        def injected_preclaim_failure(operation_id):
+            if fail_once["value"]:
+                fail_once["value"] = False
+                raise RuntimeError("simulated failure before state transition")
+            return original_claim(operation_id)
+
+        self.store.claim = injected_preclaim_failure
+        with self.assertRaisesRegex(RuntimeError, "before state transition"):
+            self.call(key=key)
+        self.assertEqual(self.effects, [])
+        self.store.claim = original_claim
+
+        result = self.call(key=key)
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(len(self.effects), 1)
+        self.assertTrue(self.store.verify_audit_chain())
+
+
 if __name__ == "__main__":
     unittest.main()
