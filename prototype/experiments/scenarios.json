@@ -1,0 +1,182 @@
+{
+  "schema_version": "1.0",
+  "description": "Deterministic toy scenarios for evaluating authorization correctness; not a production benchmark.",
+  "scenarios": [
+    {
+      "id": "A01",
+      "family": "positive_control",
+      "action": "file.read",
+      "resource": "file:r1",
+      "context": {
+        "user": {
+          "id": "u1",
+          "role": "analyst"
+        },
+        "resource": {
+          "owner": "u1"
+        }
+      },
+      "expected_allowed": true,
+      "expected_effect": true
+    },
+    {
+      "id": "A02",
+      "family": "default_deny",
+      "action": "file.delete",
+      "resource": "file:r1",
+      "context": {
+        "user": {
+          "id": "u1",
+          "role": "analyst"
+        },
+        "resource": {
+          "owner": "u1"
+        }
+      },
+      "expected_allowed": false,
+      "expected_effect": false
+    },
+    {
+      "id": "A03",
+      "family": "namespace_confusion",
+      "action": "file.read",
+      "resource": "file:r1",
+      "context": {
+        "role": "analyst",
+        "user": {
+          "id": "u1"
+        },
+        "resource": {
+          "owner": "u1"
+        }
+      },
+      "expected_allowed": false,
+      "expected_effect": false
+    },
+    {
+      "id": "A04",
+      "family": "resource_mismatch",
+      "action": "file.read",
+      "resource": "file:r2",
+      "context": {
+        "user": {
+          "id": "u1",
+          "role": "analyst"
+        },
+        "resource": {
+          "owner": "u1"
+        }
+      },
+      "expected_allowed": true,
+      "expected_effect": false,
+      "execute_resource_override": "file:r3"
+    },
+    {
+      "id": "A05",
+      "family": "action_substitution",
+      "action": "file.read",
+      "resource": "file:r1",
+      "context": {
+        "user": {
+          "id": "u1",
+          "role": "analyst"
+        },
+        "resource": {
+          "owner": "u1"
+        }
+      },
+      "expected_allowed": true,
+      "expected_effect": false,
+      "execute_action_override": "file.delete"
+    },
+    {
+      "id": "A06",
+      "family": "missing_attribute_ne",
+      "action": "file.read",
+      "resource": "file:r1",
+      "context": {
+        "user": {
+          "id": "u1"
+        },
+        "resource": {
+          "owner": "u1"
+        }
+      },
+      "expected_allowed": false,
+      "expected_effect": false
+    },
+    {
+      "id": "A07",
+      "family": "stale_state",
+      "action": "file.read",
+      "resource": "file:r1",
+      "context": {
+        "user": {
+          "id": "u1",
+          "role": "analyst"
+        },
+        "resource": {
+          "owner": "u1"
+        }
+      },
+      "expected_allowed": true,
+      "expected_effect": false,
+      "advance_state_before_execute": true
+    },
+    {
+      "id": "A08",
+      "family": "stale_policy",
+      "action": "file.read",
+      "resource": "file:r1",
+      "context": {
+        "user": {
+          "id": "u1",
+          "role": "analyst"
+        },
+        "resource": {
+          "owner": "u1"
+        }
+      },
+      "expected_allowed": true,
+      "expected_effect": false,
+      "update_policy_before_execute": true
+    },
+    {
+      "id": "A09",
+      "family": "replay",
+      "action": "file.read",
+      "resource": "file:r1",
+      "context": {
+        "user": {
+          "id": "u1",
+          "role": "analyst"
+        },
+        "resource": {
+          "owner": "u1"
+        }
+      },
+      "expected_allowed": true,
+      "expected_effect": true,
+      "replay": true,
+      "expected_effect_count": 1
+    },
+    {
+      "id": "A10",
+      "family": "deny_override",
+      "action": "file.read",
+      "resource": "file:r1",
+      "context": {
+        "user": {
+          "id": "u1",
+          "role": "analyst",
+          "suspended": true
+        },
+        "resource": {
+          "owner": "u1"
+        }
+      },
+      "expected_allowed": false,
+      "expected_effect": false
+    }
+  ]
+}
