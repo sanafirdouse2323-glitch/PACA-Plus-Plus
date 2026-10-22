@@ -96,7 +96,9 @@ class _Session:
             query += " FOR UPDATE"
         return self.execute(query, params).fetchone()
 
-    def all(self, query: str, params: tuple[Any, ...] = ()):
+    def all(self, query: str, params: tuple[Any, ...] = (), *, for_update: bool = False):
+        if for_update and self.dialect == "postgres":
+            query += " FOR UPDATE"
         return self.execute(query, params).fetchall()
 
 
@@ -382,7 +384,7 @@ class _BaseOperationStore:
         with self._transaction() as session:
             rows = session.all(
                 "SELECT * FROM operations WHERE status='in_progress' AND started_at < ?",
-                (cutoff,),
+                (cutoff,), for_update=True,
             )
             for row in rows:
                 session.execute(
@@ -396,8 +398,10 @@ class _BaseOperationStore:
 
     def verify_audit_chain(self) -> bool:
         with self._transaction() as session:
+            # Lock the audit head first so concurrent appends cannot make this read
+            # observe events and a head value from different database snapshots.
+            head = session.one("SELECT head_hash FROM audit_head WHERE singleton=1", for_update=True)
             rows = session.all("SELECT * FROM audit_events ORDER BY seq ASC")
-            head = session.one("SELECT head_hash FROM audit_head WHERE singleton=1")
         previous = _ROOT_HASH
         for row in rows:
             material = {
@@ -422,7 +426,7 @@ class SQLiteOperationStore(_BaseOperationStore):
     dialect = "sqlite"
 
     def __init__(self, path: str | os.PathLike[str]):
-        self.path = str(path)
+        self.path = str(Path(path).expanduser())
         if self.path == ":memory:":
             raise ValueError("Use a file-backed database so operation state is durable")
         Path(self.path).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
