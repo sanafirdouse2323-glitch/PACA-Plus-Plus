@@ -71,6 +71,8 @@ def main() -> int:
         timeout_seconds=float(os.environ.get("PACA_OPA_TIMEOUT_SECONDS", "1.5")),
         bearer_token=os.environ.get("PACA_OPA_BEARER_TOKEN") or None,
     )
+    # Require a reachable OPA with a defined deny-by-default decision before serving.
+    opa.preflight()
     store = PostgresOperationStore(database_url, response_protector=protector, initialize_schema=False)
     # Readiness checks required tables and the chain head before accepting traffic.
     # Full audit-chain verification remains an explicit operator action because it is O(n).
