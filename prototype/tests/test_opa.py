@@ -1,0 +1,68 @@
+import json
+import unittest
+from unittest.mock import Mock, patch
+from urllib.error import URLError
+from io import BytesIO
+
+from paca_mvp.opa import OPAError, OPAPolicyDecisionPoint
+
+
+class Response:
+    def __init__(self, body, status=200):
+        self.body = body
+        self.status = status
+    def __enter__(self):
+        return self
+    def __exit__(self, *args):
+        return False
+    def read(self, _size=-1):
+        return self.body
+
+
+class OPATests(unittest.TestCase):
+    def setUp(self):
+        self.client = OPAPolicyDecisionPoint()
+
+    @patch("paca_mvp.opa.urlopen")
+    def test_allow_only_on_boolean_true(self, mocked):
+        mocked.return_value = Response(b'{"result":{"allow":true,"reason":"permitted"}}')
+        result = self.client.evaluate({"action": "file.read"})
+        self.assertTrue(result.allowed)
+        self.assertEqual(result.reason, "permitted")
+        sent = json.loads(mocked.call_args.args[0].data)
+        self.assertEqual(sent, {"input": {"action": "file.read"}})
+
+    @patch("paca_mvp.opa.urlopen")
+    def test_truthy_non_boolean_does_not_allow(self, mocked):
+        mocked.return_value = Response(b'{"result":{"allow":"true","reason":"bad type"}}')
+        self.assertFalse(self.client.evaluate({}).allowed)
+
+    @patch("paca_mvp.opa.urlopen")
+    def test_undefined_decision_is_deny(self, mocked):
+        mocked.return_value = Response(b'{}')
+        decision = self.client.evaluate({})
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.reason, "undefined_decision")
+
+    @patch("paca_mvp.opa.urlopen")
+    def test_unreachable_opa_raises_for_fail_closed_gateway(self, mocked):
+        mocked.side_effect = URLError("offline")
+        with self.assertRaises(OPAError):
+            self.client.evaluate({})
+
+    @patch("paca_mvp.opa.urlopen")
+    def test_malformed_response_is_not_allowed(self, mocked):
+        mocked.return_value = Response(b'not json')
+        with self.assertRaises(OPAError):
+            self.client.evaluate({})
+
+    def test_remote_http_requires_explicit_opt_in(self):
+        with self.assertRaises(ValueError):
+            OPAPolicyDecisionPoint(base_url="http://opa.example:8181")
+
+    def test_loopback_http_is_accepted_for_sidecar_development(self):
+        OPAPolicyDecisionPoint(base_url="http://127.0.0.1:8181")
+
+
+if __name__ == "__main__":
+    unittest.main()
