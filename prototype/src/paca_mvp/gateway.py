@@ -70,7 +70,11 @@ class ActionRequest:
     @property
     def downstream_idempotency_key(self) -> str:
         """Stable downstream key namespaced by verified issuer and principal."""
-        material = "\\0".join((self.principal.issuer, self.principal.subject, self.idempotency_key))
+        material = canonical_json({
+            "issuer": self.principal.issuer,
+            "subject": self.principal.subject,
+            "client_idempotency_key": self.idempotency_key,
+        })
         return sha256(material.encode("utf-8")).hexdigest()
 
 
