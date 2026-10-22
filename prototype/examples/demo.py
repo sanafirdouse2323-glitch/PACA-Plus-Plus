@@ -19,11 +19,11 @@ context = {"user": {"id": "user-17", "role": "analyst"}, "resource": {"owner": "
 operation_args = {"path": "report-1", "mode": "read"}
 decision = engine.authorize_operation("demo-user", "file.read", "file:report-1", operation_args, context)
 print("Read decision:", decision.reason)
-print("Effect result:", engine.execute_operation(decision.permit_id, "demo-user", "file.read", "file:report-1", operation_args,
+print("Effect result:", engine.execute_operation(decision.permit_id, "demo-user", "file.read", "file:report-1", operation_args, context,
                                                  lambda: "SIMULATED: report content returned"))
 second = engine.authorize_operation("demo-user", "file.read", "file:report-1", operation_args, context)
 try:
-    engine.execute_operation(second.permit_id, "demo-user", "file.delete", "file:report-1", operation_args, lambda: "THIS MUST NEVER RUN")
+    engine.execute_operation(second.permit_id, "demo-user", "file.delete", "file:report-1", operation_args, context, lambda: "THIS MUST NEVER RUN")
 except AuthorizationError as exc:
     print("Action substitution blocked:", exc)
 confused_context = {"role": "analyst", "user": {"id": "user-17"},
