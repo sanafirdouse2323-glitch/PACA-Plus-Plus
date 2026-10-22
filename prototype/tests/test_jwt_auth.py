@@ -83,5 +83,15 @@ class JWTAuthenticationTests(unittest.TestCase):
             self.authenticator.authenticate(None)
 
 
+    def test_insecure_issuer_url_is_rejected_at_configuration(self):
+        with self.assertRaises(ValueError):
+            JWTAuthenticator(
+                issuer="http://issuer.example",
+                audience="paca-test",
+                algorithms=("RS256",),
+                key_resolver=lambda _token: self.public_key,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
