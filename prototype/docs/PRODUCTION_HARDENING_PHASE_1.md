@@ -20,7 +20,7 @@ The principal identifier is only a string at this layer. A real service must obt
 
 The in-process lock does not coordinate multiple processes or machines. If a remote effect partially succeeds and then times out, this engine cannot roll it back. Durable idempotency, transactional enforcement where available, and explicit reconciliation are still required.
 
-The legacy `authorize` / `execute` API remains for existing demonstrations and tests and permits unbound permits when called without operation-binding fields. Production integrations must use the operation-bound methods exclusively until a later breaking change removes the legacy path.
+The legacy `authorize` method can still issue a decision/permit for compatibility, but the execution boundary now rejects any permit that lacks principal and argument binding. All demo, CLI, and effect-path tests use the operation-bound methods.
 
 ## Verification
 
