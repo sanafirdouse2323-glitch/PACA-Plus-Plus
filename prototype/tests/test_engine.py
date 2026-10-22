@@ -173,6 +173,20 @@ class AuthorizationTests(unittest.TestCase):
             )
         self.assertEqual(ran, [])
 
+    def test_operation_permit_rejects_changed_authorization_context(self):
+        args = {"path": "report-1"}
+        d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
+        changed_context = context()
+        changed_context["user"]["role"] = "admin"
+        ran = []
+        with self.assertRaisesRegex(AuthorizationError, "context_mismatch"):
+            self.engine.execute_operation(
+                d.permit_id, "user-1", "file.read", "file:r1", args,
+                changed_context, lambda: ran.append(True)
+            )
+        self.assertEqual(ran, [])
+
+
     def test_operation_permit_rejects_changed_principal_before_effect(self):
         args = {"path": "reports/q1.csv"}
         d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
