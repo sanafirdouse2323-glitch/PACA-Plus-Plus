@@ -88,7 +88,7 @@ class OPATests(unittest.TestCase):
 
     def test_bearer_token_with_header_control_characters_is_rejected(self):
         with self.assertRaises(ValueError):
-            OPAPolicyDecisionPoint(bearer_token="secret\\r\\nInjected: yes")
+            OPAPolicyDecisionPoint(bearer_token="secret\r\nInjected: yes")
 
 
     @patch("paca_mvp.opa._open_request")
