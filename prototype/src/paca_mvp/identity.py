@@ -7,6 +7,7 @@ server-side sources; client-supplied role/resource/context fields are not accept
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 from typing import Any, Callable, Mapping, Protocol
 from urllib.parse import urlparse
@@ -32,6 +33,14 @@ class AuthenticatedPrincipal:
     subject: str
     issuer: str
     claims: Mapping[str, Any]
+
+    @property
+    def storage_id(self) -> str:
+        """Stable pseudonymous key for durable state, scoped to this issuer+subject pair."""
+        material = json.dumps(
+            [self.issuer, self.subject], separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        return "oidc:" + hashlib.sha256(material).hexdigest()
 
     def opa_identity(self) -> dict[str, str]:
         # Do not forward arbitrary token claims or personal data to the policy engine.
