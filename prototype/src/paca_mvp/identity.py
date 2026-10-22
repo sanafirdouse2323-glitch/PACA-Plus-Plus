@@ -57,6 +57,10 @@ class JWTAuthenticator:
     ) -> None:
         if not isinstance(issuer, str) or not issuer.strip():
             raise ValueError("issuer is required")
+        issuer_url = urlparse(issuer)
+        if (issuer_url.scheme != "https" or not issuer_url.hostname
+                or issuer_url.username or issuer_url.password or issuer_url.query or issuer_url.fragment):
+            raise ValueError("issuer must be a clean HTTPS URL")
         if not isinstance(audience, str) or not audience.strip():
             raise ValueError("audience is required")
         if not algorithms or any(a not in {"RS256", "RS384", "RS512", "ES256", "ES384"} for a in algorithms):
