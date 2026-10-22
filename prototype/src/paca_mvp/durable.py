@@ -274,7 +274,19 @@ class _BaseOperationStore:
             raise IdempotencyConflict("idempotency_key_reused_for_different_operation")
         return self._record(result_row), created
 
-    def claim(self, operation_id: str) -> OperationRecord:
+    def claim(
+        self, operation_id: str, *, policy_decision: dict[str, Any] | None = None,
+    ) -> OperationRecord:
+        """Atomically claim an issued operation and persist the final pre-dispatch decision."""
+        if policy_decision is not None:
+            if policy_decision.get("allow") is not True:
+                raise ValueError("claim_requires_an_allow_decision")
+            decision_json = canonical_json({
+                "allow": True,
+                "reason": str(policy_decision.get("reason", "permitted"))[:128],
+            })
+        else:
+            decision_json = None
         error: str | None = None
         row = None
         with self._transaction() as session:
@@ -299,11 +311,20 @@ class _BaseOperationStore:
                 error = "operation_expired"
             else:
                 started_at = _iso(utc_now())
-                session.execute("UPDATE operations SET status='in_progress',started_at=? WHERE operation_id=? AND status='issued'",
-                                (started_at, operation_id))
-                self._append_audit(session, "effect_dispatch_started", operation_id, row["principal_id"], {
-                    "action": row["action"], "resource": row["resource"]
-                })
+                if decision_json is None:
+                    session.execute(
+                        "UPDATE operations SET status='in_progress',started_at=? WHERE operation_id=? AND status='issued'",
+                        (started_at, operation_id),
+                    )
+                else:
+                    session.execute(
+                        "UPDATE operations SET status='in_progress',started_at=?,policy_decision_json=? WHERE operation_id=? AND status='issued'",
+                        (started_at, decision_json, operation_id),
+                    )
+                audit_payload = {"action": row["action"], "resource": row["resource"]}
+                if decision_json is not None:
+                    audit_payload["policy_decision"] = json.loads(decision_json)
+                self._append_audit(session, "effect_dispatch_started", operation_id, row["principal_id"], audit_payload)
                 row = session.one("SELECT * FROM operations WHERE operation_id=?", (operation_id,))
         if error:
             if error == "operation_outcome_unknown":
