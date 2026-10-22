@@ -14,7 +14,7 @@ The baseline Rego policy deliberately permits only an active analyst reading a r
 
 ## Run locally
 
-Requirements: Python 3.10+, Docker Compose, a reachable OIDC provider, and a real downstream API/context-provider implementation before exposing the service to users.
+Requirements: Python 3.11+, Docker Compose, a reachable OIDC provider, and a real downstream API/context-provider implementation before exposing the service to users.
 
 Install the optional production dependencies:
 
