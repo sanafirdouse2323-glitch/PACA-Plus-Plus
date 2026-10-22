@@ -71,16 +71,18 @@ class OPAPolicyDecisionPoint:
         HTTP, and malformed-response failures raise OPAError so callers can fail closed.
         """
         try:
-            body = json.dumps(opa_input, separators=(",", ":"), ensure_ascii=False,
-                              allow_nan=False).encode("utf-8")
+            if not isinstance(opa_input, dict):
+                raise ValueError("OPA input must be an object")
+            body = json.dumps(
+                {"input": opa_input}, separators=(",", ":"), sort_keys=True,
+                ensure_ascii=False, allow_nan=False,
+            ).encode("utf-8")
         except (TypeError, ValueError, UnicodeError) as exc:
             raise OPAError("OPA input is not finite JSON") from exc
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if self.bearer_token:
             headers["Authorization"] = "Bearer " + self.bearer_token
-        request = Request(self.endpoint, data=json.dumps(
-            {"input": json.loads(body)}, separators=(",", ":"), ensure_ascii=False,
-            allow_nan=False).encode("utf-8"), headers=headers, method="POST")
+        request = Request(self.endpoint, data=body, headers=headers, method="POST")
         try:
             with urlopen(request, timeout=self.timeout_seconds) as response:
                 status = response.status
