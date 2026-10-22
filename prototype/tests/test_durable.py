@@ -15,6 +15,7 @@ from paca_mvp.durable import (
     OperationOutcomeUnknown,
     OperationStateError,
     SQLiteOperationStore,
+    StoreError,
     canonical_json,
 )
 
@@ -237,9 +238,9 @@ class DurableStoreTests(unittest.TestCase):
         record, _ = protected_store.create_or_get(**self.kwargs)
         protected_store.claim(record.operation_id)
         protected_store.complete(record.operation_id, {"secret": "private"})
-        with self.assertRaisesRegex(Exception, "encrypted_cached_response_requires_response_protector"):
+        with self.assertRaisesRegex(StoreError, "encrypted_cached_response_requires_response_protector"):
             SQLiteOperationStore(db).get_operation(record.operation_id)
-        with self.assertRaisesRegex(Exception, "cached_response_decryption_failed"):
+        with self.assertRaisesRegex(StoreError, "cached_response_decryption_failed"):
             SQLiteOperationStore(db, response_protector=FernetResponseProtector([wrong])).get_operation(record.operation_id)
 
     def test_response_encryption_key_rotation_accepts_retiring_decrypt_key(self):
