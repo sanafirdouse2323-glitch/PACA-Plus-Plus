@@ -6,6 +6,8 @@ import contextlib
 import io
 import json
 import tempfile
+import sys
+from unittest.mock import patch
 import unittest
 import uuid
 from pathlib import Path
@@ -36,9 +38,10 @@ class OperationsCliTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def invoke(self, command, *args):
+    def invoke(self, command, *args, stdin_text=None):
         output = io.StringIO()
-        with contextlib.redirect_stdout(output):
+        supplied_stdin = io.StringIO(stdin_text) if stdin_text is not None else sys.stdin
+        with contextlib.redirect_stdout(output), patch("sys.stdin", supplied_stdin):
             status = main(["--backend", "sqlite", "--path", self.path, command, *args])
         return status, json.loads(output.getvalue()) if output.getvalue().strip() else None
 
@@ -53,7 +56,8 @@ class OperationsCliTests(unittest.TestCase):
         status, payload = self.invoke(
             "reconcile-unknown", "--operation-id", self.operation_id,
             "--outcome", "succeeded", "--reason", "verified_downstream_record_123",
-            "--response-json", '{"remote_id":"remote-123"}',
+            "--response-stdin",
+            stdin_text='{"remote_id":"remote-123"}',
         )
         self.assertEqual(status, 0)
         self.assertEqual(payload["status"], "succeeded")
