@@ -87,6 +87,41 @@ def _iso(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat(timespec="microseconds")
 
 
+class FernetResponseProtector:
+    """Authenticated encryption for cached tool results.
+
+    Pass the current key first, followed by retiring keys that remain valid for decrypt.
+    Keep keys outside the database in a secret manager. Rotation/re-encryption must be
+    planned so cached results remain readable during the migration window.
+    """
+
+    prefix = "enc:v1:"
+
+    def __init__(self, keys: list[str] | tuple[str, ...]):
+        if not keys or any(not isinstance(key, str) or not key.strip() for key in keys):
+            raise ValueError("one or more Fernet response-encryption keys are required")
+        try:
+            from cryptography.fernet import Fernet, MultiFernet
+            self._fernet = MultiFernet([Fernet(key.encode("ascii")) for key in keys])
+        except (ImportError, ValueError, UnicodeEncodeError) as exc:
+            raise ValueError("invalid Fernet keys or missing cryptography dependency") from exc
+
+    @staticmethod
+    def _fernet_error_type() -> type[Exception]:
+        from cryptography.fernet import InvalidToken
+        return InvalidToken
+
+    def protect(self, plaintext: str) -> str:
+        return self.prefix + self._fernet.encrypt(plaintext.encode("utf-8")).decode("ascii")
+
+    def unprotect(self, ciphertext: str) -> str:
+        try:
+            clear = self._fernet.decrypt(ciphertext[len(self.prefix):].encode("ascii"))
+            return clear.decode("utf-8")
+        except (ValueError, UnicodeError, self._fernet_error_type()) as exc:
+            raise StoreError("cached_response_decryption_failed; verify response key configuration") from exc
+
+
 @dataclass(frozen=True)
 class OperationRecord:
     operation_id: str
@@ -131,6 +166,35 @@ class _Session:
 class _BaseOperationStore:
     dialect = "abstract"
 
+    def _configure_response_protector(self, response_protector: FernetResponseProtector | None) -> None:
+        if response_protector is not None and not (
+            callable(getattr(response_protector, "protect", None))
+            and callable(getattr(response_protector, "unprotect", None))
+        ):
+            raise ValueError("response_protector must implement protect(text) and unprotect(text)")
+        self._response_protector = response_protector
+
+    def _encode_response(self, response: Any) -> str:
+        plaintext = canonical_json(response)
+        if len(plaintext.encode("utf-8")) > _MAX_RESULT_BYTES:
+            raise ValueError("effect_result_exceeds_1MiB")
+        if self._response_protector is None:
+            return plaintext
+        protected = self._response_protector.protect(plaintext)
+        if not isinstance(protected, str) or not protected.startswith(FernetResponseProtector.prefix):
+            raise StoreError("response_protector_must_return_enc_v1_ciphertext")
+        return protected
+
+    def _decode_response(self, stored: str) -> Any:
+        if stored.startswith(FernetResponseProtector.prefix):
+            if self._response_protector is None:
+                raise StoreError("encrypted_cached_response_requires_response_protector")
+            stored = self._response_protector.unprotect(stored)
+        try:
+            return json.loads(stored, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise StoreError("cached_response_json_invalid") from exc
+
     @contextmanager
     def _transaction(self) -> Iterator[_Session]:
         raise NotImplementedError
@@ -169,8 +233,7 @@ class _BaseOperationStore:
         )
         session.execute("UPDATE audit_head SET head_hash=? WHERE singleton=1", (entry_hash,))
 
-    @staticmethod
-    def _record(row: Any) -> OperationRecord:
+    def _record(self, row: Any) -> OperationRecord:
         return OperationRecord(
             operation_id=row["operation_id"],
             idempotency_key=row["idempotency_key"],
@@ -186,7 +249,7 @@ class _BaseOperationStore:
             expires_at=row["expires_at"],
             started_at=row["started_at"],
             finished_at=row["finished_at"],
-            response=None if row["response_json"] is None else json.loads(row["response_json"]),
+            response=None if row["response_json"] is None else self._decode_response(row["response_json"]),
             error_code=row["error_code"],
         )
 
@@ -362,9 +425,7 @@ class _BaseOperationStore:
         return self._record(row)
 
     def complete(self, operation_id: str, response: Any) -> OperationRecord:
-        response_json = canonical_json(response)
-        if len(response_json.encode("utf-8")) > _MAX_RESULT_BYTES:
-            raise ValueError("effect_result_exceeds_1MiB")
+        response_json = self._encode_response(response)
         with self._transaction() as session:
             row = session.one("SELECT * FROM operations WHERE operation_id=?", (operation_id,), for_update=True)
             if row is None:
@@ -427,9 +488,7 @@ class _BaseOperationStore:
         safe_reason = re.sub(r"[^A-Za-z0-9_.:-]", "_", str(reason))[:120] or "operator_reconciliation"
         response_json = None
         if outcome == "succeeded":
-            response_json = canonical_json(response)
-            if len(response_json.encode("utf-8")) > _MAX_RESULT_BYTES:
-                raise ValueError("effect_result_exceeds_1MiB")
+            response_json = self._encode_response(response)
         updated = None
         with self._transaction() as session:
             row = session.one("SELECT * FROM operations WHERE operation_id=?", (operation_id,), for_update=True)
@@ -499,7 +558,11 @@ class SQLiteOperationStore(_BaseOperationStore):
 
     dialect = "sqlite"
 
-    def __init__(self, path: str | os.PathLike[str]):
+    def __init__(
+        self, path: str | os.PathLike[str], *,
+        response_protector: FernetResponseProtector | None = None,
+    ):
+        self._configure_response_protector(response_protector)
         self.path = str(Path(path).expanduser())
         if self.path == ":memory:":
             raise ValueError("Use a file-backed database so operation state is durable")
@@ -636,7 +699,8 @@ class PostgresOperationStore(_BaseOperationStore):
 
     dialect = "postgres"
 
-    def __init__(self, dsn: str):
+    def __init__(self, dsn: str, *, response_protector: FernetResponseProtector | None = None):
+        self._configure_response_protector(response_protector)
         if not isinstance(dsn, str) or not dsn.strip():
             raise ValueError("PostgreSQL DSN is required")
         try:
