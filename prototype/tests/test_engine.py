@@ -110,5 +110,67 @@ class AuthorizationTests(unittest.TestCase):
         self.assertEqual(len(rejected), 1)
 
 
+    def test_operation_permit_binds_principal_and_exact_arguments(self):
+        args = {"path": "reports/q1.csv", "mode": "read"}
+        d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
+        self.assertTrue(d.allowed)
+        result = self.engine.execute_operation(
+            d.permit_id, "user-1", "file.read", "file:r1", args, lambda: "ok"
+        )
+        self.assertEqual(result, "ok")
+
+    def test_operation_permit_rejects_changed_arguments_before_effect(self):
+        args = {"path": "reports/q1.csv", "mode": "read"}
+        d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
+        ran = []
+        with self.assertRaisesRegex(AuthorizationError, "arguments_mismatch"):
+            self.engine.execute_operation(
+                d.permit_id, "user-1", "file.read", "file:r1",
+                {"path": "secrets.csv", "mode": "read"}, lambda: ran.append(True)
+            )
+        self.assertEqual(ran, [])
+
+    def test_operation_permit_rejects_changed_principal_before_effect(self):
+        args = {"path": "reports/q1.csv"}
+        d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
+        ran = []
+        with self.assertRaisesRegex(AuthorizationError, "principal_mismatch"):
+            self.engine.execute_operation(
+                d.permit_id, "user-2", "file.read", "file:r1", args, lambda: ran.append(True)
+            )
+        self.assertEqual(ran, [])
+
+    def test_non_finite_or_non_positive_ttl_is_denied(self):
+        for ttl in (0, -1, float("nan"), float("inf"), float("-inf")):
+            with self.subTest(ttl=ttl):
+                d = self.engine.authorize("file.read", "file:r1", self.ctx, ttl)
+                self.assertFalse(d.allowed)
+                self.assertEqual(d.reason, "invalid_permit_ttl")
+
+    def test_non_json_operation_arguments_are_denied(self):
+        d = self.engine.authorize_operation(
+            "user-1", "file.read", "file:r1", {"value": object()}, self.ctx
+        )
+        self.assertFalse(d.allowed)
+        self.assertEqual(d.reason, "invalid_arguments")
+
+    def test_non_callable_effect_is_rejected(self):
+        d = self.engine.authorize("file.read", "file:r1", self.ctx)
+        with self.assertRaisesRegex(AuthorizationError, "effect_not_callable"):
+            self.engine.execute(d.permit_id, "file.read", "file:r1", None)
+
+    def test_raw_policy_input_mutation_does_not_change_parsed_policy(self):
+        raw = {"version": "v1", "rules": [{
+            "id": "r", "effect": "permit", "action": "file.read",
+            "conditions": [{"path": "user.role", "op": "in", "value": ["analyst"]}],
+        }]}
+        policy = Policy.from_dict(raw)
+        raw["rules"][0]["conditions"][0]["value"].append("admin")
+        engine = AuthorizationEngine(policy)
+        self.assertFalse(engine.authorize(
+            "file.read", "file:r1", {"user": {"role": "admin"}}
+        ).allowed)
+
+
 if __name__ == "__main__":
     unittest.main()
