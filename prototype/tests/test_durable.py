@@ -261,5 +261,15 @@ class DurableStoreTests(unittest.TestCase):
         self.assertEqual(rotated.get_operation(record.operation_id).response, {"remote_result": "stored"})
 
 
+    def test_readiness_check_confirms_required_tables_and_valid_audit_head(self):
+        self.assertIsNone(self.store.check_ready())
+
+    def test_readiness_check_fails_closed_for_invalid_audit_head(self):
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute("UPDATE audit_head SET head_hash=? WHERE singleton=1", ("not-a-sha256-hash",))
+        with self.assertRaisesRegex(StoreError, "audit_head_missing_or_invalid"):
+            self.store.check_ready()
+
+
 if __name__ == "__main__":
     unittest.main()
