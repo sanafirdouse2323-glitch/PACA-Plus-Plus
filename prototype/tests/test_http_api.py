@@ -3,6 +3,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import json
+import socket
 import tempfile
 import threading
 import unittest
@@ -107,6 +108,30 @@ class HttpApiTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self.post({"action": "file.secret", "resource": "file:r1", "arguments": {}})
         self.assertEqual(caught.exception.code, 403)
+        self.assertEqual(self.effects, [])
+
+
+    def test_duplicate_content_length_is_rejected_before_authorization_or_effect(self):
+        request = (
+            "POST /v1/execute HTTP/1.1\r\n"
+            "Host: 127.0.0.1\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: 2\r\n"
+            "Content-Length: 2\r\n"
+            "Authorization: Bearer valid\r\n"
+            "Idempotency-Key: duplicate-length-test\r\n"
+            "Connection: close\r\n\r\n{}"
+        ).encode("ascii")
+        with socket.create_connection(("127.0.0.1", self.port), timeout=3) as client:
+            client.sendall(request)
+            response = bytearray()
+            while True:
+                chunk = client.recv(4096)
+                if not chunk:
+                    break
+                response.extend(chunk)
+        self.assertIn(b"400 Bad Request", response)
+        self.assertIn(b"invalid_content_length", response)
         self.assertEqual(self.effects, [])
 
 
