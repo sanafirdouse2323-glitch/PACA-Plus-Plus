@@ -2,12 +2,12 @@
 
 ## What this code now provides
 
-- **OPA decision point:** `OPAPolicyDecisionPoint` queries OPA's named Data API decision (`data.paca.authz.decision`). Missing/undefined decisions are denials; network, HTTP, and protocol failures fail closed.
+- **OPA decision point:** `OPAPolicyDecisionPoint` queries OPA's named Data API decision (`data.paca.authz.decision`). Missing/undefined decisions are denials; network, HTTP, and protocol failures fail closed. Startup preflight refuses an unavailable OPA, an undefined decision for empty input, or a decision that permits empty input.
 - **Verified caller identity:** `JWTAuthenticator` validates signatures using a fixed asymmetric algorithm allow-list, a trusted HTTPS JWKS endpoint, issuer, audience, expiration and required claims.
 - **Trusted context retrieval:** `CallbackContextProvider` calls application-supplied readers for subject, resource and environment attributes. No request-supplied context field is accepted by the HTTP API.
 - **Protected execution:** `ProtectedToolGateway` registers action handlers on the server. It does not let a caller choose a Python callback or destination URL. It checks OPA, records an operation durably, re-fetches trusted context, re-evaluates OPA, then atomically claims before calling the handler.
 - **Downstream API adapter:** `HTTPJsonActionAdapter` sends JSON to a fixed, configured endpoint over HTTPS; rejects redirects; sends the idempotency key and operation ID; and uses a service credential provider.
-- **Durable coordination:** `PostgresOperationStore` uses a unique idempotency key and row locking for multi-process/multi-host coordination. `SQLiteOperationStore` is useful for local development and single-host deployment.
+- **Durable coordination:** `PostgresOperationStore` uses a unique idempotency key and row locking for multi-process/multi-host coordination. Startup checks required tables and the audit-chain head. `SQLiteOperationStore` is useful for local development and single-host deployment; its database file is restricted to owner read/write on POSIX and symlink paths are rejected.
 - **Audit and recovery:** operation state is persisted, cached JSON tool responses are Fernet-encrypted when configured, audit events form a hash chain, stale in-progress operations can be marked unknown, and an operator can reconcile an unknown result after verifying the downstream system's authoritative record.
 
 The baseline Rego policy deliberately permits only an active analyst reading a resource they own in the same tenant. Adapt it to your real business rules after reviewing the claims and resource attributes supplied by your actual application.
@@ -37,6 +37,8 @@ Configure the application using secrets from your secret manager or deployment p
     # Configure these separate login credentials out-of-band through your secret manager/IAM.
     export PACA_POSTGRES_DSN='postgresql://paca_runtime:RUNTIME_PASSWORD@127.0.0.1:5432/paca'
     export PACA_OPERATOR_POSTGRES_DSN='postgresql://paca_operator:OPERATOR_PASSWORD@127.0.0.1:5432/paca'
+
+The connection examples above are loopback-only. For a non-loopback PostgreSQL host, the store refuses to initialize unless the DSN explicitly sets `sslmode=verify-full` so TLS certificates and hostnames are checked; configure `sslrootcert` when your provider's CA is not in the system trust store. Do not downgrade remote connections to `prefer`, `require`, or `disable`.
     # Generate once in a trusted environment; store in your secret manager.
     # Keep the active key first; append retiring keys during rotation.
     export PACA_RESULT_ENCRYPTION_KEYS="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
@@ -95,7 +97,7 @@ The downstream service should:
 - expose an authoritative status/log lookup for operator reconciliation.
 
 ## Operator recovery commands
-The gateway uses `PACA_POSTGRES_DSN` with the restricted `paca_runtime` role. The local operator CLI uses `PACA_OPERATOR_POSTGRES_DSN` and a distinct `paca_operator` role. These roles can append audit events and advance the chain head, but are not granted UPDATE or DELETE on prior audit-event rows. Schema creation is a separate administrator/migration operation through `migrations/001_runtime_roles_and_schema.sql`; do not run the gateway with a database-owner or superuser DSN. The sample SQL assumes the database is named `paca`; adapt it before running against a differently named database.
+The gateway uses `PACA_POSTGRES_DSN` with the restricted `paca_runtime` role. The local operator CLI uses `PACA_OPERATOR_POSTGRES_DSN` and a distinct `paca_operator` role. These roles have column-limited UPDATE rights only for mutable operation-state fields; immutable request identity/fingerprint fields cannot be updated. They can append audit events and advance the chain head, but are not granted UPDATE or DELETE on prior audit-event rows. Schema creation is a separate administrator/migration operation through `migrations/001_runtime_roles_and_schema.sql`; do not run the gateway with a database-owner or superuser DSN. The sample SQL assumes the database is named `paca`; adapt it before running against a differently named database.
 
 
 Install the production package, then configure a restricted operator shell with one backend:
@@ -135,7 +137,7 @@ Run `store.recover_incomplete(older_than_seconds=...)` during a controlled recov
     python examples/authorize.py --policy examples/policy.json --context examples/context.json --action file.read --resource file:report-1 --principal-id demo-user --arguments-json '{"path":"report-1","mode":"read"}' --execute
     python experiments/run_experiments.py
 
-The GitHub Actions production integration workflow pins and checksum-verifies OPA, runs `opa check` and `opa test`, starts OPA and PostgreSQL, then runs Python tests including the live OPA and PostgreSQL integration tests.
+The GitHub Actions production integration workflow pins and checksum-verifies OPA, runs `opa check` and `opa test`, starts OPA and PostgreSQL, applies the database migration, verifies database role grants, then runs Python tests including live OPA and PostgreSQL integration tests, SQLite file-permission checks, and HTTP framing rejection tests.
 
 ## Production limitations that remain
 
