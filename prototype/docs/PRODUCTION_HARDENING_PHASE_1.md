@@ -7,12 +7,12 @@ This change strengthens the research MVP; it does not make PACA++ production-rea
 ## Changes in this phase
 
 - Added `authorize_operation` and `execute_operation` methods.
-- An operation-bound permit records a principal identifier and SHA-256 digest of canonical JSON arguments, in addition to action, resource, policy version, and state version.
+- An operation-bound permit records a principal identifier and SHA-256 digest of canonical JSON arguments, in addition to action, resource, policy version, policy-content fingerprint, and state version.
 - Execution rejects a different principal, changed arguments, action/resource substitution, expired permits, replay, and stale policy/state before invoking the callback.
 - Canonical argument encoding rejects non-JSON values and non-finite JSON numbers.
 - Permit TTL must be finite, positive, and no greater than 300 seconds.
 - The CLI now requires a principal identifier and uses the operation-bound API. Its effect remains simulated.
-- Policy parsing copies condition values through JSON serialization so later mutation of the original input dictionary does not silently change those copied values.
+- Policy parsing snapshots validated JSON condition values; the engine takes its own validated policy snapshot and fingerprints both the declared version and policy content. Mutating the caller-owned input or Policy object cannot silently change the engine's active policy.
 
 ## Security caveats
 
