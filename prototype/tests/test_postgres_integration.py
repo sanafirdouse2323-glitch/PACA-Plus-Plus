@@ -172,5 +172,18 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
                 )
 
 
+    def test_remote_postgres_rejects_default_unverified_tls_mode(self):
+        with self.assertRaisesRegex(ValueError, "sslmode=verify-full"):
+            PostgresOperationStore(
+                "postgresql://paca:placeholder@db.example.invalid:5432/paca",
+                initialize_schema=False,
+            )
+
+    def test_remote_postgres_requires_explicit_verified_tls_configuration(self):
+        dsn = "postgresql://paca:placeholder@db.example.invalid:5432/paca?sslmode=verify-full"
+        store = PostgresOperationStore(dsn, initialize_schema=False)
+        self.assertEqual(store.dsn, dsn)
+
+
 if __name__ == "__main__":
     unittest.main()
