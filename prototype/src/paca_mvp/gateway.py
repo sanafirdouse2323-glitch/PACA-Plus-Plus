@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 import json
 import math
 import re
@@ -65,6 +66,12 @@ class ActionRequest:
     resource: str
     arguments: dict[str, Any]
     opa_input: dict[str, Any]
+
+    @property
+    def downstream_idempotency_key(self) -> str:
+        """Stable downstream key namespaced by verified issuer and principal."""
+        material = "\\0".join((self.principal.issuer, self.principal.subject, self.idempotency_key))
+        return sha256(material.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -347,7 +354,7 @@ class HTTPJsonActionAdapter:
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "Idempotency-Key": operation.idempotency_key,
+            "Idempotency-Key": operation.downstream_idempotency_key,
             "X-PACA-Operation-ID": operation.operation_id,
         }
         if self.service_token_provider is not None:
