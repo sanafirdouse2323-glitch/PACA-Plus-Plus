@@ -77,6 +77,7 @@ class HTTPAdapterTests(unittest.TestCase):
         self.assertEqual(seen["idempotency_key"], self.operation().downstream_idempotency_key)
         self.assertEqual(seen["operation_id"], "a" * 32)
         self.assertEqual(seen["body"]["arguments"], {"path": "report.csv"})
+        self.assertEqual(seen["body"]["principal_issuer"], "https://issuer.example")
         self.assertEqual(seen["authorization"], "Bearer service-secret")
 
     def test_redirect_is_not_followed(self):
@@ -113,6 +114,16 @@ class HTTPAdapterTests(unittest.TestCase):
             self.base + "/execute",
             allow_insecure_loopback_for_tests=True,
             service_token_provider=lambda: "bad\r\nInjected: yes",
+        )
+        with self.assertRaises(RemoteToolError):
+            adapter.preflight()
+
+
+    def test_preflight_rejects_commas_and_other_non_bearer_token_characters(self):
+        adapter = HTTPJsonActionAdapter(
+            self.base + "/execute",
+            allow_insecure_loopback_for_tests=True,
+            service_token_provider=lambda: "invalid,token",
         )
         with self.assertRaises(RemoteToolError):
             adapter.preflight()
