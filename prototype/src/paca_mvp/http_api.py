@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import re
 from typing import Any, Callable
 from urllib.parse import urlparse
 
@@ -74,13 +75,13 @@ def make_server(
             if self.headers.get_content_type() != "application/json":
                 self._error(415, "application_json_required")
                 return
-            raw_length = self.headers.get("Content-Length")
-            try:
-                length = int(raw_length) if raw_length is not None else -1
-            except ValueError:
-                length = -1
-            if length < 0 or length > max_request_bytes:
-                self._error(413 if length > max_request_bytes else 400, "invalid_content_length")
+            length_headers = self.headers.get_all("Content-Length", [])
+            if len(length_headers) != 1 or not re.fullmatch(r"[0-9]{1,9}", length_headers[0]):
+                self._error(400, "invalid_content_length")
+                return
+            length = int(length_headers[0])
+            if length > max_request_bytes:
+                self._error(413, "invalid_content_length")
                 return
             try:
                 raw = self.rfile.read(length)
