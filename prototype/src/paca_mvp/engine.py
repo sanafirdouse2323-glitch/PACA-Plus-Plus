@@ -411,5 +411,5 @@ class AuthorizationEngine:
         """Execute only the principal/action/resource/arguments tuple that was authorized."""
         return self.execute(
             permit_id, action, resource, effect,
-            principal_id=principal_id, arguments=arguments,
+            principal_id=principal_id, arguments=arguments, context=context,
         )
