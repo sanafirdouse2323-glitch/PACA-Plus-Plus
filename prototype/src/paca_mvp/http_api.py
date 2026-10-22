@@ -37,6 +37,12 @@ def make_server(
         server_version = "PACA-Gateway"
         sys_version = ""
 
+        def setup(self) -> None:
+            super().setup()
+            # Bound stalled clients; deploy behind a reverse proxy with its own
+            # request/header/body timeouts and rate limits as well.
+            self.connection.settimeout(10.0)
+
         def log_message(self, format: str, *args: Any) -> None:
             # Avoid default request logging that may include sensitive URL query strings.
             return
@@ -76,7 +82,11 @@ def make_server(
             if length < 0 or length > max_request_bytes:
                 self._error(413 if length > max_request_bytes else 400, "invalid_content_length")
                 return
-            raw = self.rfile.read(length)
+            try:
+                raw = self.rfile.read(length)
+            except OSError:
+                self._error(408, "request_body_timeout")
+                return
             if len(raw) != length:
                 self._error(400, "incomplete_request_body")
                 return
