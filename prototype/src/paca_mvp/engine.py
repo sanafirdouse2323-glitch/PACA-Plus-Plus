@@ -123,6 +123,20 @@ def _resolve(context: dict[str, Any], dotted_path: str) -> Any:
     return current
 
 
+def _copy_policy(policy: Policy) -> Policy:
+    """Create a validated snapshot so caller-owned nested dictionaries cannot mutate live policy."""
+    if not isinstance(policy, Policy):
+        raise PolicyError("AuthorizationEngine requires a validated Policy.")
+    return Policy.from_dict({
+        "version": policy.version,
+        "rules": [
+            {"id": rule.id, "effect": rule.effect, "action": rule.action,
+             "conditions": list(rule.conditions)}
+            for rule in policy.rules
+        ],
+    })
+
+
 def _policy_fingerprint(policy: Policy) -> str:
     """Fingerprint policy content as well as its declared version label."""
     payload = {
@@ -184,8 +198,8 @@ class AuthorizationEngine:
     """
 
     def __init__(self, policy: Policy):
-        self._policy = policy
-        self._policy_fingerprint = _policy_fingerprint(policy)
+        self._policy = _copy_policy(policy)
+        self._policy_fingerprint = _policy_fingerprint(self._policy)
         self._state_version = 0
         self._permits: dict[str, _Permit] = {}
         self._lock = RLock()
@@ -203,10 +217,11 @@ class AuthorizationEngine:
 
     def update_policy(self, policy: Policy) -> None:
         with self._lock:
-            fingerprint = _policy_fingerprint(policy)
-            self._policy = policy
+            snapshot = _copy_policy(policy)
+            fingerprint = _policy_fingerprint(snapshot)
+            self._policy = snapshot
             self._policy_fingerprint = fingerprint
-            self.audit_log.append({"event": "policy_updated", "policy_version": policy.version,
+            self.audit_log.append({"event": "policy_updated", "policy_version": snapshot.version,
                                    "policy_fingerprint": fingerprint})
 
     def advance_state(self) -> int:
