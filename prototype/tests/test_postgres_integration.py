@@ -120,5 +120,36 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
         self.assertIsNone(self.store.check_ready())
 
 
+    def test_migration_limits_runtime_and_operator_to_mutable_columns(self):
+        import psycopg
+
+        with psycopg.connect(DSN, autocommit=True) as connection:
+            permissions = connection.execute("""
+                SELECT
+                    has_table_privilege('paca_runtime', 'paca.operations', 'UPDATE'),
+                    has_column_privilege('paca_runtime', 'paca.operations', 'status', 'UPDATE'),
+                    has_column_privilege('paca_runtime', 'paca.operations', 'request_fingerprint', 'UPDATE'),
+                    has_table_privilege('paca_operator', 'paca.operations', 'UPDATE'),
+                    has_column_privilege('paca_operator', 'paca.operations', 'status', 'UPDATE'),
+                    has_column_privilege('paca_operator', 'paca.operations', 'request_fingerprint', 'UPDATE')
+            """).fetchone()
+            self.assertEqual(tuple(permissions), (False, True, False, False, True, False))
+
+            connection.execute("SET ROLE paca_runtime")
+            connection.execute("UPDATE paca.operations SET status=status WHERE false")
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                connection.execute(
+                    "UPDATE paca.operations SET request_fingerprint=request_fingerprint WHERE false"
+                )
+
+            connection.execute("RESET ROLE")
+            connection.execute("SET ROLE paca_operator")
+            connection.execute("UPDATE paca.operations SET status=status WHERE false")
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                connection.execute(
+                    "UPDATE paca.operations SET request_fingerprint=request_fingerprint WHERE false"
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
