@@ -57,7 +57,7 @@ def main() -> int:
         timeout_seconds=float(os.environ.get("PACA_OPA_TIMEOUT_SECONDS", "1.5")),
         bearer_token=os.environ.get("PACA_OPA_BEARER_TOKEN") or None,
     )
-    store = PostgresOperationStore(database_url, response_protector=protector)
+    store = PostgresOperationStore(database_url, response_protector=protector, initialize_schema=False)
     gateway = ProtectedToolGateway(
         authenticator=authenticator,
         context_provider=context_provider,
