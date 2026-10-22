@@ -116,7 +116,8 @@ class JWTAuthenticator:
             if not isinstance(claims, dict):
                 raise AuthenticationError("invalid_token_claims")
             subject, issuer = claims.get("sub"), claims.get("iss")
-            if not isinstance(subject, str) or not subject.strip():
+            if (not isinstance(subject, str) or not subject.strip() or len(subject) > 512
+                    or any(ord(character) < 0x20 or ord(character) == 0x7f for character in subject)):
                 raise AuthenticationError("invalid_subject")
             if issuer != self.issuer:
                 raise AuthenticationError("invalid_issuer")
