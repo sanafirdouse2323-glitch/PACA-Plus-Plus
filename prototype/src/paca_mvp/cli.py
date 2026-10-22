@@ -55,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
         }
         if args.execute and decision.allowed:
             try:
-                effect_result = engine.execute(
+                effect_result = engine.execute_operation(
                     decision.permit_id, args.principal_id, args.action, args.resource, operation_arguments,
                     lambda: {"simulated": True, "action": args.action, "resource": args.resource},
                 )
