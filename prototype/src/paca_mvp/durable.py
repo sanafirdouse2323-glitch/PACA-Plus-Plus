@@ -195,6 +195,19 @@ class _BaseOperationStore:
         except (json.JSONDecodeError, ValueError) as exc:
             raise StoreError("cached_response_json_invalid") from exc
 
+    def check_ready(self) -> None:
+        """Fail fast if required tables or the audit-chain head are unavailable.
+
+        This is a bounded schema/connectivity probe, not a complete audit-chain
+        verification; use verify_audit_chain() for the full, potentially expensive scan.
+        """
+        with self._transaction() as session:
+            session.one("SELECT operation_id FROM operations LIMIT 1")
+            session.one("SELECT event_id FROM audit_events LIMIT 1")
+            head = session.one("SELECT head_hash FROM audit_head WHERE singleton=1")
+        if head is None or not isinstance(head["head_hash"], str) or not _DIGEST_RE.fullmatch(head["head_hash"]):
+            raise StoreError("audit_head_missing_or_invalid")
+
     @contextmanager
     def _transaction(self) -> Iterator[_Session]:
         raise NotImplementedError
