@@ -1,0 +1,71 @@
+{
+  "summary": {
+    "n": 10,
+    "authorization_decision_accuracy": 1,
+    "effect_outcome_accuracy": 1
+  },
+  "note": "Local deterministic toy-scenario run; not an external benchmark, proof of security, standards compliance, or novelty.",
+  "scenarios": [
+    {
+      "id": "A01",
+      "family": "positive_control",
+      "authorization_correct": true,
+      "effect_correct": true
+    },
+    {
+      "id": "A02",
+      "family": "default_deny",
+      "authorization_correct": true,
+      "effect_correct": true
+    },
+    {
+      "id": "A03",
+      "family": "namespace_confusion",
+      "authorization_correct": true,
+      "effect_correct": true
+    },
+    {
+      "id": "A04",
+      "family": "resource_mismatch",
+      "authorization_correct": true,
+      "effect_correct": true
+    },
+    {
+      "id": "A05",
+      "family": "action_substitution",
+      "authorization_correct": true,
+      "effect_correct": true
+    },
+    {
+      "id": "A06",
+      "family": "missing_attribute_ne",
+      "authorization_correct": true,
+      "effect_correct": true
+    },
+    {
+      "id": "A07",
+      "family": "stale_state",
+      "authorization_correct": true,
+      "effect_correct": true
+    },
+    {
+      "id": "A08",
+      "family": "stale_policy",
+      "authorization_correct": true,
+      "effect_correct": true
+    },
+    {
+      "id": "A09",
+      "family": "replay",
+      "authorization_correct": true,
+      "effect_correct": true,
+      "observed_effect_count": 1
+    },
+    {
+      "id": "A10",
+      "family": "deny_override",
+      "authorization_correct": true,
+      "effect_correct": true
+    }
+  ]
+}
