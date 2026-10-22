@@ -13,11 +13,21 @@ import ssl
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 class OPAError(RuntimeError):
     """OPA could not produce a trustworthy decision."""
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Prevent a configured OPA endpoint from forwarding a bearer token to a redirect target.
+        return None
+
+
+def _open_request(request: Request, timeout: float):
+    return build_opener(_NoRedirect).open(request, timeout=timeout)
 
 
 @dataclass(frozen=True)
@@ -90,7 +100,7 @@ class OPAPolicyDecisionPoint:
             headers["Authorization"] = "Bearer " + self.bearer_token
         request = Request(self.endpoint, data=body, headers=headers, method="POST")
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
+            with _open_request(request, timeout=self.timeout_seconds) as response:
                 status = response.status
                 raw = response.read(self.max_response_bytes + 1)
         except HTTPError as exc:
