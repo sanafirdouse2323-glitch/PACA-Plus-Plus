@@ -19,13 +19,14 @@ class LiveOPATests(unittest.TestCase):
 
     @staticmethod
     def input_doc(role="analyst", owner="u1", subject="u1", subject_tenant="t1",
-                  resource_tenant="t1", status="active", action="file.read"):
+                  resource_tenant="t1", status="active", action="file.read",
+                  argument_path="r1", canonical_path="r1"):
         return {
             "subject": {"id": subject, "issuer": "https://identity.example",
                         "status": status, "role": role, "tenant_id": subject_tenant},
             "action": action,
-            "resource": {"id": "file:r1", "owner_id": owner, "tenant_id": resource_tenant},
-            "arguments": {"path": "r1"},
+            "resource": {"id": "file:r1", "owner_id": owner, "tenant_id": resource_tenant, "canonical_path": canonical_path},
+            "arguments": {"path": argument_path},
             "environment": {},
         }
 
@@ -42,6 +43,12 @@ class LiveOPATests(unittest.TestCase):
     def test_real_opa_denies_inactive_subject_and_unknown_action(self):
         self.assertFalse(self.opa.evaluate(self.input_doc(status="disabled")).allowed)
         self.assertFalse(self.opa.evaluate(self.input_doc(action="file.delete")).allowed)
+
+
+    def test_real_opa_denies_argument_path_that_does_not_match_resource(self):
+        self.assertFalse(self.opa.evaluate(
+            self.input_doc(argument_path="../private/secret.csv", canonical_path="r1")
+        ).allowed)
 
 
 if __name__ == "__main__":
