@@ -70,6 +70,9 @@ def main() -> int:
         service_token_provider=lambda: os.environ.get("PACA_DOWNSTREAM_SERVICE_TOKEN", ""),
         timeout_seconds=float(os.environ.get("PACA_DOWNSTREAM_TIMEOUT_SECONDS", "5")),
     )
+    # Fail service startup on malformed static downstream credentials instead of
+    # claiming an operation and then marking it unknown without sending a request.
+    adapter.preflight()
     gateway.register_action("file.read", adapter)
 
     host = os.environ.get("PACA_BIND_HOST", "127.0.0.1")
