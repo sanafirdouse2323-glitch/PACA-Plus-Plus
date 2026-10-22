@@ -14,3 +14,12 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[project.optional-dependencies]
+production = [
+  "PyJWT[crypto]>=2.10,<3",
+  "psycopg[binary]>=3.2,<4",
+]
+
+[project.scripts]
+paca-gateway = "paca_mvp.serve:main"
