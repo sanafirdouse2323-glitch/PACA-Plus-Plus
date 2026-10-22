@@ -23,3 +23,4 @@ production = [
 
 [project.scripts]
 paca-gateway = "paca_mvp.serve:main"
+paca-ops = "paca_mvp.ops:main"
