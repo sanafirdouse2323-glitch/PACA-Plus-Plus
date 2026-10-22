@@ -11,19 +11,25 @@ import os
 import sys
 from typing import Any
 
-from .durable import PostgresOperationStore, SQLiteOperationStore
+from .durable import FernetResponseProtector, PostgresOperationStore, SQLiteOperationStore
 
 
 def _store(args: argparse.Namespace):
+    raw_keys = os.environ.get("PACA_RESULT_ENCRYPTION_KEYS", "").strip()
+    protector = None
+    if raw_keys:
+        protector = FernetResponseProtector([key.strip() for key in raw_keys.split(",") if key.strip()])
     if args.backend == "postgres":
         dsn = args.dsn or os.environ.get("PACA_POSTGRES_DSN", "")
         if not dsn:
             raise ValueError("Use --dsn or set PACA_POSTGRES_DSN")
-        return PostgresOperationStore(dsn)
+        if protector is None:
+            raise ValueError("Set PACA_RESULT_ENCRYPTION_KEYS to the current response-encryption key and any retiring decrypt keys")
+        return PostgresOperationStore(dsn, response_protector=protector)
     path = args.path or os.environ.get("PACA_SQLITE_PATH", "")
     if not path:
         raise ValueError("Use --path or set PACA_SQLITE_PATH")
-    return SQLiteOperationStore(path)
+    return SQLiteOperationStore(path, response_protector=protector)
 
 
 def _print(payload: dict[str, Any]) -> None:
