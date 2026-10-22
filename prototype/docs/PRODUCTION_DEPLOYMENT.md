@@ -51,6 +51,8 @@ Start the HTTP API (defaults to loopback only):
 
     paca-gateway
 
+The service's HTTP listener does not provide TLS itself. Keep the default loopback bind when a same-host reverse proxy is used. A non-loopback `PACA_BIND_HOST` is rejected unless `PACA_TRUSTED_INGRESS_TERMINATES_TLS=true` is explicitly set. Set that acknowledgement only after configuring a trusted TLS-terminating ingress and protecting the ingress-to-service network hop; the flag does not configure or verify TLS and is not a substitute for network controls. Do not expose the raw HTTP listener to untrusted networks.
+
 Example operation request:
 
     curl --fail-with-body \
