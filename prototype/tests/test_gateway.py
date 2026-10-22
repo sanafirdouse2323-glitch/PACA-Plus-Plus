@@ -223,11 +223,11 @@ class GatewayTests(unittest.TestCase):
         original_claim = self.store.claim
         fail_once = {"value": True}
 
-        def injected_preclaim_failure(operation_id):
+        def injected_preclaim_failure(operation_id, **kwargs):
             if fail_once["value"]:
                 fail_once["value"] = False
                 raise RuntimeError("simulated failure before state transition")
-            return original_claim(operation_id)
+            return original_claim(operation_id, **kwargs)
 
         self.store.claim = injected_preclaim_failure
         with self.assertRaisesRegex(RuntimeError, "before state transition"):
