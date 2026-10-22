@@ -1,0 +1,110 @@
+"""Open Policy Agent (OPA) REST decision client.
+
+This module talks to OPA's Data API (POST /v1/data/<decision-path>) and fails
+closed on transport/protocol errors. It intentionally does not manage/deploy policies.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+import json
+import ssl
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
+
+
+class OPAError(RuntimeError):
+    """OPA could not produce a trustworthy decision."""
+
+
+@dataclass(frozen=True)
+class OPADecision:
+    allowed: bool
+    reason: str
+    result: dict[str, Any]
+    http_status: int = 200
+
+
+class OPAPolicyDecisionPoint:
+    """Small, fail-closed client for a named OPA Data API decision.
+
+    Use a loopback OPA sidecar over HTTP or a remotely deployed OPA over HTTPS.
+    The OPA management API should not be exposed to untrusted callers.
+    """
+
+    def __init__(
+        self,
+        base_url: str = "http://127.0.0.1:8181",
+        decision_path: str = "paca/authz/decision",
+        timeout_seconds: float = 1.5,
+        bearer_token: str | None = None,
+        allow_insecure_remote_http: bool = False,
+        max_response_bytes: int = 1_048_576,
+    ) -> None:
+        parsed = urlparse(base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("OPA base_url must be an absolute HTTP(S) URL")
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("OPA base_url must not include credentials, query, or fragment")
+        loopback = parsed.hostname.lower() in {"127.0.0.1", "::1", "localhost"}
+        if parsed.scheme != "https" and not loopback and not allow_insecure_remote_http:
+            raise ValueError("Remote OPA must use HTTPS; HTTP is permitted only for loopback")
+        path = decision_path.strip("/")
+        if not path or any(not part or part in {".", ".."} for part in path.split("/")):
+            raise ValueError("decision_path must be a non-empty dotted-path equivalent")
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if max_response_bytes < 256:
+            raise ValueError("max_response_bytes must be at least 256")
+        self.endpoint = base_url.rstrip("/") + "/v1/data/" + path
+        self.timeout_seconds = timeout_seconds
+        self.bearer_token = bearer_token
+        self.max_response_bytes = max_response_bytes
+
+    def evaluate(self, opa_input: dict[str, Any]) -> OPADecision:
+        """Return allow only when OPA returns an object with allow exactly true.
+
+        An undefined decision (HTTP 200 without a result) is a denial. Network,
+        HTTP, and malformed-response failures raise OPAError so callers can fail closed.
+        """
+        try:
+            body = json.dumps(opa_input, separators=(",", ":"), ensure_ascii=False,
+                              allow_nan=False).encode("utf-8")
+        except (TypeError, ValueError, UnicodeError) as exc:
+            raise OPAError("OPA input is not finite JSON") from exc
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if self.bearer_token:
+            headers["Authorization"] = "Bearer " + self.bearer_token
+        request = Request(self.endpoint, data=json.dumps(
+            {"input": json.loads(body)}, separators=(",", ":"), ensure_ascii=False,
+            allow_nan=False).encode("utf-8"), headers=headers, method="POST")
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:
+                status = response.status
+                raw = response.read(self.max_response_bytes + 1)
+        except HTTPError as exc:
+            # Do not include response bodies in exceptions; they may contain policy data.
+            raise OPAError(f"OPA returned HTTP {exc.code}") from exc
+        except (URLError, TimeoutError, OSError, ssl.SSLError) as exc:
+            raise OPAError("OPA decision endpoint unavailable") from exc
+        if len(raw) > self.max_response_bytes:
+            raise OPAError("OPA response exceeded configured size limit")
+        try:
+            document = json.loads(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise OPAError("OPA returned invalid JSON") from exc
+        if not isinstance(document, dict):
+            raise OPAError("OPA response must be a JSON object")
+        if "result" not in document:
+            return OPADecision(False, "undefined_decision", {}, status)
+        result = document["result"]
+        if not isinstance(result, dict):
+            raise OPAError("OPA decision result must be an object")
+        allowed = result.get("allow") is True
+        reason = result.get("reason")
+        if not isinstance(reason, str) or not reason:
+            reason = "permitted" if allowed else "policy_denied"
+        # Copy the response through JSON so caller-owned nested values cannot leak in.
+        clean_result = json.loads(json.dumps(result, allow_nan=False))
+        return OPADecision(allowed, reason, clean_result, status)
