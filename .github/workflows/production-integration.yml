@@ -80,6 +80,15 @@ jobs:
           done
           cat "$RUNNER_TEMP/opa.log"
           exit 1
+      - name: Apply database migration and validate least-privilege runtime roles
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+          fi
+          psql "$PACA_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/001_runtime_roles_and_schema.sql
       - name: Run unit, adversarial and local HTTP integration tests
         run: python -m unittest discover -s tests -v
       - name: Run simulated demo
