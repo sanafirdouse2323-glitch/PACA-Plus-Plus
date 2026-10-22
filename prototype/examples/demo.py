@@ -16,13 +16,14 @@ policy = Policy.from_dict({
 })
 engine = AuthorizationEngine(policy)
 context = {"user": {"id": "user-17", "role": "analyst"}, "resource": {"owner": "user-17"}}
-decision = engine.authorize("file.read", "file:report-1", context)
+operation_args = {"path": "report-1", "mode": "read"}
+decision = engine.authorize_operation("demo-user", "file.read", "file:report-1", operation_args, context)
 print("Read decision:", decision.reason)
-print("Effect result:", engine.execute(decision.permit_id, "file.read", "file:report-1",
-                                       lambda: "SIMULATED: report content returned"))
-second = engine.authorize("file.read", "file:report-1", context)
+print("Effect result:", engine.execute_operation(decision.permit_id, "demo-user", "file.read", "file:report-1", operation_args,
+                                                 lambda: "SIMULATED: report content returned"))
+second = engine.authorize_operation("demo-user", "file.read", "file:report-1", operation_args, context)
 try:
-    engine.execute(second.permit_id, "file.delete", "file:report-1", lambda: "THIS MUST NEVER RUN")
+    engine.execute_operation(second.permit_id, "demo-user", "file.delete", "file:report-1", operation_args, lambda: "THIS MUST NEVER RUN")
 except AuthorizationError as exc:
     print("Action substitution blocked:", exc)
 confused_context = {"role": "analyst", "user": {"id": "user-17"},
