@@ -10,7 +10,7 @@ import importlib
 import os
 import sys
 
-from .durable import PostgresOperationStore
+from .durable import FernetResponseProtector, PostgresOperationStore
 from .gateway import HTTPJsonActionAdapter, ProtectedToolGateway
 from .http_api import make_server
 from .identity import JWTAuthenticator
@@ -46,6 +46,8 @@ def main() -> int:
     context_factory = _required_env("PACA_CONTEXT_PROVIDER")
     downstream_endpoint = _required_env("PACA_FILE_READ_ENDPOINT")
     service_token = _required_env("PACA_DOWNSTREAM_SERVICE_TOKEN")
+    encryption_keys = _required_env("PACA_RESULT_ENCRYPTION_KEYS")
+    protector = FernetResponseProtector([key.strip() for key in encryption_keys.split(",") if key.strip()])
 
     authenticator = JWTAuthenticator(issuer=issuer, audience=audience, jwks_url=jwks_url)
     context_provider = _load_factory(context_factory)
@@ -55,7 +57,7 @@ def main() -> int:
         timeout_seconds=float(os.environ.get("PACA_OPA_TIMEOUT_SECONDS", "1.5")),
         bearer_token=os.environ.get("PACA_OPA_BEARER_TOKEN") or None,
     )
-    store = PostgresOperationStore(database_url)
+    store = PostgresOperationStore(database_url, response_protector=protector)
     gateway = ProtectedToolGateway(
         authenticator=authenticator,
         context_provider=context_provider,
