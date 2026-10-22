@@ -11,6 +11,7 @@ from .identity import (
     TrustedAuthorizationContext,
 )
 from .durable import (
+    FernetResponseProtector,
     IdempotencyConflict,
     OperationOutcomeUnknown,
     OperationRecord,
@@ -37,7 +38,7 @@ __all__ = [
     "AuthenticationError", "AuthenticatedPrincipal", "AuthorizationContextProvider",
     "CallbackContextProvider", "ContextRetrievalError", "JWTAuthenticator",
     "TrustedAuthorizationContext",
-    "IdempotencyConflict", "OperationOutcomeUnknown", "OperationRecord", "OperationStateError",
+    "FernetResponseProtector", "IdempotencyConflict", "OperationOutcomeUnknown", "OperationRecord", "OperationStateError",
     "PostgresOperationStore", "SQLiteOperationStore", "StoreError",
     "ActionRequest", "AuthorizationDenied", "ContextChanged", "GatewayResult",
     "HTTPJsonActionAdapter", "OperationOutcomeUnresolved", "PolicyEvaluationFailed",
