@@ -8,11 +8,6 @@ services:
       - ./policies:/policies:ro
     ports:
       - "127.0.0.1:8181:8181"
-    healthcheck:
-      test: ["CMD", "/opa", "health", "--addr=http://127.0.0.1:8181"]
-      interval: 5s
-      timeout: 3s
-      retries: 15
     restart: unless-stopped
 
   postgres:
