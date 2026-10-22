@@ -57,35 +57,35 @@ class AuthorizationTests(unittest.TestCase):
         d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
         ran = []
         with self.assertRaisesRegex(AuthorizationError, "action_or_resource_mismatch"):
-            self.engine.execute_operation(d.permit_id, "user-1", "file.delete", "file:r1", args, lambda: ran.append("executed"))
+            self.engine.execute_operation(d.permit_id, "user-1", "file.delete", "file:r1", args, self.ctx, lambda: ran.append("executed"))
         self.assertEqual(ran, [])
 
     def test_resource_substitution_is_blocked(self):
         args = {"path": "report-1"}
         d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
         with self.assertRaisesRegex(AuthorizationError, "action_or_resource_mismatch"):
-            self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r2", args, lambda: "bad")
+            self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r2", args, self.ctx, lambda: "bad")
 
     def test_permit_is_one_use(self):
         args = {"path": "report-1"}
         d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
-        self.assertEqual(self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, lambda: 7), 7)
+        self.assertEqual(self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, self.ctx, lambda: 7), 7)
         with self.assertRaisesRegex(AuthorizationError, "permit_replayed"):
-            self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, lambda: 8)
+            self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, self.ctx, lambda: 8)
 
     def test_state_change_invalidates_permit(self):
         args = {"path": "report-1"}
         d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
         self.engine.advance_state()
         with self.assertRaisesRegex(AuthorizationError, "stale_state"):
-            self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, lambda: "bad")
+            self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, self.ctx, lambda: "bad")
 
     def test_policy_change_invalidates_permit(self):
         args = {"path": "report-1"}
         d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
         self.engine.update_policy(make_policy(version="v2"))
         with self.assertRaisesRegex(AuthorizationError, "stale_policy"):
-            self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, lambda: "bad")
+            self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, self.ctx, lambda: "bad")
 
     def test_mutating_policy_object_after_engine_creation_does_not_change_engine(self):
         policy = Policy.from_dict({"version": "v1", "rules": [{
@@ -112,7 +112,7 @@ class AuthorizationTests(unittest.TestCase):
         self.engine.update_policy(changed)
         with self.assertRaisesRegex(AuthorizationError, "stale_policy"):
             self.engine.execute_operation(
-                d.permit_id, "user-1", "file.read", "file:r1", args, lambda: "must not run"
+                d.permit_id, "user-1", "file.read", "file:r1", args, self.ctx, lambda: "must not run"
             )
 
 
@@ -136,7 +136,7 @@ class AuthorizationTests(unittest.TestCase):
         outcomes, rejected = [], []
         def attempt():
             try:
-                self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, lambda: outcomes.append("effect"))
+                self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, self.ctx, lambda: outcomes.append("effect"))
             except AuthorizationError:
                 rejected.append("rejected")
         t1, t2 = Thread(target=attempt), Thread(target=attempt)
@@ -158,7 +158,7 @@ class AuthorizationTests(unittest.TestCase):
         d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
         self.assertTrue(d.allowed)
         result = self.engine.execute_operation(
-            d.permit_id, "user-1", "file.read", "file:r1", args, lambda: "ok"
+            d.permit_id, "user-1", "file.read", "file:r1", args, self.ctx, lambda: "ok"
         )
         self.assertEqual(result, "ok")
 
@@ -169,7 +169,7 @@ class AuthorizationTests(unittest.TestCase):
         with self.assertRaisesRegex(AuthorizationError, "arguments_mismatch"):
             self.engine.execute_operation(
                 d.permit_id, "user-1", "file.read", "file:r1",
-                {"path": "secrets.csv", "mode": "read"}, lambda: ran.append(True)
+                {"path": "secrets.csv", "mode": "read"}, self.ctx, lambda: ran.append(True)
             )
         self.assertEqual(ran, [])
 
@@ -179,7 +179,7 @@ class AuthorizationTests(unittest.TestCase):
         ran = []
         with self.assertRaisesRegex(AuthorizationError, "principal_mismatch"):
             self.engine.execute_operation(
-                d.permit_id, "user-2", "file.read", "file:r1", args, lambda: ran.append(True)
+                d.permit_id, "user-2", "file.read", "file:r1", args, self.ctx, lambda: ran.append(True)
             )
         self.assertEqual(ran, [])
 
@@ -201,7 +201,7 @@ class AuthorizationTests(unittest.TestCase):
         args = {"path": "report-1"}
         d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
         with self.assertRaisesRegex(AuthorizationError, "effect_not_callable"):
-            self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, None)
+            self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, self.ctx, None)
 
     def test_raw_policy_input_mutation_does_not_change_parsed_policy(self):
         raw = {"version": "v1", "rules": [{
