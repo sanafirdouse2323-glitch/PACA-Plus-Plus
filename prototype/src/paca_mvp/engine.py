@@ -268,9 +268,12 @@ class AuthorizationEngine:
                 return Decision(False, "invalid_principal", policy_version=self.policy_version)
             try:
                 arguments_digest = _canonical_digest(arguments)
+            except ValueError:
+                return Decision(False, "invalid_arguments", policy_version=self.policy_version)
+            try:
                 context_digest = _canonical_digest(context)
             except ValueError:
-                return Decision(False, "invalid_arguments_or_context", policy_version=self.policy_version)
+                return Decision(False, "invalid_context", policy_version=self.policy_version)
         else:
             arguments_digest = None
             context_digest = None
