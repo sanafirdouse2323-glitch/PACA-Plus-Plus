@@ -225,8 +225,8 @@ class ProtectedToolGateway:
                 resource=resource,
                 arguments_digest=canonical_digest(args_snapshot),
                 context_digest=canonical_digest(input_snapshot),
-                policy_decision={"allow": True, "reason": initial_decision.reason,
-                                 "result": initial_decision.result},
+                # Persist only the decision outcome and bounded reason, not arbitrary policy data.
+                policy_decision={"allow": True, "reason": initial_decision.reason[:128]},
                 ttl_seconds=self.permit_ttl_seconds,
             )
         except IdempotencyConflict:
