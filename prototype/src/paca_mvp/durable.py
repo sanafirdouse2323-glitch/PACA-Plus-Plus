@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
+import ipaddress
 import json
 import math
 import os
@@ -746,9 +747,44 @@ class PostgresOperationStore(_BaseOperationStore):
             raise ValueError("initialize_schema must be boolean")
         try:
             import psycopg
+            from psycopg.conninfo import conninfo_to_dict
             from psycopg.rows import dict_row
         except ImportError as exc:
             raise RuntimeError("Install the production extra for PostgreSQL support") from exc
+        try:
+            connection_options = conninfo_to_dict(dsn)
+        except Exception as exc:
+            # Never echo connection strings: they may contain credentials.
+            raise ValueError("invalid PostgreSQL connection string") from exc
+
+        def is_local_host(value: str) -> bool:
+            value = value.strip()
+            if not value or value.startswith("/") or value.lower() in {"localhost", "localhost."}:
+                return True
+            try:
+                return ipaddress.ip_address(value.strip("[]")).is_loopback
+            except ValueError:
+                return False
+
+        configured_hosts = [
+            item for item in (connection_options.get("host") or "").split(",") if item.strip()
+        ]
+        configured_addresses = [
+            item for item in (connection_options.get("hostaddr") or "").split(",") if item.strip()
+        ]
+        is_remote = any(not is_local_host(item) for item in configured_hosts)
+        for address in configured_addresses:
+            try:
+                if not ipaddress.ip_address(address.strip("[]")).is_loopback:
+                    is_remote = True
+            except ValueError:
+                # An invalid hostaddr is rejected by libpq at connect time, but it must
+                # not be treated as a proof that the connection is local.
+                is_remote = True
+        sslmode = connection_options.get("sslmode") or "prefer"
+        if is_remote and sslmode != "verify-full":
+            raise ValueError("remote PostgreSQL connections require sslmode=verify-full")
+
         self._psycopg = psycopg
         self._dict_row = dict_row
         self.dsn = dsn
