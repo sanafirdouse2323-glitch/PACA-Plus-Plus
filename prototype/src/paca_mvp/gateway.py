@@ -140,7 +140,7 @@ class ProtectedToolGateway:
             raise ValueError("invalid_operation_id")
         operation = self.operation_store.get_operation(operation_id)
         # Use the same outward error for absent and other users' records.
-        if operation is None or operation.principal_id != principal.subject:
+        if operation is None or operation.principal_id != principal.storage_id:
             raise LookupError("operation_not_found")
         return {
             "operation_id": operation.operation_id,
@@ -206,7 +206,7 @@ class ProtectedToolGateway:
             raise PermissionError("authentication_required") from None
 
         if action not in self._handlers:
-            self.operation_store.record_denial(principal.subject, action, resource, "unregistered_action")
+            self.operation_store.record_denial(principal.storage_id, action, resource, "unregistered_action")
             raise AuthorizationDenied("request_denied")
         if not isinstance(arguments, Mapping):
             raise ValueError("arguments_must_be_a_JSON_object")
@@ -231,7 +231,7 @@ class ProtectedToolGateway:
         try:
             operation, created = self.operation_store.create_or_get(
                 idempotency_key=idempotency_key,
-                principal_id=principal.subject,
+                principal_id=principal.storage_id,
                 action=action,
                 resource=resource,
                 arguments_digest=canonical_digest(args_snapshot),
