@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import importlib
 import os
-import sys
 
 from .durable import FernetResponseProtector, PostgresOperationStore
 from .gateway import HTTPJsonActionAdapter, ProtectedToolGateway
@@ -45,7 +44,7 @@ def main() -> int:
     database_url = _required_env("PACA_POSTGRES_DSN")
     context_factory = _required_env("PACA_CONTEXT_PROVIDER")
     downstream_endpoint = _required_env("PACA_FILE_READ_ENDPOINT")
-    service_token = _required_env("PACA_DOWNSTREAM_SERVICE_TOKEN")
+    _required_env("PACA_DOWNSTREAM_SERVICE_TOKEN")
     encryption_keys = _required_env("PACA_RESULT_ENCRYPTION_KEYS")
     protector = FernetResponseProtector([key.strip() for key in encryption_keys.split(",") if key.strip()])
 
@@ -58,6 +57,9 @@ def main() -> int:
         bearer_token=os.environ.get("PACA_OPA_BEARER_TOKEN") or None,
     )
     store = PostgresOperationStore(database_url, response_protector=protector, initialize_schema=False)
+    # Readiness checks required tables and the chain head before accepting traffic.
+    # Full audit-chain verification remains an explicit operator action because it is O(n).
+    store.check_ready()
     gateway = ProtectedToolGateway(
         authenticator=authenticator,
         context_provider=context_provider,
