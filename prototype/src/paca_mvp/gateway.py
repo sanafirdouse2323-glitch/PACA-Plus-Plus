@@ -107,6 +107,29 @@ class ProtectedToolGateway:
             raise ValueError("action_already_registered")
         self._handlers[action] = handler
 
+    def get_operation_status(self, authorization_header: str, operation_id: str) -> dict[str, Any]:
+        """Return non-sensitive operation status to the authenticated initiating principal."""
+        try:
+            principal = self.authenticator.authenticate(authorization_header)
+        except Exception:
+            raise PermissionError("authentication_required") from None
+        if not isinstance(operation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", operation_id):
+            raise ValueError("invalid_operation_id")
+        operation = self.operation_store.get_operation(operation_id)
+        # Use the same outward error for absent and other users' records.
+        if operation is None or operation.principal_id != principal.subject:
+            raise LookupError("operation_not_found")
+        return {
+            "operation_id": operation.operation_id,
+            "status": operation.status,
+            "action": operation.action,
+            "resource": operation.resource,
+            "created_at": operation.created_at,
+            "expires_at": operation.expires_at,
+            "finished_at": operation.finished_at,
+            "error_code": operation.error_code,
+        }
+
     @staticmethod
     def _clone_json(value: Any, max_bytes: int = _MAX_ARGUMENT_BYTES) -> Any:
         try:
