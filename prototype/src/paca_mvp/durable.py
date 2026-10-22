@@ -275,7 +275,7 @@ class _BaseOperationStore:
                 self._append_audit(session, "idempotency_conflict", result_row["operation_id"],
                                    principal_id, {"action": action, "resource": resource})
             elif created:
-                self._append_audit(session, "authorization_allowed", operation_id, principal_id, {
+                self._append_audit(session, "authorization_precheck_permitted", operation_id, principal_id, {
                     "action": action, "resource": resource, "arguments_digest": arguments_digest,
                     "context_digest": context_digest, "decision": json.loads(policy_json),
                 })
