@@ -6,7 +6,6 @@ from pathlib import Path
 
 from paca_mvp.durable import (
     IdempotencyConflict,
-    OperationOutcomeUnknown,
     OperationStateError,
     SQLiteOperationStore,
 )
@@ -176,7 +175,7 @@ class GatewayTests(unittest.TestCase):
         self.assertIsNotNone(caught.exception.operation_id)
         record = self.store.get_operation(caught.exception.operation_id)
         self.assertEqual(record.status, "unknown")
-        with self.assertRaises(OperationOutcomeUnknown):
+        with self.assertRaises(OperationOutcomeUnresolved):
             failing_gateway.execute(
                 "Bearer valid-token", action="file.read", resource="file:r1",
                 arguments={"path": "report.csv"}, idempotency_key=key,
