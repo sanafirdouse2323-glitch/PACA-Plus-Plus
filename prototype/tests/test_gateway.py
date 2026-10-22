@@ -61,6 +61,7 @@ class FakeOPA:
     def __init__(self, fail=False):
         self.fail = fail
         self.calls = []
+        self.decision_id = "fake-decision-1"
 
     def evaluate(self, value):
         self.calls.append(value)
@@ -76,7 +77,7 @@ class FakeOPA:
             and subject.get("tenant_id") == resource.get("tenant_id")
         )
         result = {"allow": allowed, "reason": "permitted" if allowed else "no_matching_permit"}
-        return OPADecision(allowed, result["reason"], result)
+        return OPADecision(allowed, result["reason"], result, decision_id=self.decision_id)
 
 
 class GatewayTests(unittest.TestCase):
@@ -117,6 +118,8 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(first.operation_id, replay.operation_id)
         self.assertEqual(len(self.effects), 1)
         self.assertGreaterEqual(len(self.opa.calls), 3)
+        stored = self.store.get_operation(first.operation_id)
+        self.assertEqual(stored.policy_decision["decision_id"], "fake-decision-1")
         self.assertTrue(self.store.verify_audit_chain())
 
     def test_key_reuse_with_other_arguments_is_rejected(self):
