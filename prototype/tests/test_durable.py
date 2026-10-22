@@ -3,7 +3,9 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import json
+import os
 import sqlite3
+import stat
 import tempfile
 import unittest
 import uuid
@@ -269,6 +271,21 @@ class DurableStoreTests(unittest.TestCase):
             connection.execute("UPDATE audit_head SET head_hash=? WHERE singleton=1", ("not-a-sha256-hash",))
         with self.assertRaisesRegex(StoreError, "audit_head_missing_or_invalid"):
             self.store.check_ready()
+
+
+    def test_sqlite_database_file_is_owner_only_on_posix(self):
+        if os.name != "posix":
+            self.skipTest("POSIX file mode guarantees are not available on this platform")
+        mode = stat.S_IMODE(os.stat(self.db_path).st_mode)
+        self.assertEqual(mode, 0o600)
+
+    def test_sqlite_store_rejects_database_symlink(self):
+        target = Path(self.temp.name) / "target.db"
+        SQLiteOperationStore(target)
+        link = Path(self.temp.name) / "link.db"
+        link.symlink_to(target)
+        with self.assertRaisesRegex(ValueError, "must not be a symlink"):
+            SQLiteOperationStore(link)
 
 
 if __name__ == "__main__":
