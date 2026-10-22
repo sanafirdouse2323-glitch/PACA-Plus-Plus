@@ -48,13 +48,13 @@ def main():
             exec_resource = scenario.get("execute_resource_override", scenario["resource"])
             try:
                 engine.execute_operation(
-                    decision.permit_id, principal_id, exec_action, exec_resource, operation_args,
+                    decision.permit_id, principal_id, exec_action, exec_resource, operation_args, scenario["context"],
                     lambda: effect_calls.append("committed"),
                 )
                 if scenario.get("replay"):
                     try:
                         engine.execute_operation(
-                            decision.permit_id, principal_id, exec_action, exec_resource, operation_args,
+                            decision.permit_id, principal_id, exec_action, exec_resource, operation_args, scenario["context"],
                             lambda: effect_calls.append("replayed"),
                         )
                     except AuthorizationError:
