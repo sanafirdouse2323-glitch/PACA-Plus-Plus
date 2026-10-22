@@ -29,7 +29,15 @@ def main():
     by_family = defaultdict(lambda: {"n": 0, "authorization_correct": 0, "effect_correct": 0})
     for scenario in scenarios["scenarios"]:
         engine = AuthorizationEngine(Policy.from_dict(POLICY))
-        decision = engine.authorize(scenario["action"], scenario["resource"], scenario["context"])
+        principal_id = scenario.get("context", {}).get("user", {}).get("id")
+        operation_args = {
+            "scenario_id": scenario["id"],
+            "requested_action": scenario["action"],
+            "requested_resource": scenario["resource"],
+        }
+        decision = engine.authorize_operation(
+            principal_id, scenario["action"], scenario["resource"], operation_args, scenario["context"]
+        )
         effect_calls = []
         if decision.allowed:
             if scenario.get("advance_state_before_execute"):
@@ -39,12 +47,16 @@ def main():
             exec_action = scenario.get("execute_action_override", scenario["action"])
             exec_resource = scenario.get("execute_resource_override", scenario["resource"])
             try:
-                engine.execute(decision.permit_id, exec_action, exec_resource,
-                               lambda: effect_calls.append("committed"))
+                engine.execute_operation(
+                    decision.permit_id, principal_id, exec_action, exec_resource, operation_args,
+                    lambda: effect_calls.append("committed"),
+                )
                 if scenario.get("replay"):
                     try:
-                        engine.execute(decision.permit_id, exec_action, exec_resource,
-                                       lambda: effect_calls.append("replayed"))
+                        engine.execute_operation(
+                            decision.permit_id, principal_id, exec_action, exec_resource, operation_args,
+                            lambda: effect_calls.append("replayed"),
+                        )
                     except AuthorizationError:
                         pass
             except AuthorizationError:
