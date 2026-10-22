@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 
 from paca_mvp.durable import (
+    FernetResponseProtector,
     IdempotencyConflict,
     OperationOutcomeUnknown,
     OperationStateError,
@@ -195,6 +196,68 @@ class DurableStoreTests(unittest.TestCase):
                 kwargs.update(overrides)
                 with self.assertRaises(ValueError):
                     self.store.create_or_get(**kwargs)
+
+
+    def test_cached_response_is_encrypted_at_rest_and_decrypted_for_replay(self):
+        try:
+            from cryptography.fernet import Fernet
+        except ImportError:
+            self.skipTest("Install the production extra for response encryption tests")
+        key = Fernet.generate_key().decode("ascii")
+        protected_store = SQLiteOperationStore(
+            str(Path(self.temp.name) / "protected.db"),
+            response_protector=FernetResponseProtector([key]),
+        )
+        record, _ = protected_store.create_or_get(**self.kwargs)
+        protected_store.claim(record.operation_id)
+        sensitive_response = {"file_content": "this content must not be stored as plaintext"}
+        completed = protected_store.complete(record.operation_id, sensitive_response)
+        self.assertEqual(completed.response, sensitive_response)
+        with sqlite3.connect(str(Path(self.temp.name) / "protected.db")) as connection:
+            stored = connection.execute(
+                "SELECT response_json FROM operations WHERE operation_id=?", (record.operation_id,)
+            ).fetchone()[0]
+        self.assertTrue(stored.startswith("enc:v1:"))
+        self.assertNotIn("this content must not be stored as plaintext", stored)
+        reopened = SQLiteOperationStore(
+            str(Path(self.temp.name) / "protected.db"),
+            response_protector=FernetResponseProtector([key]),
+        )
+        self.assertEqual(reopened.get_operation(record.operation_id).response, sensitive_response)
+
+    def test_encrypted_response_cannot_be_read_without_key_or_with_wrong_key(self):
+        try:
+            from cryptography.fernet import Fernet
+        except ImportError:
+            self.skipTest("Install the production extra for response encryption tests")
+        right = Fernet.generate_key().decode("ascii")
+        wrong = Fernet.generate_key().decode("ascii")
+        db = str(Path(self.temp.name) / "protected-no-key.db")
+        protected_store = SQLiteOperationStore(db, response_protector=FernetResponseProtector([right]))
+        record, _ = protected_store.create_or_get(**self.kwargs)
+        protected_store.claim(record.operation_id)
+        protected_store.complete(record.operation_id, {"secret": "private"})
+        with self.assertRaisesRegex(Exception, "encrypted_cached_response_requires_response_protector"):
+            SQLiteOperationStore(db).get_operation(record.operation_id)
+        with self.assertRaisesRegex(Exception, "cached_response_decryption_failed"):
+            SQLiteOperationStore(db, response_protector=FernetResponseProtector([wrong])).get_operation(record.operation_id)
+
+    def test_response_encryption_key_rotation_accepts_retiring_decrypt_key(self):
+        try:
+            from cryptography.fernet import Fernet
+        except ImportError:
+            self.skipTest("Install the production extra for response encryption tests")
+        old_key = Fernet.generate_key().decode("ascii")
+        new_key = Fernet.generate_key().decode("ascii")
+        db = str(Path(self.temp.name) / "rotation.db")
+        old_store = SQLiteOperationStore(db, response_protector=FernetResponseProtector([old_key]))
+        record, _ = old_store.create_or_get(**self.kwargs)
+        old_store.claim(record.operation_id)
+        old_store.complete(record.operation_id, {"remote_result": "stored"})
+        rotated = SQLiteOperationStore(
+            db, response_protector=FernetResponseProtector([new_key, old_key])
+        )
+        self.assertEqual(rotated.get_operation(record.operation_id).response, {"remote_result": "stored"})
 
 
 if __name__ == "__main__":
