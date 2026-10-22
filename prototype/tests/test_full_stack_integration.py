@@ -132,6 +132,14 @@ class FullStackIntegrationTests(unittest.TestCase):
                 arguments={"path": "other-user-report"},
                 idempotency_key="e2e-" + uuid.uuid4().hex,
             )
+        with self.assertRaises(AuthorizationDenied):
+            gateway.execute(
+                authorization,
+                action="file.read",
+                resource="file:r1",
+                arguments={"path": "../private/secret.csv"},
+                idempotency_key="e2e-" + uuid.uuid4().hex,
+            )
         self.assertEqual(len(DownstreamHandler.calls), 1)
         self.assertTrue(store.verify_audit_chain())
 
