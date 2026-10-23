@@ -471,7 +471,7 @@ class PostgresStore:
     @staticmethod
     def _audit(
         conn: Any, *, event_type: str, tenant_id: str | None, principal_id: str | None,
-        request_id: str | None, action: str | None = None, resource_id: str | None = None,
+        request_id: str | None = None, action: str | None = None, resource_id: str | None = None,
         permit_id: UUID | None = None, execution_id: UUID | None = None,
         reason_code: str | None = None, policy_revision: str | None = None,
         decision_id: str | None = None, arguments_digest: str | None = None,
