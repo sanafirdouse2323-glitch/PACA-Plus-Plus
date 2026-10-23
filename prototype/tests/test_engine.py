@@ -53,34 +53,68 @@ class AuthorizationTests(unittest.TestCase):
         self.assertFalse(AuthorizationEngine(policy).authorize("file.read", "file:r1", {"user": {}}).allowed)
 
     def test_action_substitution_is_blocked_before_effect(self):
-        d = self.engine.authorize("file.read", "file:r1", self.ctx)
+        args = {"path": "report-1"}
+        d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
         ran = []
         with self.assertRaisesRegex(AuthorizationError, "action_or_resource_mismatch"):
-            self.engine.execute(d.permit_id, "file.delete", "file:r1", lambda: ran.append("executed"))
+            self.engine.execute_operation(d.permit_id, "user-1", "file.delete", "file:r1", args, self.ctx, lambda: ran.append("executed"))
         self.assertEqual(ran, [])
 
     def test_resource_substitution_is_blocked(self):
-        d = self.engine.authorize("file.read", "file:r1", self.ctx)
+        args = {"path": "report-1"}
+        d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
         with self.assertRaisesRegex(AuthorizationError, "action_or_resource_mismatch"):
-            self.engine.execute(d.permit_id, "file.read", "file:r2", lambda: "bad")
+            self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r2", args, self.ctx, lambda: "bad")
 
     def test_permit_is_one_use(self):
-        d = self.engine.authorize("file.read", "file:r1", self.ctx)
-        self.assertEqual(self.engine.execute(d.permit_id, "file.read", "file:r1", lambda: 7), 7)
+        args = {"path": "report-1"}
+        d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
+        self.assertEqual(self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, self.ctx, lambda: 7), 7)
         with self.assertRaisesRegex(AuthorizationError, "permit_replayed"):
-            self.engine.execute(d.permit_id, "file.read", "file:r1", lambda: 8)
+            self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, self.ctx, lambda: 8)
 
     def test_state_change_invalidates_permit(self):
-        d = self.engine.authorize("file.read", "file:r1", self.ctx)
+        args = {"path": "report-1"}
+        d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
         self.engine.advance_state()
         with self.assertRaisesRegex(AuthorizationError, "stale_state"):
-            self.engine.execute(d.permit_id, "file.read", "file:r1", lambda: "bad")
+            self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, self.ctx, lambda: "bad")
 
     def test_policy_change_invalidates_permit(self):
-        d = self.engine.authorize("file.read", "file:r1", self.ctx)
+        args = {"path": "report-1"}
+        d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
         self.engine.update_policy(make_policy(version="v2"))
         with self.assertRaisesRegex(AuthorizationError, "stale_policy"):
-            self.engine.execute(d.permit_id, "file.read", "file:r1", lambda: "bad")
+            self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, self.ctx, lambda: "bad")
+
+    def test_mutating_policy_object_after_engine_creation_does_not_change_engine(self):
+        policy = Policy.from_dict({"version": "v1", "rules": [{
+            "id": "r", "effect": "permit", "action": "file.read",
+            "conditions": [{"path": "user.role", "op": "in", "value": ["analyst"]}],
+        }]})
+        engine = AuthorizationEngine(policy)
+        policy.rules[0].conditions[0]["value"].append("admin")
+        self.assertFalse(engine.authorize(
+            "file.read", "file:r1", {"user": {"role": "admin"}}
+        ).allowed)
+
+
+    def test_policy_content_change_invalidates_permit_even_if_version_label_is_reused(self):
+        args = {"path": "report-1"}
+        d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
+        changed = Policy.from_dict({"version": "v1", "rules": [{
+            "id": "read_owned", "effect": "permit", "action": "file.read",
+            "conditions": [
+                {"path": "user.role", "op": "eq", "value": "engineer"},
+                {"path": "resource.owner", "op": "eq", "value_from_path": "user.id"},
+            ],
+        }]})
+        self.engine.update_policy(changed)
+        with self.assertRaisesRegex(AuthorizationError, "stale_policy"):
+            self.engine.execute_operation(
+                d.permit_id, "user-1", "file.read", "file:r1", args, self.ctx, lambda: "must not run"
+            )
+
 
     def test_deny_overrides_permit(self):
         engine = AuthorizationEngine(make_policy(include_deny=True))
@@ -97,17 +131,103 @@ class AuthorizationTests(unittest.TestCase):
             }]})
 
     def test_concurrent_replay_allows_at_most_one_effect(self):
-        d = self.engine.authorize("file.read", "file:r1", self.ctx)
+        args = {"path": "report-1"}
+        d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
         outcomes, rejected = [], []
         def attempt():
             try:
-                self.engine.execute(d.permit_id, "file.read", "file:r1", lambda: outcomes.append("effect"))
+                self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, self.ctx, lambda: outcomes.append("effect"))
             except AuthorizationError:
                 rejected.append("rejected")
         t1, t2 = Thread(target=attempt), Thread(target=attempt)
         t1.start(); t2.start(); t1.join(); t2.join()
         self.assertEqual(outcomes, ["effect"])
         self.assertEqual(len(rejected), 1)
+
+
+    def test_unbound_legacy_permit_cannot_execute_effect(self):
+        d = self.engine.authorize("file.read", "file:r1", self.ctx)
+        ran = []
+        with self.assertRaisesRegex(AuthorizationError, "operation_binding_required"):
+            self.engine.execute(d.permit_id, "file.read", "file:r1", lambda: ran.append(True))
+        self.assertEqual(ran, [])
+
+
+    def test_operation_permit_binds_principal_and_exact_arguments(self):
+        args = {"path": "reports/q1.csv", "mode": "read"}
+        d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
+        self.assertTrue(d.allowed)
+        result = self.engine.execute_operation(
+            d.permit_id, "user-1", "file.read", "file:r1", args, self.ctx, lambda: "ok"
+        )
+        self.assertEqual(result, "ok")
+
+    def test_operation_permit_rejects_changed_arguments_before_effect(self):
+        args = {"path": "reports/q1.csv", "mode": "read"}
+        d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
+        ran = []
+        with self.assertRaisesRegex(AuthorizationError, "arguments_mismatch"):
+            self.engine.execute_operation(
+                d.permit_id, "user-1", "file.read", "file:r1",
+                {"path": "secrets.csv", "mode": "read"}, self.ctx, lambda: ran.append(True)
+            )
+        self.assertEqual(ran, [])
+
+    def test_operation_permit_rejects_changed_authorization_context(self):
+        args = {"path": "report-1"}
+        d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
+        changed_context = context()
+        changed_context["user"]["role"] = "admin"
+        ran = []
+        with self.assertRaisesRegex(AuthorizationError, "context_mismatch"):
+            self.engine.execute_operation(
+                d.permit_id, "user-1", "file.read", "file:r1", args,
+                changed_context, lambda: ran.append(True)
+            )
+        self.assertEqual(ran, [])
+
+
+    def test_operation_permit_rejects_changed_principal_before_effect(self):
+        args = {"path": "reports/q1.csv"}
+        d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
+        ran = []
+        with self.assertRaisesRegex(AuthorizationError, "principal_mismatch"):
+            self.engine.execute_operation(
+                d.permit_id, "user-2", "file.read", "file:r1", args, self.ctx, lambda: ran.append(True)
+            )
+        self.assertEqual(ran, [])
+
+    def test_non_finite_or_non_positive_ttl_is_denied(self):
+        for ttl in (0, -1, 301, 10**100, float("nan"), float("inf"), float("-inf")):
+            with self.subTest(ttl=ttl):
+                d = self.engine.authorize("file.read", "file:r1", self.ctx, ttl)
+                self.assertFalse(d.allowed)
+                self.assertEqual(d.reason, "invalid_permit_ttl")
+
+    def test_non_json_operation_arguments_are_denied(self):
+        d = self.engine.authorize_operation(
+            "user-1", "file.read", "file:r1", {"value": object()}, self.ctx
+        )
+        self.assertFalse(d.allowed)
+        self.assertEqual(d.reason, "invalid_arguments")
+
+    def test_non_callable_effect_is_rejected(self):
+        args = {"path": "report-1"}
+        d = self.engine.authorize_operation("user-1", "file.read", "file:r1", args, self.ctx)
+        with self.assertRaisesRegex(AuthorizationError, "effect_not_callable"):
+            self.engine.execute_operation(d.permit_id, "user-1", "file.read", "file:r1", args, self.ctx, None)
+
+    def test_raw_policy_input_mutation_does_not_change_parsed_policy(self):
+        raw = {"version": "v1", "rules": [{
+            "id": "r", "effect": "permit", "action": "file.read",
+            "conditions": [{"path": "user.role", "op": "in", "value": ["analyst"]}],
+        }]}
+        policy = Policy.from_dict(raw)
+        raw["rules"][0]["conditions"][0]["value"].append("admin")
+        engine = AuthorizationEngine(policy)
+        self.assertFalse(engine.authorize(
+            "file.read", "file:r1", {"user": {"role": "admin"}}
+        ).allowed)
 
 
 if __name__ == "__main__":
