@@ -28,6 +28,13 @@ CREATE TABLE IF NOT EXISTS authz_permits (
         REFERENCES protected_resources (tenant_id, resource_id)
 );
 
+ALTER TABLE protected_resources ENABLE ROW LEVEL SECURITY;
+ALTER TABLE protected_resources FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS protected_resources_tenant_isolation ON protected_resources;
+CREATE POLICY protected_resources_tenant_isolation ON protected_resources
+    USING (tenant_id = current_setting('paca.tenant_id', true))
+    WITH CHECK (tenant_id = current_setting('paca.tenant_id', true));
+
 CREATE INDEX IF NOT EXISTS authz_permits_owner_idx
     ON authz_permits (tenant_id, principal_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS authz_permits_expiry_idx
