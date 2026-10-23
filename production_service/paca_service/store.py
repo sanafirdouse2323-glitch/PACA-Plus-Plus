@@ -72,6 +72,7 @@ class PostgresStore:
 
     def fetch_resource(self, tenant_id: str, resource_id: str) -> dict[str, Any] | None:
         with self.pool.connection() as conn:
+            conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (tenant_id,))
             row = conn.execute(
                 """
                 SELECT tenant_id, resource_id, owner_id, kind, status, attributes
@@ -100,6 +101,7 @@ class PostgresStore:
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
         with self.pool.connection() as conn:
             with conn.transaction():
+                conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (tenant_id,))
                 conn.execute(
                     """
                     INSERT INTO authz_permits
@@ -198,6 +200,7 @@ class PostgresStore:
         })
         with self.pool.connection() as conn:
             with conn.transaction():
+                conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (tenant_id,))
                 existing = conn.execute(
                     """
                     SELECT execution_id, request_digest, status, result_json, error_code
