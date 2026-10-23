@@ -185,7 +185,8 @@ class PostgresStore:
     def claim_execution(
         self, *, permit_id: UUID | str, tenant_id: str, principal_id: str,
         action: str, resource_id: str, arguments_digest: str, context_digest: str,
-        policy_revision: str, idempotency_key: str, request_id: str | None,
+        policy_revision: str, idempotency_key: str, context: dict[str, Any],
+        request_id: str | None,
     ) -> ClaimResult:
         if not _IDEMPOTENCY_KEY.fullmatch(idempotency_key):
             return ClaimResult("rejected", reason="invalid_idempotency_key")
@@ -226,15 +227,16 @@ class PostgresStore:
                     return ClaimResult("rejected", reason="invalid_permit")
 
                 mismatch = None
-                if permit["action"] != action or permit["resource_id"] != resource_id:
-                    mismatch = "operation_mismatch"
-                elif permit["arguments_digest"].strip() != arguments_digest:
-                    mismatch = "arguments_mismatch"
-                elif permit["context_digest"].strip() != context_digest:
-                    mismatch = "context_changed"
-                elif permit["policy_revision"] != policy_revision:
-                    mismatch = "stale_policy"
-                elif permit["status"] != "issued":
+                if permit["status"] != "issued":
+                    prior_by_permit = conn.execute(
+                        """
+                        SELECT execution_id, idempotency_key, request_digest, status, result_json, error_code
+                        FROM authz_executions WHERE permit_id = %s FOR UPDATE
+                        """,
+                        (permit_uuid,),
+                    ).fetchone()
+                    if prior_by_permit and prior_by_permit["idempotency_key"] == idempotency_key:
+                        return self._existing_claim(prior_by_permit, request_digest)
                     mismatch = "permit_not_issued"
                 elif permit["expires_at"] <= datetime.now(timezone.utc):
                     conn.execute(
@@ -242,8 +244,53 @@ class PostgresStore:
                         (permit_uuid,),
                     )
                     mismatch = "permit_expired"
+                elif permit["action"] != action or permit["resource_id"] != resource_id:
+                    mismatch = "operation_mismatch"
+                elif permit["arguments_digest"].strip() != arguments_digest:
+                    mismatch = "arguments_mismatch"
+                elif permit["policy_revision"] != policy_revision:
+                    mismatch = "stale_policy"
+                elif permit["context_digest"].strip() != context_digest:
+                    mismatch = "context_changed"
+
+                if not mismatch:
+                    resource = conn.execute(
+                        """
+                        SELECT tenant_id, resource_id, owner_id, kind, status, attributes
+                        FROM protected_resources
+                        WHERE tenant_id = %s AND resource_id = %s
+                        FOR SHARE
+                        """,
+                        (tenant_id, resource_id),
+                    ).fetchone()
+                    if not resource:
+                        mismatch = "resource_not_found"
+                    else:
+                        locked_context = {
+                            "principal": context.get("principal"),
+                            "action": action,
+                            "resource": {
+                                "id": resource["resource_id"],
+                                "tenant_id": resource["tenant_id"],
+                                "owner_id": resource["owner_id"],
+                                "kind": resource["kind"],
+                                "status": resource["status"],
+                                "attributes": resource["attributes"] or {},
+                            },
+                            "arguments": context.get("arguments"),
+                        }
+                        if canonical_digest(locked_context) != context_digest:
+                            mismatch = "context_changed"
 
                 if mismatch:
+                    if mismatch in {"context_changed", "resource_not_found", "stale_policy"}:
+                        conn.execute(
+                            """
+                            UPDATE authz_permits SET status = 'revoked', updated_at = now()
+                            WHERE permit_id = %s AND status = 'issued'
+                            """,
+                            (permit_uuid,),
+                        )
                     self._audit(
                         conn, request_id=request_id, tenant_id=tenant_id, principal_id=principal_id,
                         event_type="execution_rejected", reason_code=mismatch, action=action,
@@ -328,6 +375,36 @@ class PostgresStore:
                     permit_id=row["permit_id"], execution_id=execution_uuid,
                     reason_code=error_code,
                 )
+
+
+    def get_execution_status(
+        self, execution_id: UUID | str, tenant_id: str, principal_id: str
+    ) -> dict[str, Any] | None:
+        """Return status metadata only; result data is retrievable only via the authorized idempotent retry."""
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT e.execution_id, e.status, e.error_code, e.created_at, e.started_at,
+                       e.finished_at, p.action, p.resource_id, p.policy_revision
+                FROM authz_executions e
+                JOIN authz_permits p ON p.permit_id = e.permit_id
+                WHERE e.execution_id = %s AND e.tenant_id = %s AND e.principal_id = %s
+                """,
+                (UUID(str(execution_id)), tenant_id, principal_id),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "execution_id": str(row["execution_id"]),
+            "status": row["status"],
+            "error_code": row["error_code"],
+            "action": row["action"],
+            "resource_id": row["resource_id"],
+            "policy_revision": row["policy_revision"],
+            "created_at": row["created_at"].isoformat(),
+            "started_at": row["started_at"].isoformat(),
+            "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
+        }
 
     def mark_stale_executions_unknown(self, stale_after_seconds: int) -> int:
         """Mark abandoned executions unknown; never automatically replay external effects."""
