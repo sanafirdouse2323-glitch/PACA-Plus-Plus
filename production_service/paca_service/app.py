@@ -6,7 +6,7 @@ import re
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -62,6 +62,11 @@ class OperationRequest(BaseModel):
             raise ValueError("arguments_size_limit_exceeded")
         return value
 
+
+
+
+class ExecuteRequest(OperationRequest):
+    permit_id: UUID
 
 def create_app(
     settings: Settings,
@@ -239,24 +244,15 @@ def create_app(
 
     @app.post("/v1/executions")
     def execute_operation(
-        operation: OperationRequest,
+        operation: ExecuteRequest,
         request: Request,
-        response: Response,
         idempotency_key: str = Header(alias="Idempotency-Key"),
         principal: Principal = Depends(current_principal),
     ) -> Any:
         rid = request_id(request)
         if not _IDEMPOTENCY_RE.fullmatch(idempotency_key):
             raise HTTPException(status_code=400, detail={"code": "invalid_idempotency_key"})
-        permit_id_raw = request.headers.get("X-PACA-Permit-ID")
-        if not permit_id_raw:
-            # Permit identifiers are sent in a dedicated header to keep the operation
-            # request schema identical between authorize and execute calls.
-            raise HTTPException(status_code=400, detail={"code": "permit_id_header_required"})
-        try:
-            permit_id = UUID(permit_id_raw)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail={"code": "invalid_permit_id"}) from exc
+        permit_id = operation.permit_id
 
         try:
             permit = store.get_permit(permit_id, principal.tenant_id, principal.subject)
@@ -367,7 +363,7 @@ def create_app(
                 action=operation.action, resource_id=operation.resource_id,
                 arguments_digest=argument_hash, context_digest=context_hash,
                 policy_revision=decision.policy_revision, idempotency_key=idempotency_key,
-                request_id=rid,
+                context=context, request_id=rid,
             )
         except Exception as exc:
             logger.exception("atomic execution claim failed")
