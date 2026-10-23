@@ -75,5 +75,18 @@ class OPAClient:
             decision_id=decision_id,
         )
 
+    def health(self) -> None:
+        decision = self.evaluate({
+            "principal": {"id": "healthcheck", "tenant_id": "healthcheck",
+                          "roles": [], "scopes": [], "tools": []},
+            "action": "__paca_healthcheck__",
+            "resource": {"id": "healthcheck", "tenant_id": "healthcheck",
+                         "owner_id": "", "kind": "healthcheck", "status": "inactive",
+                         "attributes": {}},
+            "arguments": {},
+        })
+        if decision.allowed:
+            raise PolicyEngineUnavailable("opa_healthcheck_unexpected_allow")
+
     def close(self) -> None:
         self.client.close()
