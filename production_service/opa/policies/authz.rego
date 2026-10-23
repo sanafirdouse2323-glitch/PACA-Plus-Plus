@@ -14,6 +14,7 @@ decision := {
   "policy_revision": data.paca.meta.revision,
 } if {
   input.action == "document.read"
+  input.resource.kind == "document"
   input.resource.status == "active"
   input.principal.tenant_id == input.resource.tenant_id
   "document:read" in input.principal.scopes
@@ -29,6 +30,7 @@ decision := {
   "policy_revision": data.paca.meta.revision,
 } if {
   input.action == "document.update"
+  input.resource.kind == "document"
   input.resource.status == "active"
   input.principal.tenant_id == input.resource.tenant_id
   "document:write" in input.principal.scopes
@@ -68,4 +70,18 @@ decision := {
     input.principal.id == input.resource.owner_id
     or "admin" in input.principal.roles
   )
+}
+
+decision := {
+  "allow": true,
+  "reason": "registered_tool_allowed",
+  "policy_revision": data.paca.meta.revision,
+} if {
+  input.action == "tool.invoke"
+  input.resource.status == "active"
+  input.resource.kind == "tool"
+  input.resource.tenant_id == input.principal.tenant_id
+  "tool:invoke" in input.principal.scopes
+  tool_name := input.arguments.name
+  tool_name in input.principal.tools
 }
