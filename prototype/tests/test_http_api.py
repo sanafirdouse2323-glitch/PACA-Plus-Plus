@@ -161,6 +161,26 @@ class HttpApiTests(unittest.TestCase):
         self.assertIn(b"idempotency_key_header_required_once", response)
         self.assertEqual(self.effects, [])
 
+    def test_status_endpoint_rejects_duplicate_authorization_headers(self):
+        request = (
+            "GET /v1/operations/00000000000000000000000000000000 HTTP/1.1\\r\\n"
+            "Host: 127.0.0.1\\r\\n"
+            "Authorization: Bearer valid\\r\\n"
+            "Authorization: Bearer attacker\\r\\n"
+            "Connection: close\\r\\n\\r\\n"
+        ).encode("ascii")
+        with socket.create_connection(("127.0.0.1", self.port), timeout=3) as client:
+            client.sendall(request)
+            response = bytearray()
+            while True:
+                chunk = client.recv(4096)
+                if not chunk:
+                    break
+                response.extend(chunk)
+        self.assertIn(b"400 Bad Request", response)
+        self.assertIn(b"duplicate_authorization_header", response)
+        self.assertEqual(self.effects, [])
+
     def test_duplicate_content_length_is_rejected_before_authorization_or_effect(self):
         request = (
             "POST /v1/execute HTTP/1.1\r\n"
