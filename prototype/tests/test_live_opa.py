@@ -54,6 +54,17 @@ class LiveOPAPolicyTests(unittest.TestCase):
         decision = self.pdp.evaluate(self.input_document(owner="db-user-2"))
         self.assertFalse(decision.allowed)
 
+    def test_live_opa_does_not_compare_owner_to_raw_oidc_subject(self):
+        decision = self.pdp.evaluate(
+            self.input_document(owner="user-1")
+        )
+        self.assertFalse(decision.allowed)
+
+    def test_live_opa_denies_missing_internal_user_id(self):
+        document = self.input_document()
+        del document["subject"]["user_id"]
+        self.assertFalse(self.pdp.evaluate(document).allowed)
+
     def test_live_opa_denies_cross_tenant(self):
         decision = self.pdp.evaluate(self.input_document(tenant="tenant-2"))
         self.assertFalse(decision.allowed)
