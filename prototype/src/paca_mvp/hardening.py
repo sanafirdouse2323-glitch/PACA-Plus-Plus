@@ -16,9 +16,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 import json
 import os
-import re
 import sqlite3
-import time
 import uuid
 
 
@@ -114,7 +112,7 @@ class OPAClient:
     "reason": "..."}; missing allow, malformed JSON, 404, timeout, non-2xx or
     connection errors raise PolicyUnavailable and must never turn into a permit.
     """
-    def __init__(self, base_url: str, decision_path: str = "/v1/data/paca/authz",
+    def __init__(self, base_url: str, decision_path: str = "/v1/data/paca/authz/decision",
                  bearer_token: str | None = None, timeout_seconds: float = 2.0):
         if not base_url.startswith(("http://", "https://")):
             raise ValueError("OPA base_url must be an http(s) URL")
@@ -376,6 +374,9 @@ class SQLitePermitStore:
                 if now >= datetime.fromisoformat(row["expires_at"]):
                     db.execute("UPDATE permits SET status='rejected',updated_at=? WHERE permit_id=?",
                                (now.isoformat(), permit_id))
+                    if idempotency_key:
+                        db.execute("UPDATE idempotency SET status='rejected',updated_at=? WHERE idempotency_key=?",
+                                   (now.isoformat(), idempotency_key))
                     self._audit(db, "permit_rejected", permit_id, action, resource, {"reason": "expired"})
                     db.commit()
                     raise PermitRejected("permit expired")
@@ -384,6 +385,9 @@ class SQLitePermitStore:
                 if row["state_version"] != state_version:
                     db.execute("UPDATE permits SET status='rejected',updated_at=? WHERE permit_id=?",
                                (now.isoformat(), permit_id))
+                    if idempotency_key:
+                        db.execute("UPDATE idempotency SET status='rejected',updated_at=? WHERE idempotency_key=?",
+                                   (now.isoformat(), idempotency_key))
                     self._audit(db, "permit_rejected", permit_id, action, resource,
                                 {"reason": "stale_state", "issued_state_version": row["state_version"],
                                  "current_state_version": state_version})
@@ -392,6 +396,9 @@ class SQLitePermitStore:
                 if row["policy_version"] != current_policy_version:
                     db.execute("UPDATE permits SET status='rejected',updated_at=? WHERE permit_id=?",
                                (now.isoformat(), permit_id))
+                    if idempotency_key:
+                        db.execute("UPDATE idempotency SET status='rejected',updated_at=? WHERE idempotency_key=?",
+                                   (now.isoformat(), idempotency_key))
                     self._audit(db, "permit_rejected", permit_id, action, resource,
                                 {"reason": "stale_policy", "issued_policy_version": row["policy_version"],
                                  "current_policy_version": current_policy_version})
@@ -501,7 +508,11 @@ class GuardedGateway:
             trusted_context = dict(self.context_provider.get_context(principal, action, resource))
         except Exception as exc:
             raise ContextUnavailable("trusted authentication/context retrieval failed") from exc
-        context = {**identity_context, **trusted_context}
+        if "identity" in trusted_context:
+            raise ContextUnavailable("trusted context service must not override verified identity")
+        # Verified identity is authoritative; context services may add attributes
+        # but cannot replace the authentication result.
+        context = {**trusted_context, **identity_context}
         request = {"principal": identity_context["identity"], "action": action,
                    "resource": resource, "arguments": dict(arguments), "context": context}
         decision = self.opa.decide(request)
