@@ -720,12 +720,16 @@ class _BaseOperationStore:
                     started_at = payload.get("started_at")
                     if not isinstance(started_at, str) or not started_at:
                         return False
-                    decision = payload.get("policy_decision")
-                    if not isinstance(decision, dict) or decision.get("allow") is not True:
-                        return False
+                    # The gateway supplies the fresh dispatch decision. Direct store
+                    # callers may call claim() without a replacement decision; in that
+                    # case the already-audited precheck decision remains authoritative.
+                    if "policy_decision" in payload:
+                        decision = payload.get("policy_decision")
+                        if not isinstance(decision, dict) or decision.get("allow") is not True:
+                            return False
+                        policy_decisions[operation_id] = decision
                     states[operation_id] = "in_progress"
                     times["started_at"] = started_at
-                    policy_decisions[operation_id] = decision
 
                 elif event_type == "effect_completed":
                     if state != "in_progress":
