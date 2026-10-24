@@ -735,7 +735,7 @@ class GuardedGateway:
                 except Exception:
                     db.rollback()
                     raise
-            raise PermitRejected("active OPA policy version changed after authorization")
+            raise PermitRejected("stale policy: active OPA policy version changed after authorization")
         permit_id = self.store.issue(action, resource, request_hash,
                                      decision["policy_version"], idempotency_key=idempotency_key,
                                      actor=actor)
