@@ -43,11 +43,38 @@ test_deny_cross_tenant if {
 
 test_deny_inactive_subject if {
     result := decision with input as {
-        "subject": {"id": "u1", "issuer": "https://id.example", "status": "disabled",
+        "subject": {"id": "oidc:issuer-scoped-user-1", "subject": "u1", "user_id": "db-user-1",
+                    "issuer": "https://id.example", "status": "disabled",
                     "role": "analyst", "tenant_id": "t1"},
         "action": "file.read",
         "resource": {"id": "file:r1", "owner_id": "db-user-1", "tenant_id": "t1", "canonical_path": "r1"},
         "arguments": {},
+        "environment": {}
+    }
+    result.allow == false
+}
+
+test_deny_raw_subject_cannot_authorize_internal_owner_id if {
+    result := decision with input as {
+        "subject": {"id": "oidc:issuer-scoped-user-1", "subject": "db-user-1", "user_id": "db-user-1",
+                    "issuer": "https://id.example", "status": "active",
+                    "role": "analyst", "tenant_id": "t1"},
+        "action": "file.read",
+        "resource": {"id": "file:r1", "owner_id": "u1", "tenant_id": "t1", "canonical_path": "r1"},
+        "arguments": {"path": "r1"},
+        "environment": {}
+    }
+    result.allow == false
+}
+
+test_deny_missing_internal_user_id if {
+    result := decision with input as {
+        "subject": {"id": "oidc:issuer-scoped-user-1", "subject": "u1",
+                    "issuer": "https://id.example", "status": "active",
+                    "role": "analyst", "tenant_id": "t1"},
+        "action": "file.read",
+        "resource": {"id": "file:r1", "owner_id": "db-user-1", "tenant_id": "t1", "canonical_path": "r1"},
+        "arguments": {"path": "r1"},
         "environment": {}
     }
     result.allow == false
