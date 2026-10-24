@@ -15,7 +15,7 @@ BASE_URL = os.environ.get("PACA_OPA_BASE_URL")
 class LiveOPATests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.opa = OPAPolicyDecisionPoint(base_url=BASE_URL, decision_path="paca/authz/decision")
+        cls.opa = OPAPolicyDecisionPoint(base_url=BASE_URL, decision_path="paca/authz/decision", required_policy_version="paca-baseline-v1")
 
     @staticmethod
     def input_doc(role="analyst", owner="db-user-1", user_id="db-user-1", subject_tenant="t1",
