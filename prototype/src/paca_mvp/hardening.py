@@ -428,7 +428,8 @@ class SQLitePermitStore:
 
     def execute(self, permit_id: str, action: str, resource: str, request_hash: str,
                 current_policy_version: str, effect: Callable[[], Any],
-                idempotency_key: str | None = None) -> Any:
+                idempotency_key: str | None = None,
+                pre_effect_check: Callable[[], None] | None = None) -> Any:
         """Durably claim, revalidate, and execute while serializing local state writes.
 
         Phase 1 commits an 'executing' claim so a crash cannot make a protected
@@ -563,6 +564,24 @@ class SQLitePermitStore:
                     db.commit()
                     raise PermitRejected(rejection.replace("_", " "))
 
+                # Run volatile preconditions (for example, a second OPA
+                # policy-version lookup) after the state lock is held and
+                # immediately before the protected adapter.
+                if pre_effect_check is not None:
+                    try:
+                        pre_effect_check()
+                    except Exception as exc:
+                        db.execute("UPDATE permits SET status='rejected',updated_at=? WHERE permit_id=?",
+                                   (_utcnow(), permit_id))
+                        if idempotency_key:
+                            db.execute("UPDATE idempotency SET status='rejected',updated_at=? WHERE idempotency_key=?",
+                                       (_utcnow(), idempotency_key))
+                        self._audit(db, "permit_rejected", permit_id, action, resource,
+                                    {"actor": actor, "reason": "pre_effect_check_failed",
+                                     "exception_type": type(exc).__name__})
+                        db.commit()
+                        raise PermitRejected("pre-effect validation failed; no effect was invoked") from exc
+
                 try:
                     result = effect()
                     serialized = _canonical_json(result)
@@ -691,12 +710,18 @@ class GuardedGateway:
                                      actor=actor)
         # Adapter must make this downstream key durable/idempotent or provide a
         # reconciliation API. Local authorization cannot make arbitrary APIs atomic.
-        # Check the live marker again immediately before the guarded effect. This
-        # narrows (but cannot eliminate) the distributed race with OPA bundle reload;
-        # high-assurance deployments must coordinate policy rollout with effect commit.
-        current_policy_version = self.opa.get_policy_version()
+        # Re-read the live marker inside the durable store's final pre-effect
+        # section. This narrows the OPA bundle-reload race; it cannot make a policy
+        # reload and arbitrary remote side effect an atomic transaction. Production
+        # rollouts must coordinate policy revisions with protected effects.
+        def verify_active_policy() -> None:
+            active_version = self.opa.get_policy_version()
+            if active_version != decision["policy_version"]:
+                raise PolicyUnavailable("active OPA policy version changed after authorization")
+
         return self.store.execute(
-            permit_id, action, resource, request_hash, current_policy_version,
+            permit_id, action, resource, request_hash, decision["policy_version"],
             lambda: adapter.invoke(action, resource, arguments, idempotency_key),
             idempotency_key=idempotency_key,
+            pre_effect_check=verify_active_policy,
         )
