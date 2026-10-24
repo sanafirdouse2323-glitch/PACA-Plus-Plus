@@ -95,7 +95,7 @@ class JWTAuthenticatorTests(unittest.TestCase):
             {"iss": self.issuer, "sub": "user-42", "aud": self.audience,
              "iat": int(datetime.now(timezone.utc).timestamp()),
              "exp": int((datetime.now(timezone.utc) + timedelta(minutes=1)).timestamp())},
-            "not-a-rsa-key",
+            "this-is-a-deliberately-long-test-secret-for-hs256",
             algorithm="HS256",
         )
         with self.assertRaises(AuthenticationError):
