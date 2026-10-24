@@ -133,7 +133,8 @@ class TrustedContextProviderTests(unittest.TestCase):
         calls = []
 
         def subject_lookup(p):
-            calls.append(("subject", p.subject))
+            # The identity mapping must be keyed by both issuer and subject.
+            calls.append(("subject", p.issuer, p.subject))
             return subject
 
         def resource_lookup(p, action, resource_id, arguments):
@@ -148,7 +149,7 @@ class TrustedContextProviderTests(unittest.TestCase):
         self.assertEqual(context.subject_attributes["role"], "analyst")
         self.assertEqual(context.resource_attributes["canonical_path"], "reports/q1.csv")
         self.assertEqual(calls, [
-            ("subject", "user-42"),
+            ("subject", "https://identity.example", "user-42"),
             ("resource", "file.read", "file:r1", {"path": "reports/q1.csv"}),
         ])
 
