@@ -189,6 +189,10 @@ class PostgresPermitStore:
         permit_id = uuid.uuid4().hex
         with self._connect() as db:
             if idempotency_key:
+                # Serialize first-use of a key too; SELECT FOR UPDATE alone cannot
+                # lock a row that does not yet exist.
+                db.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                           (idempotency_key,))
                 prior = db.execute(
                     "SELECT * FROM paca_idempotency WHERE idempotency_key=%s FOR UPDATE",
                     (idempotency_key,),
