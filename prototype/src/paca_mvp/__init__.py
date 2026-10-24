@@ -1,7 +1,7 @@
 from .engine import AuthorizationEngine, Decision, Policy, PolicyError, Rule, AuthorizationError
 
 from .hardening import (
-    OPAClient, SQLitePermitStore, GuardedGateway, TrustedPrincipal,
+    OPAClient, SQLitePermitStore, DurablePermitStore, GuardedGateway, TrustedPrincipal,
     PolicyUnavailable, ContextUnavailable, PermitRejected,
     IdempotencyConflict, EffectOutcomeUnknown,
 )
@@ -13,7 +13,7 @@ from .postgres import PostgresPermitStore
 
 __all__ = [
     "AuthorizationEngine", "Decision", "Policy", "PolicyError", "Rule", "AuthorizationError",
-    "OPAClient", "SQLitePermitStore", "GuardedGateway", "TrustedPrincipal",
+    "OPAClient", "SQLitePermitStore", "DurablePermitStore", "GuardedGateway", "TrustedPrincipal",
     "PolicyUnavailable", "ContextUnavailable", "PermitRejected",
     "IdempotencyConflict", "EffectOutcomeUnknown", "OIDCJWTIdentityProvider",
     "HTTPAuthorizationContextProvider", "HTTPJSONToolAdapter", "HTTPRoute",
