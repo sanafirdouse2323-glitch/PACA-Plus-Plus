@@ -27,7 +27,6 @@ class LiveOPAPolicyTests(unittest.TestCase):
         return {
             "subject": {
                 "id": "oidc:fixture-principal",
-                "subject": "user-1",
                 "user_id": "db-user-1",
                 "issuer": "https://identity.example",
                 "status": status,
