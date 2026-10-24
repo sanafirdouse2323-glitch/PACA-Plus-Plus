@@ -577,62 +577,178 @@ class _BaseOperationStore:
         return recovered
 
     def verify_audit_chain(self) -> bool:
-        """Verify the hash chain and cross-check persisted successful responses.
+        """Verify the event chain and cross-check mutable operation rows against it.
 
-        A valid event chain alone would not detect someone editing response_json while
-        leaving the audit log untouched. Successful response records are therefore
-        compared with the response digest in their immutable completion/reconciliation
-        audit event. This is tamper-evident, not tamper-proof against a DB administrator
-        able to rewrite both the rows and the chain.
+        The check validates request identity/fingerprints, the latest recorded policy
+        decision, and response presence/content. It detects accidental or direct-row
+        edits unless the editor also rebuilds a valid audit chain. The chain is
+        tamper-evident, not tamper-proof against privileged application/database access.
         """
         try:
             with self._transaction() as session:
-                # Lock the audit head first so concurrent appends cannot make this read
-                # observe events and a head value from different database snapshots.
+                # Lock the audit head first so a concurrent append cannot make this
+                # read observe events and the head from different snapshots.
                 head = session.one("SELECT head_hash FROM audit_head WHERE singleton=1", for_update=True)
-                rows = session.all("SELECT * FROM audit_events ORDER BY seq ASC")
-                response_rows = session.all(
-                    "SELECT operation_id,response_json FROM operations WHERE response_json IS NOT NULL"
-                )
+                events = session.all("SELECT * FROM audit_events ORDER BY seq ASC")
+                operation_rows = session.all("SELECT * FROM operations")
+
             previous = _ROOT_HASH
+            request_records: dict[str, dict[str, Any]] = {}
+            policy_decisions: dict[str, dict[str, Any]] = {}
+            dispatch_seen: set[str] = set()
             response_digests: dict[str, str] = {}
-            for row in rows:
-                payload = strict_json_loads(row["payload_json"])
+
+            for event in events:
+                payload = strict_json_loads(event["payload_json"])
+                if not isinstance(payload, dict):
+                    return False
                 material = {
-                    "event_id": row["event_id"],
-                    "event_time": row["event_time"],
-                    "event_type": row["event_type"],
-                    "operation_id": row["operation_id"],
-                    "principal_id": row["principal_id"],
+                    "event_id": event["event_id"],
+                    "event_time": event["event_time"],
+                    "event_type": event["event_type"],
+                    "operation_id": event["operation_id"],
+                    "principal_id": event["principal_id"],
                     "payload": payload,
                     "previous_hash": previous,
                 }
                 calculated = canonical_digest(material)
-                if row["previous_hash"] != previous or row["entry_hash"] != calculated:
+                if event["previous_hash"] != previous or event["entry_hash"] != calculated:
                     return False
-                event_type = row["event_type"]
-                operation_id = row["operation_id"]
-                if operation_id and event_type == "effect_completed":
-                    digest = payload.get("response_digest") if isinstance(payload, dict) else None
-                    if not isinstance(digest, str) or not _DIGEST_RE.fullmatch(digest):
+                previous = calculated
+
+                event_type = event["event_type"]
+                operation_id = event["operation_id"]
+                if operation_id is None:
+                    if event_type in {
+                        "authorization_precheck_permitted", "effect_dispatch_started",
+                        "effect_completed", "operator_reconciliation",
+                    }:
                         return False
-                    response_digests[operation_id] = digest
-                elif (operation_id and event_type == "operator_reconciliation"
-                      and isinstance(payload, dict) and payload.get("outcome") == "succeeded"):
+                    continue
+
+                if not isinstance(operation_id, str) or not operation_id:
+                    return False
+
+                if event_type == "authorization_precheck_permitted":
+                    if operation_id in request_records:
+                        return False
+                    principal_id = event["principal_id"]
+                    action = payload.get("action")
+                    resource = payload.get("resource")
+                    arguments_digest = payload.get("arguments_digest")
+                    context_digest = payload.get("context_digest")
+                    decision = payload.get("decision")
+                    if (
+                        not isinstance(principal_id, str) or not principal_id
+                        or not isinstance(action, str) or not _ACTION_RE.fullmatch(action)
+                        or not isinstance(resource, str) or not resource.strip()
+                        or len(resource) > 2048
+                        or any(ord(character) < 0x20 or ord(character) == 0x7f for character in resource)
+                        or not isinstance(arguments_digest, str) or not _DIGEST_RE.fullmatch(arguments_digest)
+                        or not isinstance(context_digest, str) or not _DIGEST_RE.fullmatch(context_digest)
+                        or not isinstance(decision, dict) or decision.get("allow") is not True
+                    ):
+                        return False
+                    request_records[operation_id] = {
+                        "principal_id": principal_id,
+                        "action": action,
+                        "resource": resource,
+                        "arguments_digest": arguments_digest,
+                        "context_digest": context_digest,
+                    }
+                    policy_decisions[operation_id] = decision
+                    continue
+
+                request_record = request_records.get(operation_id)
+                if request_record is None:
+                    return False
+                if event["principal_id"] != request_record["principal_id"]:
+                    return False
+
+                if event_type == "effect_dispatch_started":
+                    if operation_id in dispatch_seen:
+                        return False
+                    if (
+                        payload.get("action") != request_record["action"]
+                        or payload.get("resource") != request_record["resource"]
+                    ):
+                        return False
+                    if "policy_decision" in payload:
+                        decision = payload.get("policy_decision")
+                        if not isinstance(decision, dict) or decision.get("allow") is not True:
+                            return False
+                        policy_decisions[operation_id] = decision
+                    dispatch_seen.add(operation_id)
+                elif event_type == "effect_completed":
+                    if operation_id not in dispatch_seen:
+                        return False
+                    if (
+                        payload.get("action") != request_record["action"]
+                        or payload.get("resource") != request_record["resource"]
+                    ):
+                        return False
                     digest = payload.get("response_digest")
                     if not isinstance(digest, str) or not _DIGEST_RE.fullmatch(digest):
                         return False
+                    if operation_id in response_digests:
+                        return False
                     response_digests[operation_id] = digest
-                previous = calculated
+                elif event_type == "operator_reconciliation":
+                    if payload.get("outcome") == "succeeded":
+                        digest = payload.get("response_digest")
+                        if not isinstance(digest, str) or not _DIGEST_RE.fullmatch(digest):
+                            return False
+                        if operation_id in response_digests:
+                            return False
+                        response_digests[operation_id] = digest
+                    elif payload.get("outcome") != "failed":
+                        return False
+
             if head is None or head["head_hash"] != previous:
                 return False
-            for row in response_rows:
-                try:
-                    decoded = self._decode_response(row["response_json"])
-                    expected_digest = response_digests.get(row["operation_id"])
-                    if expected_digest is None or canonical_digest(decoded) != expected_digest:
+
+            operations_by_id = {row["operation_id"]: row for row in operation_rows}
+            if set(operations_by_id) != set(request_records):
+                return False
+            if set(response_digests) - set(operations_by_id):
+                return False
+
+            for operation_id, row in operations_by_id.items():
+                request_record = request_records[operation_id]
+                if (
+                    row["principal_id"] != request_record["principal_id"]
+                    or row["action"] != request_record["action"]
+                    or row["resource"] != request_record["resource"]
+                    or row["arguments_digest"] != request_record["arguments_digest"]
+                    or row["context_digest"] != request_record["context_digest"]
+                ):
+                    return False
+                fingerprint = canonical_digest({
+                    "principal_id": row["principal_id"],
+                    "action": row["action"],
+                    "resource": row["resource"],
+                    "arguments_digest": row["arguments_digest"],
+                    "context_digest": row["context_digest"],
+                })
+                if row["request_fingerprint"] != fingerprint:
+                    return False
+
+                stored_decision = strict_json_loads(row["policy_decision_json"])
+                if stored_decision != policy_decisions.get(operation_id):
+                    return False
+
+                has_response = row["response_json"] is not None
+                if (row["status"] == "succeeded") != has_response:
+                    return False
+                expected_response_digest = response_digests.get(operation_id)
+                if not has_response:
+                    if expected_response_digest is not None:
                         return False
-                except Exception:
+                    continue
+                if expected_response_digest is None:
+                    return False
+                decoded = self._decode_response(row["response_json"])
+                if canonical_digest(decoded) != expected_response_digest:
                     return False
             return True
         except Exception:
