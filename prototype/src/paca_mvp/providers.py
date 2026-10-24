@@ -17,6 +17,8 @@ import re
 import sqlite3
 import stat
 import uuid
+import threading
+from datetime import datetime, timezone
 
 from .hardening import ContextUnavailable, TrustedPrincipal, _canonical_json, _validate_identifier
 
@@ -42,18 +44,23 @@ class OIDCJWTIdentityProvider:
         self.issuer, self.audience = issuer, audience
         self.jwks_url, self.timeout_seconds = jwks_url, timeout_seconds
         self.jwks_cache_seconds = jwks_cache_seconds
+        self._jwks_client = None
+        self._client_lock = threading.Lock()
 
     def authenticate(self, credential: str) -> TrustedPrincipal:
         if not isinstance(credential, str) or not credential or len(credential) > 16384:
             raise ContextUnavailable("missing or invalid bearer credential")
         try:
             import jwt
-            client = jwt.PyJWKClient(
-                self.jwks_url,
-                cache_jwk_set=True,
-                lifespan=self.jwks_cache_seconds,
-                timeout=self.timeout_seconds,
-            )
+            with self._client_lock:
+                if self._jwks_client is None:
+                    self._jwks_client = jwt.PyJWKClient(
+                        self.jwks_url,
+                        cache_jwk_set=True,
+                        lifespan=self.jwks_cache_seconds,
+                        timeout=self.timeout_seconds,
+                    )
+                client = self._jwks_client
             header = jwt.get_unverified_header(credential)
             if header.get("alg") != "RS256" or not header.get("kid"):
                 raise ValueError("unsupported token algorithm or missing key id")
@@ -260,7 +267,10 @@ class FilesystemToolAdapter:
             raise ToolInvocationError("unknown logical filesystem resource")
         if action not in {"file.read", "file.write", "file.delete"}:
             raise ToolInvocationError("filesystem action is not supported")
-        parent_fd, name = self._open_parent(parts)
+        try:
+            parent_fd, name = self._open_parent(parts)
+        except OSError as exc:
+            raise ToolInvocationError("filesystem path traversal rejected or parent unavailable") from exc
         try:
             if action == "file.read":
                 fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
