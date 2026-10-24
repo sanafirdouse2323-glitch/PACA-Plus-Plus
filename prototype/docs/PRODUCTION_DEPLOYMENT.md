@@ -1,14 +1,14 @@
-# Production-oriented deployment guide (phase 1)
+# Production-oriented deployment guide
 
 ## What this code now provides
 
-- **OPA decision point:** `OPAPolicyDecisionPoint` queries OPA's named Data API decision (`data.paca.authz.decision`). Missing/undefined decisions are denials; network, HTTP, and protocol failures fail closed. Startup preflight refuses an unavailable OPA, an undefined decision for empty input, or a decision that permits empty input.
+- **OPA decision point:** `OPAPolicyDecisionPoint` queries OPA's named Data API decision (`data.paca.authz.decision`). Missing/undefined decisions are denials; network, HTTP, and protocol failures fail closed. Every decision includes a declared `policy_version`; production startup checks it against `PACA_OPA_POLICY_VERSION` (default `paca-baseline-v1`) and refuses a missing or mismatched version, an unavailable OPA, an undefined decision, or a decision that permits empty input.
 - **Verified caller identity:** `JWTAuthenticator` validates signatures using a fixed asymmetric algorithm allow-list, a trusted HTTPS JWKS endpoint, issuer, audience, expiration and required claims.
 - **Trusted context retrieval:** `CallbackContextProvider` calls application-supplied readers for subject, resource and environment attributes. No request-supplied context field is accepted by the HTTP API.
 - **Protected execution:** `ProtectedToolGateway` registers action handlers on the server. It does not let a caller choose a Python callback or destination URL. It checks OPA, records an operation durably, re-fetches trusted context, re-evaluates OPA, then atomically claims before calling the handler.
 - **Downstream API adapter:** `HTTPJsonActionAdapter` sends JSON to a fixed, configured endpoint over HTTPS; rejects redirects; sends the idempotency key and operation ID; and uses a service credential provider.
 - **Durable coordination:** `PostgresOperationStore` uses a unique idempotency key and row locking for multi-process/multi-host coordination. Startup checks required tables and the audit-chain head. `SQLiteOperationStore` is useful for local development and single-host deployment; its database file is restricted to owner read/write on POSIX and symlink paths are rejected.
-- **Audit and recovery:** operation state is persisted, cached JSON tool responses are Fernet-encrypted when configured, audit events form a hash chain, stale in-progress operations can be marked unknown, and an operator can reconcile an unknown result after verifying the downstream system's authoritative record.
+- **Audit and recovery:** operation state is persisted, cached JSON tool responses are Fernet-encrypted when configured, and audit events form a hash chain. Verification replays recorded state transitions and checks operation identity/fingerprint, hashed idempotency key, creation/expiry and dispatch/finish timestamps, status/error fields, final policy-decision metadata, and cached response presence/content. Stale in-progress operations can be marked unknown, and an operator can reconcile an unknown result after verifying the downstream system's authoritative record.
 
 The baseline Rego policy deliberately permits only an active analyst reading a resource they own in the same tenant. Adapt it to your real business rules after reviewing the claims and resource attributes supplied by your actual application.
 
@@ -43,11 +43,12 @@ The connection examples above are loopback-only. For a non-loopback PostgreSQL h
     # Keep the active key first; append retiring keys during rotation.
     export PACA_RESULT_ENCRYPTION_KEYS="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
     export PACA_OPA_BASE_URL='http://127.0.0.1:8181'
+    export PACA_OPA_POLICY_VERSION='paca-baseline-v1'
     export PACA_CONTEXT_PROVIDER='your_application.authz:build_context_provider'
     export PACA_FILE_READ_ENDPOINT='https://your-downstream-service.example/v1/read'
     export PACA_DOWNSTREAM_SERVICE_TOKEN='inject-this-from-a-secret-manager'
 
-The module named by `PACA_CONTEXT_PROVIDER` must be available on `PYTHONPATH` and its factory must return an object implementing `load(principal, action, resource, arguments)`. `PACA_RESULT_ENCRYPTION_KEYS` is required by the production launcher and operator CLI: provide one or more comma-separated Fernet keys, with the current encryption key first and retiring decrypt-only keys after it. Generate the key once, keep it in a secret manager, and never regenerate it on each service restart; loss of a key makes affected cached responses unreadable. That implementation is application-specific and is intentionally not fabricated here: it must query the authoritative user/tenant/resource store. The example policy expects the returned subject attributes to contain `status`, `role`, and `tenant_id`, and the resource attributes to contain `owner_id`, `tenant_id`, and `canonical_path` (for the example `file.read` policy). The canonical path must be resolved from authoritative resource storage; do not copy it from the request.
+The module named by `PACA_CONTEXT_PROVIDER` must be available on `PYTHONPATH` and its factory must return an object implementing `load(principal, action, resource, arguments)`. `PACA_RESULT_ENCRYPTION_KEYS` is required by the production launcher and operator CLI: provide one or more comma-separated Fernet keys, with the current encryption key first and retiring decrypt-only keys after it. Generate the key once, keep it in a secret manager, and never regenerate it on each service restart; loss of a key makes affected cached responses unreadable. That implementation is application-specific and is intentionally not fabricated here: it must query the authoritative user/tenant/resource store. The example policy expects the returned subject attributes to contain `user_id`, `status`, `role`, and `tenant_id`, and the resource attributes to contain `owner_id`, `tenant_id`, and `canonical_path` (for the example `file.read` policy). `user_id` must be an authoritative, stable internal account ID resolved using both the authenticated OIDC issuer and subject; `resource.owner_id` must use the same internal ID namespace. Do not compare resource ownership directly with raw JWT `sub`, which is only unique within an issuer. The canonical path must be resolved from authoritative resource storage; do not copy it from the request.
 
 Start the HTTP API (defaults to loopback only):
 
@@ -77,8 +78,11 @@ Implement a trusted provider in your application:
 
     class YourContextProvider:
         def load(self, principal, action, resource, arguments):
-            # Query authoritative user and resource data using both principal.issuer and principal.subject as the identity key; never assume subject is globally unique across issuers.
-            # Do not take role, tenant, owner, status, or permissions from request JSON.
+            # Resolve the application's internal user row by BOTH principal.issuer and
+            # principal.subject; OIDC sub values are not globally unique.
+            # Put that row's stable internal primary key in subject_attributes["user_id"].
+            # Resolve resource.owner_id from the same internal user-ID namespace.
+            # Never take user_id, role, tenant, owner, status or permissions from request JSON.
             # Return TrustedAuthorizationContext(subject_attributes=...,
             #     resource_attributes=..., environment=...)
             ...
@@ -87,7 +91,7 @@ The `resource` identifier is caller-supplied input; the lookup must enforce tena
 
 ## Tool/API adapter contract
 
-Register a handler only in trusted server-side setup. For example, `serve.py` registers only `file.read` and maps it to one environment-configured downstream endpoint. Do not build an endpoint URL from user-supplied hostnames or forward the user's bearer token to a downstream API. The adapter sends a separately configured service token and a derived downstream idempotency key scoped to the verified issuer, principal, and client key. The raw client key is not forwarded downstream; store the service token as a secret and rotate it.
+Register a handler only in trusted server-side setup. For example, `serve.py` registers only `file.read` and maps it to one environment-configured downstream endpoint. Do not build an endpoint URL from user-supplied hostnames or forward the user's bearer token to a downstream API. The adapter sends a separately configured service token and a derived downstream idempotency key scoped to the verified issuer, principal, and client key. The raw client key is not forwarded downstream; store the service token as a secret and rotate it. OPA receives only an issuer-scoped pseudonymous principal ID plus trusted internal user_id; the raw OIDC subject is not copied into the OPA input.
 
 The downstream service should:
 - authenticate PACA++ as a service;
@@ -137,7 +141,7 @@ Run `store.recover_incomplete(older_than_seconds=...)` during a controlled recov
     python examples/authorize.py --policy examples/policy.json --context examples/context.json --action file.read --resource file:report-1 --principal-id demo-user --arguments-json '{"path":"report-1","mode":"read"}' --execute
     python experiments/run_experiments.py
 
-The GitHub Actions production integration workflow pins and checksum-verifies OPA, runs `opa check` and `opa test`, starts OPA and PostgreSQL, applies the database migration, verifies database role grants, then runs Python tests including live OPA and PostgreSQL integration tests, SQLite file-permission checks, and HTTP framing rejection tests.
+The GitHub Actions production integration workflow pins and checksum-verifies OPA v1.21.4 (the release pinned for this review), runs `opa check` and `opa test`, starts OPA and PostgreSQL, applies the database migration, assigns separate test credentials, and exercises data access through the least-privileged PostgreSQL runtime role. The Python suite includes live OPA policy tests, end-to-end JWT/OPA/PostgreSQL/public-HTTP/downstream-adapter tests, replay and recovery cases, SQLite file-permission checks, operation/policy/response audit-tampering checks, duplicate-key/non-finite JSON rejection, repeated security-header rejection, and redirect rejection.
 
 ## Production limitations that remain
 
@@ -147,8 +151,10 @@ This phase does not make the project certified or ready for an arbitrary product
 2. **OIDC configuration must be validated against your identity provider.** The code verifies JWTs but does not provision accounts, groups, roles, or sessions.
 3. **Generic exactly-once external effects are impossible to promise.** The gateway provides coordinated at-most-once dispatch attempts and conservative unknown-outcome recovery. Stronger guarantees require downstream idempotency or a shared transaction.
 4. **Policy-update atomicity with external execution is not guaranteed.** OPA is re-queried immediately before dispatch, but a policy can change after evaluation. Sensitive systems need versioned policy rollout and/or enforcement inside the same trusted transaction boundary.
-5. **The hash chain is tamper-evident, not tamper-proof.** A database administrator who can rewrite all rows and the head can rebuild it. Export/checkpoint audit hashes to an independently controlled append-only system for stronger assurance.
+5. **The hash chain is tamper-evident, not tamper-proof.** A database administrator who can rewrite all rows and the head can rebuild it. Export/checkpoint audit hashes to an independently controlled append-only system for stronger assurance. The policy version is an operator-managed declaration emitted by Rego, not a cryptographic digest of the policy bundle; increment it when policy semantics change and protect the policy rollout/configuration pipeline.
 6. **The server is HTTP and binds to loopback by default.** If deployed across hosts, terminate TLS at a trusted reverse proxy, protect that hop, and expose only the intended route. Never expose OPA's management interface to untrusted clients.
 7. **Operational hardening still needs deployment-specific work:** secret management, migrations, backups, retention policy, metrics, alerting, rate limits, load/chaos testing, dependency and container digest pinning, independent threat review, and recovery drills.
+
+Audit verification intentionally fails closed when a stored operation lacks its corresponding precheck event or when mutable state/timestamps differ from the event history. Historical rows created before the event-complete fields were added cannot be retroactively verified; migrate or retire those records through a controlled procedure rather than generating synthetic audit events. The declared policy-version string improves traceability but is not a cryptographic policy-bundle hash.
 
 Do not report production readiness until the downstream integration, context provider, identity configuration, CI results, and deployment controls have been verified in the target environment.

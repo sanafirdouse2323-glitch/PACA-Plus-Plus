@@ -11,7 +11,7 @@ import re
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from .durable import IdempotencyConflict, OperationOutcomeUnknown, OperationStateError
+from .durable import IdempotencyConflict, OperationOutcomeUnknown, OperationStateError, strict_json_loads
 from .gateway import (
     AuthorizationDenied,
     ContextChanged,
@@ -72,8 +72,18 @@ def make_server(
             if self.headers.get("Transfer-Encoding"):
                 self._error(400, "transfer_encoding_not_supported")
                 return
-            if self.headers.get_content_type() != "application/json":
+            content_types = self.headers.get_all("Content-Type", [])
+            if len(content_types) != 1 or self.headers.get_content_type() != "application/json":
                 self._error(415, "application_json_required")
+                return
+            authorization_headers = self.headers.get_all("Authorization", [])
+            if len(authorization_headers) != 1 or not authorization_headers[0].strip():
+                self._error(401 if not authorization_headers else 400,
+                            "authentication_required" if not authorization_headers else "duplicate_authorization_header")
+                return
+            idempotency_headers = self.headers.get_all("Idempotency-Key", [])
+            if len(idempotency_headers) != 1:
+                self._error(400, "idempotency_key_header_required_once")
                 return
             length_headers = self.headers.get_all("Content-Length", [])
             if len(length_headers) != 1 or not re.fullmatch(r"[0-9]{1,9}", length_headers[0]):
@@ -92,8 +102,8 @@ def make_server(
                 self._error(400, "incomplete_request_body")
                 return
             try:
-                payload = json.loads(raw)
-            except (UnicodeDecodeError, json.JSONDecodeError):
+                payload = strict_json_loads(raw)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
                 self._error(400, "invalid_json")
                 return
             if not isinstance(payload, dict) or set(payload) - {"action", "resource", "arguments"}:

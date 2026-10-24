@@ -19,6 +19,7 @@ from paca_mvp.durable import (
     SQLiteOperationStore,
     StoreError,
     canonical_json,
+    strict_json_loads,
 )
 
 
@@ -41,6 +42,30 @@ class DurableStoreTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_policy_version_is_persisted_on_precheck_and_dispatch_audit(self):
+        kwargs = dict(self.kwargs)
+        kwargs["policy_decision"] = {
+            "allow": True,
+            "reason": "policy_permitted",
+            "policy_version": "paca-test-v7",
+            "decision_id": "decision-7",
+        }
+        record, created = self.store.create_or_get(**kwargs)
+        self.assertTrue(created)
+        self.assertEqual(record.policy_decision["policy_version"], "paca-test-v7")
+
+        claimed = self.store.claim(
+            record.operation_id,
+            policy_decision={
+                "allow": True,
+                "reason": "policy_permitted",
+                "policy_version": "paca-test-v7",
+                "decision_id": "decision-8",
+            },
+        )
+        self.assertEqual(claimed.policy_decision["policy_version"], "paca-test-v7")
+        self.assertTrue(self.store.verify_audit_chain())
 
     def test_lifecycle_and_cached_result(self):
         record, created = self.store.create_or_get(**self.kwargs)
@@ -286,6 +311,113 @@ class DurableStoreTests(unittest.TestCase):
         link.symlink_to(target)
         with self.assertRaisesRegex(ValueError, "must not be a symlink"):
             SQLiteOperationStore(link)
+
+
+    def test_strict_json_rejects_duplicate_keys_and_non_standard_numbers(self):
+        self.assertEqual(strict_json_loads('{"safe": 1}'), {"safe": 1})
+        for raw in (
+            '{"allow": false, "allow": true}',
+            '{"nested": {"owner": "u1", "owner": "attacker"}}',
+            '{"number": NaN}',
+            '{"number": Infinity}',
+            '{"number": -Infinity}',
+        ):
+            with self.subTest(raw=raw):
+                with self.assertRaises(ValueError):
+                    strict_json_loads(raw)
+
+    def test_audit_verification_detects_cached_response_tampering(self):
+        record, created = self.store.create_or_get(**self.kwargs)
+        self.assertTrue(created)
+        self.store.claim(record.operation_id)
+        self.store.complete(record.operation_id, {"ok": True, "value": 3})
+        self.assertTrue(self.store.verify_audit_chain())
+
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE operations SET response_json=? WHERE operation_id=?",
+                ('{"ok":false,"value":999}', record.operation_id),
+            )
+        self.assertFalse(self.store.verify_audit_chain())
+
+
+    def test_audit_verification_detects_policy_decision_row_tampering(self):
+        kwargs = dict(self.kwargs)
+        kwargs["policy_decision"] = {
+            "allow": True,
+            "reason": "permitted",
+            "policy_version": "paca-test-v1",
+        }
+        record, _ = self.store.create_or_get(**kwargs)
+        self.assertTrue(self.store.verify_audit_chain())
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE operations SET policy_decision_json=? WHERE operation_id=?",
+                ('{"allow":true,"reason":"forged","policy_version":"paca-test-v9"}',
+                 record.operation_id),
+            )
+        self.assertFalse(self.store.verify_audit_chain())
+
+    def test_audit_verification_detects_request_identity_row_tampering(self):
+        record, _ = self.store.create_or_get(**self.kwargs)
+        self.assertTrue(self.store.verify_audit_chain())
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE operations SET action=? WHERE operation_id=?",
+                ("file.delete", record.operation_id),
+            )
+        self.assertFalse(self.store.verify_audit_chain())
+
+    def test_audit_verification_detects_removed_success_response(self):
+        record, _ = self.store.create_or_get(**self.kwargs)
+        self.store.claim(record.operation_id)
+        self.store.complete(record.operation_id, {"ok": True})
+        self.assertTrue(self.store.verify_audit_chain())
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE operations SET response_json=NULL WHERE operation_id=?",
+                (record.operation_id,),
+            )
+        self.assertFalse(self.store.verify_audit_chain())
+
+
+
+    def test_audit_verification_accepts_store_claim_using_precheck_decision(self):
+        record, created = self.store.create_or_get(**self.kwargs)
+        self.assertTrue(created)
+        claimed = self.store.claim(record.operation_id)
+        self.assertEqual(claimed.status, "in_progress")
+        self.assertTrue(self.store.verify_audit_chain())
+
+    def test_audit_verification_detects_status_row_tampering(self):
+        record, _ = self.store.create_or_get(**self.kwargs)
+        self.assertTrue(self.store.verify_audit_chain())
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE operations SET status=? WHERE operation_id=?",
+                ("cancelled", record.operation_id),
+            )
+        self.assertFalse(self.store.verify_audit_chain())
+
+    def test_audit_verification_detects_expiry_row_tampering(self):
+        record, _ = self.store.create_or_get(**self.kwargs)
+        self.assertTrue(self.store.verify_audit_chain())
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE operations SET expires_at=? WHERE operation_id=?",
+                ("2099-01-01T00:00:00.000000+00:00", record.operation_id),
+            )
+        self.assertFalse(self.store.verify_audit_chain())
+
+    def test_audit_verification_detects_idempotency_key_row_tampering(self):
+        record, _ = self.store.create_or_get(**self.kwargs)
+        self.assertTrue(self.store.verify_audit_chain())
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE operations SET idempotency_key=? WHERE operation_id=?",
+                ("mutated-key-" + uuid.uuid4().hex, record.operation_id),
+            )
+        self.assertFalse(self.store.verify_audit_chain())
 
 
 if __name__ == "__main__":

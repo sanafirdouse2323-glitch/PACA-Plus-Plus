@@ -15,15 +15,16 @@ BASE_URL = os.environ.get("PACA_OPA_BASE_URL")
 class LiveOPATests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.opa = OPAPolicyDecisionPoint(base_url=BASE_URL, decision_path="paca/authz/decision")
+        cls.opa = OPAPolicyDecisionPoint(base_url=BASE_URL, decision_path="paca/authz/decision", required_policy_version="paca-baseline-v1")
 
     @staticmethod
-    def input_doc(role="analyst", owner="u1", subject="u1", subject_tenant="t1",
+    def input_doc(role="analyst", owner="db-user-1", user_id="db-user-1", subject_tenant="t1",
                   resource_tenant="t1", status="active", action="file.read",
                   argument_path="r1", canonical_path="r1"):
         return {
-            "subject": {"id": subject, "issuer": "https://identity.example",
-                        "status": status, "role": role, "tenant_id": subject_tenant},
+            "subject": {"id": "oidc:fixture-principal", "user_id": user_id,
+                        "issuer": "https://identity.example", "status": status,
+                        "role": role, "tenant_id": subject_tenant},
             "action": action,
             "resource": {"id": "file:r1", "owner_id": owner, "tenant_id": resource_tenant, "canonical_path": canonical_path},
             "arguments": {"path": argument_path},
@@ -35,7 +36,17 @@ class LiveOPATests(unittest.TestCase):
         self.assertTrue(result.allowed, result.reason)
 
     def test_real_opa_denies_wrong_owner(self):
-        self.assertFalse(self.opa.evaluate(self.input_doc(owner="u2")).allowed)
+        self.assertFalse(self.opa.evaluate(self.input_doc(owner="db-user-2")).allowed)
+
+    def test_real_opa_does_not_compare_owner_to_raw_oidc_subject(self):
+        self.assertFalse(self.opa.evaluate(
+            self.input_doc(owner="u1", user_id="db-user-1")
+        ).allowed)
+
+    def test_real_opa_denies_missing_internal_user_id(self):
+        document = self.input_doc()
+        del document["subject"]["user_id"]
+        self.assertFalse(self.opa.evaluate(document).allowed)
 
     def test_real_opa_denies_cross_tenant(self):
         self.assertFalse(self.opa.evaluate(self.input_doc(resource_tenant="t2")).allowed)

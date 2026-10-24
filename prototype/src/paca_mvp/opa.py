@@ -16,6 +16,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from .durable import strict_json_loads
+
 
 class OPAError(RuntimeError):
     """OPA could not produce a trustworthy decision."""
@@ -38,6 +40,7 @@ class OPADecision:
     result: dict[str, Any]
     http_status: int = 200
     decision_id: str | None = None
+    policy_version: str | None = None
 
 
 class OPAPolicyDecisionPoint:
@@ -55,6 +58,7 @@ class OPAPolicyDecisionPoint:
         bearer_token: str | None = None,
         allow_insecure_remote_http: bool = False,
         max_response_bytes: int = 1_048_576,
+        required_policy_version: str | None = None,
     ) -> None:
         parsed = urlparse(base_url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -71,6 +75,11 @@ class OPAPolicyDecisionPoint:
             raise ValueError("timeout_seconds must be positive")
         if max_response_bytes < 256 or max_response_bytes > 4_194_304:
             raise ValueError("max_response_bytes must be between 256 bytes and 4 MiB")
+        if required_policy_version is not None and (
+            not isinstance(required_policy_version, str)
+            or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,127}", required_policy_version)
+        ):
+            raise ValueError("required_policy_version must be a bounded policy version identifier")
         if bearer_token is not None:
             if (not isinstance(bearer_token, str) or not bearer_token
                     or len(bearer_token) > 8192
@@ -80,6 +89,7 @@ class OPAPolicyDecisionPoint:
         self.timeout_seconds = timeout_seconds
         self.bearer_token = bearer_token
         self.max_response_bytes = max_response_bytes
+        self.required_policy_version = required_policy_version
 
     def preflight(self) -> OPADecision:
         """Check OPA availability and require a defined default-deny decision.
@@ -126,9 +136,9 @@ class OPAPolicyDecisionPoint:
         if len(raw) > self.max_response_bytes:
             raise OPAError("OPA response exceeded configured size limit")
         try:
-            document = json.loads(raw, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            raise OPAError("OPA returned invalid JSON") from exc
+            document = strict_json_loads(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
+            raise OPAError("OPA returned invalid or ambiguous JSON") from exc
         if not isinstance(document, dict):
             raise OPAError("OPA response must be a JSON object")
         if "result" not in document:
@@ -149,4 +159,10 @@ class OPAPolicyDecisionPoint:
         decision_id = document.get("decision_id")
         if not isinstance(decision_id, str) or not decision_id or len(decision_id) > 128:
             decision_id = None
-        return OPADecision(allowed, reason, clean_result, status, decision_id)
+        policy_version = clean_result.get("policy_version")
+        if (not isinstance(policy_version, str)
+                or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]{0,127}", policy_version)):
+            policy_version = None
+        if self.required_policy_version is not None and policy_version != self.required_policy_version:
+            raise OPAError("OPA policy version is missing or does not match configured version")
+        return OPADecision(allowed, reason, clean_result, status, decision_id, policy_version)

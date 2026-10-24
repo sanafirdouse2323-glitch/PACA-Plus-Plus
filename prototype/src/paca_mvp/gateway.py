@@ -18,6 +18,7 @@ from .durable import (
     OperationStateError,
     canonical_digest,
     canonical_json,
+    strict_json_loads,
 )
 from .identity import (
     AuthenticatedPrincipal,
@@ -238,7 +239,8 @@ class ProtectedToolGateway:
                 context_digest=canonical_digest(input_snapshot),
                 # Persist only the decision outcome and bounded reason, not arbitrary policy data.
                 policy_decision={"allow": True, "reason": initial_decision.reason[:128],
-                                 "decision_id": initial_decision.decision_id},
+                                 "decision_id": initial_decision.decision_id,
+                                 "policy_version": initial_decision.policy_version},
                 ttl_seconds=self.permit_ttl_seconds,
             )
         except IdempotencyConflict:
@@ -277,7 +279,8 @@ class ProtectedToolGateway:
             claimed = self.operation_store.claim(
                 operation.operation_id,
                 policy_decision={"allow": True, "reason": current_decision.reason[:128],
-                                 "decision_id": current_decision.decision_id},
+                                 "decision_id": current_decision.decision_id,
+                                 "policy_version": current_decision.policy_version},
             )
         except OperationOutcomeUnknown as exc:
             raise OperationOutcomeUnresolved(str(exc)) from exc
@@ -390,9 +393,9 @@ class HTTPJsonActionAdapter:
         if len(raw) > self.max_response_bytes:
             raise RemoteToolError("downstream_response_too_large")
         try:
-            decoded = json.loads(raw)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise RemoteToolError("downstream_returned_invalid_json") from exc
+            decoded = strict_json_loads(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
+            raise RemoteToolError("downstream_returned_invalid_or_ambiguous_json") from exc
         try:
             canonical_json(decoded)
         except ValueError as exc:

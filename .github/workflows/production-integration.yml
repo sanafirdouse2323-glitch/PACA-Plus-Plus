@@ -5,9 +5,11 @@ on:
     branches:
       - main
       - production/phase-1-security-hardening
+      - production/phase-2-enforcement-stack
   pull_request:
     branches:
       - main
+      - production/phase-1-security-hardening
 
 permissions:
   contents: read
@@ -30,7 +32,8 @@ jobs:
           --health-timeout 3s
           --health-retries 20
     env:
-      PACA_TEST_DATABASE_URL: postgresql://paca:paca_test_password@127.0.0.1:5432/paca_test
+      PACA_TEST_ADMIN_DATABASE_URL: postgresql://paca:paca_test_password@127.0.0.1:5432/paca_test
+      PACA_TEST_RUNTIME_DATABASE_URL: postgresql://paca_runtime:paca_runtime_ci_password@127.0.0.1:5432/paca_test
       PACA_OPA_BASE_URL: http://127.0.0.1:8181
     defaults:
       run:
@@ -56,8 +59,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          OPA_VERSION="1.21.3"
-          OPA_SHA256="add7c9dcf56e1ce1538426a6ee595ea1cc7ee830bbedd4c23219825b02b19a79"
+          OPA_VERSION="1.21.4"
+          OPA_SHA256="2ab571f367f293bb19523b76f92f1945bbf245003392c7f392903f95c2b9b630"
           curl --fail --silent --show-error --location "https://openpolicyagent.org/downloads/v${OPA_VERSION}/opa_linux_amd64_static" --output "$RUNNER_TEMP/opa"
           printf '%s  %s\n' "$OPA_SHA256" "$RUNNER_TEMP/opa" | sha256sum --check
           chmod +x "$RUNNER_TEMP/opa"
@@ -88,7 +91,8 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y postgresql-client
           fi
-          psql "$PACA_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/001_runtime_roles_and_schema.sql
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/001_runtime_roles_and_schema.sql
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -c "ALTER ROLE paca_runtime WITH LOGIN PASSWORD 'paca_runtime_ci_password'; ALTER ROLE paca_operator WITH LOGIN PASSWORD 'paca_operator_ci_password';"
       - name: Run unit, adversarial and local HTTP integration tests
         run: python -m unittest discover -s tests -v
       - name: Run simulated demo

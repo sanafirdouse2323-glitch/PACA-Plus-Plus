@@ -11,7 +11,7 @@ import os
 import sys
 from typing import Any
 
-from .durable import FernetResponseProtector, PostgresOperationStore, SQLiteOperationStore
+from .durable import FernetResponseProtector, PostgresOperationStore, SQLiteOperationStore, strict_json_loads
 
 
 def _store(args: argparse.Namespace):
@@ -39,7 +39,7 @@ def _print(payload: dict[str, Any]) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Privileged PACA++ durable-store operations")
     parser.add_argument("--backend", choices=("postgres", "sqlite"), required=True)
-    parser.add_argument("--dsn", help="PostgreSQL DSN; alternatively PACA_POSTGRES_DSN")
+    parser.add_argument("--dsn", help="PostgreSQL DSN; alternatively PACA_OPERATOR_POSTGRES_DSN")
     parser.add_argument("--path", help="SQLite database path; alternatively PACA_SQLITE_PATH")
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -92,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
                 "error_code": operation.error_code,
                 "arguments_digest": operation.arguments_digest,
                 "context_digest": operation.context_digest,
+                "policy_version": operation.policy_decision.get("policy_version"),
             })
             return 0
         if args.handler == "reconcile_unknown":
@@ -105,12 +106,9 @@ def main(argv: list[str] | None = None) -> int:
                     raw_response = sys.stdin.read(1_048_577)
                     if len(raw_response.encode("utf-8")) > 1_048_576:
                         raise ValueError("response exceeds 1 MiB")
-                    response = json.loads(
-                        raw_response,
-                        parse_constant=lambda x: (_ for _ in ()).throw(ValueError(x)),
-                    )
-                except (json.JSONDecodeError, ValueError) as exc:
-                    raise ValueError("--response-stdin must contain finite JSON up to 1 MiB") from exc
+                    response = strict_json_loads(raw_response)
+                except (json.JSONDecodeError, ValueError, RecursionError) as exc:
+                    raise ValueError("--response-stdin must contain unambiguous finite JSON up to 1 MiB") from exc
             operation = store.reconcile_unknown(
                 args.operation_id, outcome=args.outcome, reason=args.reason, response=response
             )

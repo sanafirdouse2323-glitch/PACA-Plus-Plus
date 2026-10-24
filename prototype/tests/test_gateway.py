@@ -44,8 +44,8 @@ class ContextFixture:
     @staticmethod
     def normal(role="analyst"):
         return TrustedAuthorizationContext(
-            subject_attributes={"status": "active", "role": role, "tenant_id": "t1"},
-            resource_attributes={"owner_id": "u1", "tenant_id": "t1"},
+            subject_attributes={"status": "active", "role": role, "tenant_id": "t1", "user_id": "db-u1"},
+            resource_attributes={"owner_id": "db-u1", "tenant_id": "t1"},
             environment={},
         )
 
@@ -72,7 +72,7 @@ class FakeOPA:
             subject.get("status") == "active"
             and value.get("action") == "file.read"
             and subject.get("role") == "analyst"
-            and subject.get("id") == resource.get("owner_id")
+            and subject.get("user_id") == resource.get("owner_id")
             and subject.get("tenant_id") == resource.get("tenant_id")
         )
         result = {"allow": allowed, "reason": "permitted" if allowed else "no_matching_permit"}
@@ -234,8 +234,8 @@ class GatewayTests(unittest.TestCase):
             authenticator=OtherPrincipalAuth(),
             context_provider=ContextFixture([
                 TrustedAuthorizationContext(
-                    subject_attributes={"status": "active", "role": "analyst", "tenant_id": "t1"},
-                    resource_attributes={"owner_id": "u2", "tenant_id": "t1"},
+                    subject_attributes={"status": "active", "role": "analyst", "tenant_id": "t1", "user_id": "db-u2"},
+                    resource_attributes={"owner_id": "db-u2", "tenant_id": "t1"},
                     environment={},
                 )
             ]),

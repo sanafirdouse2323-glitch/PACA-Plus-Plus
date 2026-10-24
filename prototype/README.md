@@ -17,12 +17,12 @@ python examples/authorize.py --policy examples/policy.json --context examples/co
 
 ## Production-oriented integration layer
 
-- `opa.py`: OPA Data API decision client; undefined decisions and service failures do not allow access.
+- `opa.py`: OPA Data API decision client; undefined decisions and service failures do not allow access. Production startup requires the configured declared policy version, which is persisted in operation metadata and the audit chain.
 - `identity.py`: JWT verification against a configured HTTPS JWKS URL, plus a trusted server-side context-provider interface.
 - `gateway.py`: registered action gateway; re-fetches context and re-evaluates OPA immediately before dispatch.
 - `http_api.py`: bounded HTTP JSON API with `POST /v1/execute` and authenticated operation-status lookup.
 - `HTTPJsonActionAdapter`: sends calls only to a fixed configured HTTPS endpoint and rejects redirects.
-- `durable.py`: durable SQLite store for single-host use and PostgreSQL store for coordinated multi-instance operation state. Includes idempotency, recovery states and a hash-chained audit log.
+- `durable.py`: durable SQLite store for single-host use and PostgreSQL store for coordinated multi-instance operation state. Includes principal-scoped idempotency, recovery states, strict unambiguous JSON parsing, encrypted cached responses, and a hash-chained audit log that replays operation transitions and cross-checks identity/fingerprints, idempotency-key digest, timestamps, status/error fields, policy-decision metadata, and cached response presence/content.
 - `policies/authz.rego`: baseline example policy; intentionally narrow and must be adapted to verified business rules.
 - `compose.dependencies.yml`: OPA and PostgreSQL dependencies for local integration.
 - `.github/workflows/production-integration.yml`: checksum-pinned OPA validation plus live OPA/PostgreSQL integration tests.
@@ -31,7 +31,7 @@ Install the production dependencies and start the supporting services by followi
 
 ## Critical guarantees and limits
 
-The HTTP caller cannot supply policy context or choose a Python handler. The authenticated subject ID comes from JWT claims verified against a configured issuer, audience, and signing key. Roles, status, tenant, resource owner and environment attributes must be loaded from authoritative server-side data by the application's context provider. The gateway does not invent your database schema or treat client-provided claims as trusted authorization attributes.
+The HTTP caller cannot supply policy context or choose a Python handler. The principal is authenticated from JWT claims verified against a configured issuer, audience, signing key and expiry. The trusted context provider maps the verified (issuer, subject) pair to an internal application user_id and loads status, role, tenant, resource owner and environment attributes from authoritative server-side data. OPA receives an issuer-scoped pseudonymous principal ID and the trusted internal user_id; resource ownership is compared within that internal-ID namespace, not against raw JWT sub. The gateway does not invent your database schema or treat client-provided claims as trusted authorization attributes.
 
 Idempotency and state transitions are coordinated by PostgreSQL across service instances; SQLite is intended for local/single-host use. If a remote tool times out or an effect handler raises after dispatch starts, the operation is marked unknown and is not automatically retried. Operators must confirm the true remote outcome before reconciling the record.
 

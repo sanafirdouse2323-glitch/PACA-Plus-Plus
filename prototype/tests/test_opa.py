@@ -29,11 +29,12 @@ class OPATests(unittest.TestCase):
 
     @patch("paca_mvp.opa._open_request")
     def test_allow_only_on_boolean_true(self, mocked):
-        mocked.return_value = Response(b'{"result":{"allow":true,"reason":"permitted"},"decision_id":"decision-123"}')
+        mocked.return_value = Response(b'{"result":{"allow":true,"reason":"permitted","policy_version":"paca-baseline-v1"},"decision_id":"decision-123"}')
         result = self.client.evaluate({"action": "file.read"})
         self.assertTrue(result.allowed)
         self.assertEqual(result.reason, "permitted")
         self.assertEqual(result.decision_id, "decision-123")
+        self.assertEqual(result.policy_version, "paca-baseline-v1")
         sent = json.loads(mocked.call_args.args[0].data)
         self.assertEqual(sent, {"input": {"action": "file.read"}})
 
@@ -127,6 +128,31 @@ class OPATests(unittest.TestCase):
         with patch.object(self.client, "evaluate", side_effect=OPAError("offline")):
             with self.assertRaises(OPAError):
                 self.client.preflight()
+
+
+    @patch("paca_mvp.opa._open_request")
+    def test_required_policy_version_rejects_missing_or_mismatched_version(self, mocked):
+        client = OPAPolicyDecisionPoint(required_policy_version="paca-baseline-v1")
+        for body in (
+            b'{"result":{"allow":true,"reason":"permitted"}}',
+            b'{"result":{"allow":true,"reason":"permitted","policy_version":"paca-older-v1"}}',
+        ):
+            with self.subTest(body=body):
+                mocked.return_value = Response(body)
+                with self.assertRaisesRegex(OPAError, "policy version"):
+                    client.evaluate({"action": "file.read"})
+
+    def test_invalid_required_policy_version_is_rejected(self):
+        with self.assertRaises(ValueError):
+            OPAPolicyDecisionPoint(required_policy_version="not a valid version")
+
+    @patch("paca_mvp.opa._open_request")
+    def test_duplicate_allow_key_in_opa_response_is_rejected(self, mocked):
+        mocked.return_value = Response(
+            b'{"result":{"allow":false,"allow":true,"reason":"permitted"}}'
+        )
+        with self.assertRaises(OPAError):
+            self.client.evaluate({"action": "file.read"})
 
 
 if __name__ == "__main__":

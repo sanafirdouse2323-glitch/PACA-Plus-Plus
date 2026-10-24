@@ -48,8 +48,10 @@ class JWTAuthenticationTests(unittest.TestCase):
         self.assertEqual(principal.subject, "user-1")
         self.assertEqual(principal.issuer, "https://issuer.example")
         self.assertEqual(principal.opa_identity(), {
-            "id": "user-1", "issuer": "https://issuer.example"
+            "id": principal.storage_id,
+            "issuer": "https://issuer.example",
         })
+        self.assertNotIn("subject", principal.opa_identity())
 
     def test_wrong_issuer_is_rejected(self):
         token = self.make_token(iss="https://attacker.example")

@@ -9,14 +9,15 @@ import uuid
 from paca_mvp.durable import OperationStateError, PostgresOperationStore
 
 
-DSN = os.environ.get("PACA_TEST_DATABASE_URL")
+DSN = os.environ.get("PACA_TEST_RUNTIME_DATABASE_URL") or os.environ.get("PACA_TEST_DATABASE_URL")
+ADMIN_DSN = os.environ.get("PACA_TEST_ADMIN_DATABASE_URL") or os.environ.get("PACA_TEST_DATABASE_URL")
 
 
 @unittest.skipUnless(DSN, "Set PACA_TEST_DATABASE_URL to run PostgreSQL integration tests")
 class PostgresStoreIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.store = PostgresOperationStore(DSN)
+        cls.store = PostgresOperationStore(DSN, initialize_schema=False)
 
     def test_durable_claim_completion_and_audit_under_postgres(self):
         key = "pg-" + uuid.uuid4().hex
@@ -78,7 +79,7 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
         def create():
             try:
                 barrier.wait(timeout=5)
-                created.append(PostgresOperationStore(DSN).create_or_get(**common))
+                created.append(PostgresOperationStore(DSN, initialize_schema=False).create_or_get(**common))
             except Exception as exc:
                 errors.append(exc)
 
@@ -100,7 +101,7 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
         def claim():
             try:
                 barrier.wait(timeout=5)
-                claims.append(PostgresOperationStore(DSN).claim(operation_id))
+                claims.append(PostgresOperationStore(DSN, initialize_schema=False).claim(operation_id))
             except Exception as exc:
                 claim_errors.append(exc)
 
@@ -120,10 +121,11 @@ class PostgresStoreIntegrationTests(unittest.TestCase):
         self.assertIsNone(self.store.check_ready())
 
 
+    @unittest.skipUnless(ADMIN_DSN, "Set PACA_TEST_ADMIN_DATABASE_URL to verify role grants")
     def test_migration_limits_runtime_and_operator_to_mutable_columns(self):
         import psycopg
 
-        with psycopg.connect(DSN, autocommit=True) as connection:
+        with psycopg.connect(ADMIN_DSN, autocommit=True) as connection:
             permissions = connection.execute("""
                 SELECT
                     has_table_privilege('paca_runtime', 'paca.operations', 'UPDATE'),

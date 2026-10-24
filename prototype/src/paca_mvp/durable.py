@@ -26,6 +26,7 @@ _ROOT_HASH = "0" * 64
 _IDEMPOTENCY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _ACTION_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+_POLICY_VERSION_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
 _MAX_TTL_SECONDS = 300.0
 _MAX_RESULT_BYTES = 1_048_576
 
@@ -75,6 +76,25 @@ def canonical_json(value: Any) -> str:
         return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
     except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
         raise ValueError("value_must_be_finite_unambiguous_json") from exc
+
+
+def strict_json_loads(value: str | bytes) -> Any:
+    """Parse JSON while rejecting duplicate object keys and non-standard constants."""
+    def unique_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in result:
+                raise ValueError("duplicate_json_object_key")
+            result[key] = item
+        return result
+
+    def reject_constant(constant: str) -> Any:
+        raise ValueError("non_finite_json_number")
+
+    try:
+        return json.loads(value, object_pairs_hook=unique_object_pairs, parse_constant=reject_constant)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError, RecursionError) as exc:
+        raise ValueError("invalid_unambiguous_json") from exc
 
 
 def canonical_digest(value: Any) -> str:
@@ -193,7 +213,7 @@ class _BaseOperationStore:
                 raise StoreError("encrypted_cached_response_requires_response_protector")
             stored = self._response_protector.unprotect(stored)
         try:
-            return json.loads(stored, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+            return strict_json_loads(stored)
         except (json.JSONDecodeError, ValueError) as exc:
             raise StoreError("cached_response_json_invalid") from exc
 
@@ -319,11 +339,17 @@ class _BaseOperationStore:
         decision_id = policy_decision.get("decision_id")
         if not isinstance(decision_id, str) or not decision_id or len(decision_id) > 128:
             decision_id = None
-        policy_json = canonical_json({
+        policy_version = policy_decision.get("policy_version")
+        if not isinstance(policy_version, str) or not _POLICY_VERSION_RE.fullmatch(policy_version):
+            policy_version = None
+        decision_payload = {
             "allow": True,
             "reason": decision_reason[:128],
             "decision_id": decision_id,
-        })
+        }
+        if policy_version is not None:
+            decision_payload["policy_version"] = policy_version
+        policy_json = canonical_json(decision_payload)
         fingerprint = canonical_digest({
             "principal_id": principal_id, "action": action, "resource": resource,
             "arguments_digest": arguments_digest, "context_digest": context_digest,
@@ -365,6 +391,8 @@ class _BaseOperationStore:
                 self._append_audit(session, "authorization_precheck_permitted", operation_id, principal_id, {
                     "action": action, "resource": resource, "arguments_digest": arguments_digest,
                     "context_digest": context_digest, "decision": json.loads(policy_json),
+                    "created_at": created_at, "expires_at": expires_at,
+                    "idempotency_key_digest": canonical_digest(idempotency_key),
                 })
             else:
                 self._append_audit(session, "idempotency_replay", result_row["operation_id"],
@@ -387,11 +415,17 @@ class _BaseOperationStore:
             decision_id = policy_decision.get("decision_id")
             if not isinstance(decision_id, str) or not decision_id or len(decision_id) > 128:
                 decision_id = None
-            decision_json = canonical_json({
+            policy_version = policy_decision.get("policy_version")
+            if not isinstance(policy_version, str) or not _POLICY_VERSION_RE.fullmatch(policy_version):
+                policy_version = None
+            decision_payload = {
                 "allow": True,
                 "reason": reason[:128],
                 "decision_id": decision_id,
-            })
+            }
+            if policy_version is not None:
+                decision_payload["policy_version"] = policy_version
+            decision_json = canonical_json(decision_payload)
         else:
             decision_json = None
         error: str | None = None
@@ -412,9 +446,12 @@ class _BaseOperationStore:
                     "failed": "operation_failed",
                 }.get(status, "operation_not_executable")
             elif row["expires_at"] <= _iso(utc_now()):
+                finished_at = _iso(utc_now())
                 session.execute("UPDATE operations SET status='expired',finished_at=?,error_code=? WHERE operation_id=?",
-                                (_iso(utc_now()), "permit_expired", operation_id))
-                self._append_audit(session, "operation_expired", operation_id, row["principal_id"], {})
+                                (finished_at, "permit_expired", operation_id))
+                self._append_audit(session, "operation_expired", operation_id, row["principal_id"], {
+                    "finished_at": finished_at, "error_code": "permit_expired",
+                })
                 error = "operation_expired"
             else:
                 started_at = _iso(utc_now())
@@ -428,7 +465,10 @@ class _BaseOperationStore:
                         "UPDATE operations SET status='in_progress',started_at=?,policy_decision_json=? WHERE operation_id=? AND status='issued'",
                         (started_at, decision_json, operation_id),
                     )
-                audit_payload = {"action": row["action"], "resource": row["resource"]}
+                audit_payload = {
+                    "action": row["action"], "resource": row["resource"],
+                    "started_at": started_at,
+                }
                 if decision_json is not None:
                     audit_payload["policy_decision"] = json.loads(decision_json)
                 self._append_audit(session, "effect_dispatch_started", operation_id, row["principal_id"], audit_payload)
@@ -454,7 +494,7 @@ class _BaseOperationStore:
             )
             self._append_audit(session, "effect_completed", operation_id, row["principal_id"], {
                 "action": row["action"], "resource": row["resource"],
-                "response_digest": canonical_digest(response),
+                "finished_at": finished_at, "response_digest": canonical_digest(response),
             })
             updated = session.one("SELECT * FROM operations WHERE operation_id=?", (operation_id,))
         return self._record(updated)
@@ -465,12 +505,15 @@ class _BaseOperationStore:
             row = session.one("SELECT * FROM operations WHERE operation_id=?", (operation_id,), for_update=True)
             if row is None or row["status"] not in {"in_progress", "issued"}:
                 return
+            finished_at = _iso(utc_now())
             session.execute(
                 "UPDATE operations SET status='unknown',finished_at=?,error_code=? WHERE operation_id=?",
-                (_iso(utc_now()), safe_error, operation_id),
+                (finished_at, safe_error, operation_id),
             )
-            self._append_audit(session, "effect_outcome_unknown", operation_id, row["principal_id"],
-                               {"error_code": safe_error, "action": row["action"], "resource": row["resource"]})
+            self._append_audit(session, "effect_outcome_unknown", operation_id, row["principal_id"], {
+                "error_code": safe_error, "action": row["action"], "resource": row["resource"],
+                "finished_at": finished_at,
+            })
 
     def cancel_issued(self, operation_id: str, reason: str) -> None:
         safe_reason = re.sub(r"[^A-Za-z0-9_.:-]", "_", str(reason))[:120] or "operation_cancelled"
@@ -478,12 +521,14 @@ class _BaseOperationStore:
             row = session.one("SELECT * FROM operations WHERE operation_id=?", (operation_id,), for_update=True)
             if row is None or row["status"] != "issued":
                 return
+            finished_at = _iso(utc_now())
             session.execute(
                 "UPDATE operations SET status='cancelled',finished_at=?,error_code=? WHERE operation_id=?",
-                (_iso(utc_now()), safe_reason, operation_id),
+                (finished_at, safe_reason, operation_id),
             )
-            self._append_audit(session, "operation_cancelled", operation_id, row["principal_id"],
-                               {"reason": safe_reason})
+            self._append_audit(session, "operation_cancelled", operation_id, row["principal_id"], {
+                "reason": safe_reason, "finished_at": finished_at, "error_code": safe_reason,
+            })
 
     def get_operation(self, operation_id: str) -> OperationRecord | None:
         with self._transaction() as session:
@@ -518,7 +563,8 @@ class _BaseOperationStore:
                  None if outcome == "succeeded" else "reconciled_failed", operation_id),
             )
             self._append_audit(session, "operator_reconciliation", operation_id, row["principal_id"], {
-                "outcome": outcome, "reason": safe_reason,
+                "outcome": outcome, "reason": safe_reason, "finished_at": finished_at,
+                "error_code": None if outcome == "succeeded" else "reconciled_failed",
                 "response_digest": canonical_digest(response) if outcome == "succeeded" else None,
             })
             updated = session.one("SELECT * FROM operations WHERE operation_id=?", (operation_id,))
@@ -535,38 +581,297 @@ class _BaseOperationStore:
                 (cutoff,), for_update=True,
             )
             for row in rows:
+                finished_at = _iso(utc_now())
                 session.execute(
                     "UPDATE operations SET status='unknown',finished_at=?,error_code=? WHERE operation_id=? AND status='in_progress'",
-                    (_iso(utc_now()), "recovered_after_interruption", row["operation_id"]),
+                    (finished_at, "recovered_after_interruption", row["operation_id"]),
                 )
                 self._append_audit(session, "effect_recovered_as_unknown", row["operation_id"],
-                                   row["principal_id"], {"reason": "process_interruption"})
+                                   row["principal_id"], {
+                                       "reason": "process_interruption", "finished_at": finished_at,
+                                       "error_code": "recovered_after_interruption",
+                                   })
                 recovered += 1
         return recovered
 
     def verify_audit_chain(self) -> bool:
-        with self._transaction() as session:
-            # Lock the audit head first so concurrent appends cannot make this read
-            # observe events and a head value from different database snapshots.
-            head = session.one("SELECT head_hash FROM audit_head WHERE singleton=1", for_update=True)
-            rows = session.all("SELECT * FROM audit_events ORDER BY seq ASC")
-        previous = _ROOT_HASH
-        for row in rows:
-            material = {
-                "event_id": row["event_id"],
-                "event_time": row["event_time"],
-                "event_type": row["event_type"],
-                "operation_id": row["operation_id"],
-                "principal_id": row["principal_id"],
-                "payload": json.loads(row["payload_json"]),
-                "previous_hash": previous,
-            }
-            calculated = canonical_digest(material)
-            if row["previous_hash"] != previous or row["entry_hash"] != calculated:
-                return False
-            previous = calculated
-        return head is not None and head["head_hash"] == previous
+        """Verify the hash chain and reconcile every stored operation with its event history.
 
+        This validates request identity/fingerprints, the hashed idempotency key, creation
+        and expiry timestamps, the state-transition sequence, dispatch/finish timestamps,
+        the final policy decision, and cached response presence/content. The chain detects
+        direct row edits unless an attacker with database write access also rebuilds the
+        corresponding event history and hash head; it is not tamper-proof.
+        """
+        try:
+            with self._transaction() as session:
+                # Serialize verification with audit appends by locking the shared head first.
+                head = session.one("SELECT head_hash FROM audit_head WHERE singleton=1", for_update=True)
+                events = session.all("SELECT * FROM audit_events ORDER BY seq ASC")
+                operation_rows = session.all("SELECT * FROM operations")
+
+            previous = _ROOT_HASH
+            request_records: dict[str, dict[str, Any]] = {}
+            policy_decisions: dict[str, dict[str, Any]] = {}
+            states: dict[str, str] = {}
+            timestamps: dict[str, dict[str, Any]] = {}
+            response_digests: dict[str, str] = {}
+            operation_events = {
+                "authorization_precheck_permitted", "idempotency_conflict", "idempotency_replay",
+                "effect_dispatch_started", "effect_completed", "effect_outcome_unknown",
+                "operation_cancelled", "operation_expired", "operator_reconciliation",
+                "effect_recovered_as_unknown",
+            }
+
+            for event in events:
+                payload = strict_json_loads(event["payload_json"])
+                if not isinstance(payload, dict):
+                    return False
+                material = {
+                    "event_id": event["event_id"],
+                    "event_time": event["event_time"],
+                    "event_type": event["event_type"],
+                    "operation_id": event["operation_id"],
+                    "principal_id": event["principal_id"],
+                    "payload": payload,
+                    "previous_hash": previous,
+                }
+                calculated = canonical_digest(material)
+                if event["previous_hash"] != previous or event["entry_hash"] != calculated:
+                    return False
+                previous = calculated
+
+                event_type = event["event_type"]
+                operation_id = event["operation_id"]
+                principal_id = event["principal_id"]
+
+                if operation_id is None:
+                    # Denial events are intentionally operation-less; no other event is.
+                    if event_type != "authorization_denied":
+                        return False
+                    continue
+
+                if not isinstance(operation_id, str) or not operation_id or event_type not in operation_events:
+                    return False
+
+                if event_type == "authorization_precheck_permitted":
+                    if operation_id in request_records:
+                        return False
+                    action = payload.get("action")
+                    resource = payload.get("resource")
+                    arguments_digest = payload.get("arguments_digest")
+                    context_digest = payload.get("context_digest")
+                    decision = payload.get("decision")
+                    created_at = payload.get("created_at")
+                    expires_at = payload.get("expires_at")
+                    idempotency_key_digest = payload.get("idempotency_key_digest")
+                    if (
+                        not isinstance(principal_id, str) or not principal_id
+                        or not isinstance(action, str) or not _ACTION_RE.fullmatch(action)
+                        or not isinstance(resource, str) or not resource.strip()
+                        or len(resource) > 2048
+                        or any(ord(character) < 0x20 or ord(character) == 0x7f for character in resource)
+                        or not isinstance(arguments_digest, str) or not _DIGEST_RE.fullmatch(arguments_digest)
+                        or not isinstance(context_digest, str) or not _DIGEST_RE.fullmatch(context_digest)
+                        or not isinstance(decision, dict) or decision.get("allow") is not True
+                        or not isinstance(created_at, str) or not created_at
+                        or not isinstance(expires_at, str) or expires_at <= created_at
+                        or not isinstance(idempotency_key_digest, str)
+                        or not _DIGEST_RE.fullmatch(idempotency_key_digest)
+                    ):
+                        return False
+                    request_records[operation_id] = {
+                        "principal_id": principal_id,
+                        "action": action,
+                        "resource": resource,
+                        "arguments_digest": arguments_digest,
+                        "context_digest": context_digest,
+                        "created_at": created_at,
+                        "expires_at": expires_at,
+                        "idempotency_key_digest": idempotency_key_digest,
+                    }
+                    policy_decisions[operation_id] = decision
+                    states[operation_id] = "issued"
+                    timestamps[operation_id] = {
+                        "started_at": None, "finished_at": None, "error_code": None,
+                    }
+                    continue
+
+                request_record = request_records.get(operation_id)
+                if request_record is None or principal_id != request_record["principal_id"]:
+                    return False
+
+                state = states[operation_id]
+                times = timestamps[operation_id]
+
+                if event_type in {"idempotency_conflict", "idempotency_replay"}:
+                    # These events do not transition the underlying operation.
+                    if event_type == "idempotency_replay" and not isinstance(payload.get("existing_status"), str):
+                        return False
+                    if not isinstance(payload.get("action"), str) or not isinstance(payload.get("resource"), str):
+                        return False
+                    continue
+
+                if event_type == "effect_dispatch_started":
+                    if state != "issued":
+                        return False
+                    if payload.get("action") != request_record["action"] or payload.get("resource") != request_record["resource"]:
+                        return False
+                    started_at = payload.get("started_at")
+                    if not isinstance(started_at, str) or not started_at:
+                        return False
+                    # The gateway supplies the fresh dispatch decision. Direct store
+                    # callers may call claim() without a replacement decision; in that
+                    # case the already-audited precheck decision remains authoritative.
+                    if "policy_decision" in payload:
+                        decision = payload.get("policy_decision")
+                        if not isinstance(decision, dict) or decision.get("allow") is not True:
+                            return False
+                        policy_decisions[operation_id] = decision
+                    states[operation_id] = "in_progress"
+                    times["started_at"] = started_at
+
+                elif event_type == "effect_completed":
+                    if state != "in_progress":
+                        return False
+                    if payload.get("action") != request_record["action"] or payload.get("resource") != request_record["resource"]:
+                        return False
+                    finished_at = payload.get("finished_at")
+                    digest = payload.get("response_digest")
+                    if not isinstance(finished_at, str) or not finished_at:
+                        return False
+                    if not isinstance(digest, str) or not _DIGEST_RE.fullmatch(digest):
+                        return False
+                    if operation_id in response_digests:
+                        return False
+                    states[operation_id] = "succeeded"
+                    times["finished_at"] = finished_at
+                    times["error_code"] = None
+                    response_digests[operation_id] = digest
+
+                elif event_type == "effect_outcome_unknown":
+                    if state not in {"issued", "in_progress"}:
+                        return False
+                    if payload.get("action") != request_record["action"] or payload.get("resource") != request_record["resource"]:
+                        return False
+                    finished_at = payload.get("finished_at")
+                    error_code = payload.get("error_code")
+                    if not isinstance(finished_at, str) or not finished_at:
+                        return False
+                    if not isinstance(error_code, str) or not error_code:
+                        return False
+                    states[operation_id] = "unknown"
+                    times["finished_at"] = finished_at
+                    times["error_code"] = error_code
+
+                elif event_type == "effect_recovered_as_unknown":
+                    if state != "in_progress":
+                        return False
+                    finished_at = payload.get("finished_at")
+                    error_code = payload.get("error_code")
+                    if (payload.get("reason") != "process_interruption"
+                            or not isinstance(finished_at, str) or not finished_at
+                            or error_code != "recovered_after_interruption"):
+                        return False
+                    states[operation_id] = "unknown"
+                    times["finished_at"] = finished_at
+                    times["error_code"] = error_code
+
+                elif event_type == "operation_cancelled":
+                    if state != "issued":
+                        return False
+                    finished_at = payload.get("finished_at")
+                    reason = payload.get("reason")
+                    if not isinstance(finished_at, str) or not finished_at or not isinstance(reason, str) or not reason:
+                        return False
+                    if payload.get("error_code") != reason:
+                        return False
+                    states[operation_id] = "cancelled"
+                    times["finished_at"] = finished_at
+                    times["error_code"] = reason
+
+                elif event_type == "operation_expired":
+                    if state != "issued":
+                        return False
+                    finished_at = payload.get("finished_at")
+                    if not isinstance(finished_at, str) or not finished_at or payload.get("error_code") != "permit_expired":
+                        return False
+                    states[operation_id] = "expired"
+                    times["finished_at"] = finished_at
+                    times["error_code"] = "permit_expired"
+
+                elif event_type == "operator_reconciliation":
+                    if state != "unknown":
+                        return False
+                    outcome = payload.get("outcome")
+                    finished_at = payload.get("finished_at")
+                    if outcome not in {"succeeded", "failed"} or not isinstance(finished_at, str) or not finished_at:
+                        return False
+                    expected_error = None if outcome == "succeeded" else "reconciled_failed"
+                    if payload.get("error_code") != expected_error:
+                        return False
+                    states[operation_id] = outcome
+                    times["finished_at"] = finished_at
+                    times["error_code"] = expected_error
+                    if outcome == "succeeded":
+                        digest = payload.get("response_digest")
+                        if not isinstance(digest, str) or not _DIGEST_RE.fullmatch(digest) or operation_id in response_digests:
+                            return False
+                        response_digests[operation_id] = digest
+                    elif payload.get("response_digest") is not None:
+                        return False
+
+            if head is None or head["head_hash"] != previous:
+                return False
+
+            operations_by_id = {row["operation_id"]: row for row in operation_rows}
+            if set(operations_by_id) != set(request_records):
+                return False
+
+            for operation_id, row in operations_by_id.items():
+                request_record = request_records[operation_id]
+                if (
+                    row["principal_id"] != request_record["principal_id"]
+                    or row["action"] != request_record["action"]
+                    or row["resource"] != request_record["resource"]
+                    or row["arguments_digest"] != request_record["arguments_digest"]
+                    or row["context_digest"] != request_record["context_digest"]
+                    or row["created_at"] != request_record["created_at"]
+                    or row["expires_at"] != request_record["expires_at"]
+                    or canonical_digest(row["idempotency_key"]) != request_record["idempotency_key_digest"]
+                    or row["request_fingerprint"] != canonical_digest({
+                        "principal_id": row["principal_id"],
+                        "action": row["action"],
+                        "resource": row["resource"],
+                        "arguments_digest": row["arguments_digest"],
+                        "context_digest": row["context_digest"],
+                    })
+                    or row["status"] != states[operation_id]
+                    or row["started_at"] != timestamps[operation_id]["started_at"]
+                    or row["finished_at"] != timestamps[operation_id]["finished_at"]
+                    or row["error_code"] != timestamps[operation_id]["error_code"]
+                ):
+                    return False
+
+                stored_decision = strict_json_loads(row["policy_decision_json"])
+                if stored_decision != policy_decisions[operation_id]:
+                    return False
+                has_response = row["response_json"] is not None
+                if (row["status"] == "succeeded") != has_response:
+                    return False
+                expected_response_digest = response_digests.get(operation_id)
+                if not has_response:
+                    if expected_response_digest is not None:
+                        return False
+                    continue
+                if expected_response_digest is None:
+                    return False
+                decoded = self._decode_response(row["response_json"])
+                if canonical_digest(decoded) != expected_response_digest:
+                    return False
+            return True
+        except Exception:
+            return False
 
 class SQLiteOperationStore(_BaseOperationStore):
     """Durable store for one host or several processes sharing one SQLite database file."""

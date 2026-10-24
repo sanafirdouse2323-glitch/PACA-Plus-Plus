@@ -30,15 +30,15 @@ class Auth:
 class Context:
     def load(self, principal, action, resource, arguments):
         return TrustedAuthorizationContext(
-            subject_attributes={"role": "analyst", "status": "active", "tenant_id": "t1"},
-            resource_attributes={"owner_id": "u1", "tenant_id": "t1"},
+            subject_attributes={"role": "analyst", "status": "active", "tenant_id": "t1", "user_id": "db-u1"},
+            resource_attributes={"owner_id": "db-u1", "tenant_id": "t1"},
             environment={},
         )
 
 
 class PDP:
     def evaluate(self, value):
-        allow = value["action"] == "file.read" and value["resource"].get("owner_id") == value["subject"]["id"]
+        allow = value["action"] == "file.read" and value["resource"].get("owner_id") == value["subject"].get("user_id")
         return OPADecision(allow, "permitted" if allow else "no_matching_permit",
                            {"allow": allow, "reason": "permitted" if allow else "no_matching_permit"})
 
@@ -110,6 +110,56 @@ class HttpApiTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, 403)
         self.assertEqual(self.effects, [])
 
+
+    def test_ambiguous_json_and_duplicate_auth_headers_are_rejected(self):
+        def send_raw(body, key, extra_headers=""):
+            headers = (
+                "POST /v1/execute HTTP/1.1\r\n"
+                "Host: 127.0.0.1\r\n"
+                "Content-Type: application/json\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                "Authorization: Bearer valid\r\n"
+                f"Idempotency-Key: {key}\r\n"
+                + extra_headers
+                + "Connection: close\r\n\r\n"
+            ).encode("ascii") + body
+            with socket.create_connection(("127.0.0.1", self.port), timeout=3) as client:
+                client.sendall(headers)
+                response = bytearray()
+                while True:
+                    chunk = client.recv(4096)
+                    if not chunk:
+                        break
+                    response.extend(chunk)
+            return bytes(response)
+
+        duplicate_key = (
+            b'{"action":"file.read","action":"file.delete",'
+            b'"resource":"file:r1","arguments":{"path":"x"}}'
+        )
+        non_finite = b'{"action":"file.read","resource":"file:r1","arguments":{"path":NaN}}'
+        valid = b'{"action":"file.read","resource":"file:r1","arguments":{"path":"report.csv"}}'
+
+        for body in (duplicate_key, non_finite):
+            with self.subTest(body=body):
+                response = send_raw(body, "strict-" + uuid.uuid4().hex)
+                self.assertIn(b"400 Bad Request", response)
+                self.assertIn(b"invalid_json", response)
+
+        response = send_raw(
+            valid, "strict-" + uuid.uuid4().hex,
+            extra_headers="Authorization: Bearer attacker\r\n",
+        )
+        self.assertIn(b"400 Bad Request", response)
+        self.assertIn(b"duplicate_authorization_header", response)
+
+        response = send_raw(
+            valid, "strict-" + uuid.uuid4().hex,
+            extra_headers="Idempotency-Key: attacker-key\r\n",
+        )
+        self.assertIn(b"400 Bad Request", response)
+        self.assertIn(b"idempotency_key_header_required_once", response)
+        self.assertEqual(self.effects, [])
 
     def test_duplicate_content_length_is_rejected_before_authorization_or_effect(self):
         request = (

@@ -2,7 +2,7 @@
 # loopback by default. Do not expose the OPA management API or database publicly.
 services:
   opa:
-    image: openpolicyagent/opa:1.21.3
+    image: openpolicyagent/opa:1.21.4
     command: ["run", "--server", "--addr=0.0.0.0:8181", "/policies/authz.rego"]
     volumes:
       - ./policies:/policies:ro
