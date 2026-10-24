@@ -10,17 +10,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
+from urllib.parse import urlparse
 import json
 import os
-import re
-import sqlite3
 import stat
 import uuid
 import threading
 from datetime import datetime, timezone
 
-from .hardening import ContextUnavailable, TrustedPrincipal, _canonical_json, _validate_identifier, _urlopen_no_redirect
+from .hardening import (
+    ContextUnavailable, TrustedPrincipal, _canonical_json,
+    _validate_identifier, _urlopen_no_redirect,
+)
 
 
 class ToolInvocationError(RuntimeError):
@@ -37,8 +39,11 @@ class OIDCJWTIdentityProvider:
                  timeout_seconds: float = 3.0, jwks_cache_seconds: int = 300):
         for name, value in (("issuer", issuer), ("audience", audience)):
             _validate_identifier(value, name)
-        if not jwks_url.startswith("https://"):
-            raise ValueError("JWKS URL must use HTTPS")
+        jwks_parsed = urlparse(jwks_url)
+        if (jwks_parsed.scheme != "https" or not jwks_parsed.hostname
+                or jwks_parsed.username or jwks_parsed.password
+                or jwks_parsed.query or jwks_parsed.fragment):
+            raise ValueError("JWKS URL must be an HTTPS URL without embedded credentials/query/fragment")
         if timeout_seconds <= 0 or jwks_cache_seconds <= 0:
             raise ValueError("timeouts/cache lifetime must be positive")
         self.issuer, self.audience = issuer, audience
@@ -76,8 +81,7 @@ class OIDCJWTIdentityProvider:
                 raise ValueError("subject claim missing")
             return TrustedPrincipal(
                 subject=subject, issuer=self.issuer, audience=self.audience,
-                claims=claims, authenticated_at=__import__("datetime").datetime.now(
-                    __import__("datetime").timezone.utc).isoformat(),
+                claims=claims, authenticated_at=datetime.now(timezone.utc).isoformat(),
             )
         except Exception as exc:
             raise ContextUnavailable("credential verification failed") from exc
@@ -92,15 +96,15 @@ class HTTPAuthorizationContextProvider:
     """
     def __init__(self, endpoint: str, service_token: str, timeout_seconds: float = 3.0,
                  allow_insecure_localhost: bool = False):
-        from urllib.parse import urlparse
         parsed = urlparse(endpoint)
         local_hosts = {"localhost", "127.0.0.1", "::1"}
         if parsed.scheme != "https" and not (
             allow_insecure_localhost and parsed.scheme == "http" and parsed.hostname in local_hosts
         ):
             raise ValueError("context endpoint must use HTTPS (HTTP is allowed only for explicit loopback development)")
-        if not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
-            raise ValueError("invalid context endpoint URL")
+        if (not parsed.hostname or parsed.username or parsed.password
+                or parsed.query or parsed.fragment):
+            raise ValueError("context endpoint must not contain credentials, query or fragment")
         if not service_token or len(service_token) < 16:
             raise ValueError("context service token must be configured as a secret")
         if timeout_seconds <= 0:
