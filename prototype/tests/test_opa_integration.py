@@ -38,6 +38,16 @@ class LiveOPATests(unittest.TestCase):
     def test_real_opa_denies_wrong_owner(self):
         self.assertFalse(self.opa.evaluate(self.input_doc(owner="db-user-2")).allowed)
 
+    def test_real_opa_does_not_compare_owner_to_raw_oidc_subject(self):
+        self.assertFalse(self.opa.evaluate(
+            self.input_doc(owner="u1", subject="u1", user_id="db-user-1")
+        ).allowed)
+
+    def test_real_opa_denies_missing_internal_user_id(self):
+        document = self.input_doc()
+        del document["subject"]["user_id"]
+        self.assertFalse(self.opa.evaluate(document).allowed)
+
     def test_real_opa_denies_cross_tenant(self):
         self.assertFalse(self.opa.evaluate(self.input_doc(resource_tenant="t2")).allowed)
 
