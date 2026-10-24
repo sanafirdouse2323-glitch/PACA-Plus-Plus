@@ -11,3 +11,20 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+
+  postgres:
+    image: postgres@sha256:f4610795587492cd4fb887c2dc3de301b813278bb6f616992061141b5f15ac36
+    profiles: ["integration"]
+    environment:
+      POSTGRES_USER: paca
+      POSTGRES_PASSWORD: paca-test-only-password
+      POSTGRES_DB: paca_test
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paca -d paca_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    security_opt:
+      - no-new-privileges:true
