@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - production/phase-1-security-hardening
+      - production/phase-2-enforcement-stack
   pull_request:
     branches:
       - main
@@ -56,8 +57,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          OPA_VERSION="1.21.3"
-          OPA_SHA256="add7c9dcf56e1ce1538426a6ee595ea1cc7ee830bbedd4c23219825b02b19a79"
+          OPA_VERSION="1.21.4"
+          OPA_SHA256="2ab571f367f293bb19523b76f92f1945bbf245003392c7f392903f95c2b9b630"
           curl --fail --silent --show-error --location "https://openpolicyagent.org/downloads/v${OPA_VERSION}/opa_linux_amd64_static" --output "$RUNNER_TEMP/opa"
           printf '%s  %s\n' "$OPA_SHA256" "$RUNNER_TEMP/opa" | sha256sum --check
           chmod +x "$RUNNER_TEMP/opa"
