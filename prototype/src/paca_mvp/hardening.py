@@ -429,15 +429,20 @@ class SQLitePermitStore:
     def execute(self, permit_id: str, action: str, resource: str, request_hash: str,
                 current_policy_version: str, effect: Callable[[], Any],
                 idempotency_key: str | None = None) -> Any:
-        """Execute at most once within this store's claim protocol.
+        """Durably claim, revalidate, and execute while serializing local state writes.
 
-        A remote side effect and SQLite commit are not one transaction. The store
-        records 'executing' before invoking the callback. If the process crashes
-        during that callback, replay raises EffectOutcomeUnknown instead of
-        repeating a possibly completed effect. A downstream API idempotency key
-        is the correct way to make retries recoverable.
+        Phase 1 commits an 'executing' claim so a crash cannot make a protected
+        effect automatically replayable. Phase 2 reopens a write transaction,
+        rechecks state/policy/expiry, and keeps the database write lock across the
+        callback and completion record. If the process crashes during the callback,
+        phase 2 rolls back but the phase-1 claim survives as 'executing', which must
+        be reconciled rather than blindly replayed.
+
+        This is single-host SQLite coordination. Remote effects are not atomic with
+        SQLite; downstream idempotency/reconciliation remains mandatory.
         """
         now = datetime.now(timezone.utc)
+        # Phase 1: validate the permit and make the non-replayable claim durable.
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
@@ -468,7 +473,8 @@ class SQLitePermitStore:
                     if idempotency_key:
                         db.execute("UPDATE idempotency SET status='rejected',updated_at=? WHERE idempotency_key=?",
                                    (now.isoformat(), idempotency_key))
-                    self._audit(db, "permit_rejected", permit_id, action, resource, {"reason": "expired", "actor": actor})
+                    self._audit(db, "permit_rejected", permit_id, action, resource,
+                                {"reason": "expired", "actor": actor})
                     db.commit()
                     raise PermitRejected("permit expired")
                 state_version = int(db.execute(
@@ -512,13 +518,55 @@ class SQLitePermitStore:
                     db.rollback()
                 raise
 
-        try:
-            result = effect()
-            serialized = _canonical_json(result)
-        except Exception as exc:
-            with self._connect() as db:
-                db.execute("BEGIN IMMEDIATE")
+        # Phase 2: retain the write lock while revalidating and invoking the effect.
+        # State advances and other permit claims wait until the effect outcome is
+        # durably recorded, closing the local check/effect race.
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                row = db.execute("SELECT * FROM permits WHERE permit_id=?", (permit_id,)).fetchone()
+                if row is None:
+                    raise PermitRejected("permit disappeared after claim")
+                actor = json.loads(row["actor_json"]) if row["actor_json"] else None
+                if row["status"] == "completed":
+                    if row["result_json"] is None:
+                        raise EffectOutcomeUnknown("completed result unavailable")
+                    return json.loads(row["result_json"])
+                if row["status"] != "executing":
+                    raise EffectOutcomeUnknown("execution claim is no longer active")
+                if row["action"] != action or row["resource"] != resource:
+                    raise PermitRejected("action or resource mismatch after claim")
+                if row["request_hash"] != request_hash or row["idempotency_key"] != idempotency_key:
+                    raise PermitRejected("request or idempotency key mismatch after claim")
+                now = datetime.now(timezone.utc)
+                state_version = int(db.execute(
+                    "SELECT state_version FROM state WHERE singleton=1").fetchone()[0])
+                rejection = None
+                if now >= datetime.fromisoformat(row["expires_at"]):
+                    rejection = "expired"
+                elif row["state_version"] != state_version:
+                    rejection = "stale_state"
+                elif row["policy_version"] != current_policy_version:
+                    rejection = "stale_policy"
+                if rejection:
+                    db.execute("UPDATE permits SET status='rejected',updated_at=? WHERE permit_id=?",
+                               (now.isoformat(), permit_id))
+                    if idempotency_key:
+                        db.execute("UPDATE idempotency SET status='rejected',updated_at=? WHERE idempotency_key=?",
+                                   (now.isoformat(), idempotency_key))
+                    details = {"reason": rejection, "actor": actor,
+                               "issued_state_version": row["state_version"],
+                               "current_state_version": state_version,
+                               "issued_policy_version": row["policy_version"],
+                               "current_policy_version": current_policy_version}
+                    self._audit(db, "permit_rejected", permit_id, action, resource, details)
+                    db.commit()
+                    raise PermitRejected(rejection.replace("_", " "))
+
                 try:
+                    result = effect()
+                    serialized = _canonical_json(result)
+                except Exception as exc:
                     db.execute("UPDATE permits SET status='unknown',updated_at=? WHERE permit_id=?",
                                (_utcnow(), permit_id))
                     if idempotency_key:
@@ -527,14 +575,10 @@ class SQLitePermitStore:
                     self._audit(db, "effect_outcome_unknown", permit_id, action, resource,
                                 {"actor": actor, "exception_type": type(exc).__name__})
                     db.commit()
-                except Exception:
-                    db.rollback()
-                    raise
-            raise EffectOutcomeUnknown("effect raised; downstream state must be reconciled") from exc
+                    raise EffectOutcomeUnknown(
+                        "effect raised or result was not serializable; downstream state must be reconciled"
+                    ) from exc
 
-        with self._connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            try:
                 db.execute("UPDATE permits SET status='completed',result_json=?,updated_at=? WHERE permit_id=?",
                            (serialized, _utcnow(), permit_id))
                 if idempotency_key:
@@ -544,11 +588,11 @@ class SQLitePermitStore:
                 self._audit(db, "effect_completed", permit_id, action, resource,
                             {"actor": actor, "result_hash": _digest(result)})
                 db.commit()
+                return result
             except Exception:
-                db.rollback()
-                # The downstream operation may already have succeeded.
-                raise EffectOutcomeUnknown("effect succeeded but durable completion could not be recorded")
-        return result
+                if db.in_transaction:
+                    db.rollback()
+                raise
 
     def mark_unknown_operations_for_reconciliation(self) -> int:
         """Mark durable 'executing' records left by a crash as unknown; never replay automatically."""
