@@ -114,14 +114,14 @@ class HttpApiTests(unittest.TestCase):
     def test_ambiguous_json_and_duplicate_auth_headers_are_rejected(self):
         def send_raw(body, key, extra_headers=""):
             headers = (
-                "POST /v1/execute HTTP/1.1\\r\\n"
-                "Host: 127.0.0.1\\r\\n"
-                "Content-Type: application/json\\r\\n"
-                f"Content-Length: {len(body)}\\r\\n"
-                "Authorization: Bearer valid\\r\\n"
-                f"Idempotency-Key: {key}\\r\\n"
+                "POST /v1/execute HTTP/1.1\r\n"
+                "Host: 127.0.0.1\r\n"
+                "Content-Type: application/json\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                "Authorization: Bearer valid\r\n"
+                f"Idempotency-Key: {key}\r\n"
                 + extra_headers
-                + "Connection: close\\r\\n\\r\\n"
+                + "Connection: close\r\n\r\n"
             ).encode("ascii") + body
             with socket.create_connection(("127.0.0.1", self.port), timeout=3) as client:
                 client.sendall(headers)
@@ -148,7 +148,7 @@ class HttpApiTests(unittest.TestCase):
 
         response = send_raw(
             valid, "strict-" + uuid.uuid4().hex,
-            extra_headers="Authorization: Bearer attacker\\r\\n",
+            extra_headers="Authorization: Bearer attacker\r\n",
         )
         self.assertIn(b"400 Bad Request", response)
         self.assertIn(b"duplicate_authorization_header", response)
