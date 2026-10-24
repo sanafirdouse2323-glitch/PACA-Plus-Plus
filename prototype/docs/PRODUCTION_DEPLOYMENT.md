@@ -91,7 +91,7 @@ The `resource` identifier is caller-supplied input; the lookup must enforce tena
 
 ## Tool/API adapter contract
 
-Register a handler only in trusted server-side setup. For example, `serve.py` registers only `file.read` and maps it to one environment-configured downstream endpoint. Do not build an endpoint URL from user-supplied hostnames or forward the user's bearer token to a downstream API. The adapter sends a separately configured service token and a derived downstream idempotency key scoped to the verified issuer, principal, and client key. The raw client key is not forwarded downstream; store the service token as a secret and rotate it. OPA receives only an issuer-scoped pseudonymous principal ID plus trusted internal user_id; the raw OIDC subject is not copied into the OPA input.
+Register a handler only in trusted server-side setup. For example, `serve.py` registers only `file.read` and maps it to one environment-configured downstream endpoint. Do not build an endpoint URL from user-supplied hostnames or forward the user's bearer token to a downstream API. The adapter sends a separately configured service token, a derived downstream idempotency key scoped to the verified issuer, principal, and client key, and an issuer-scoped pseudonymous principal ID. It does not send the raw OIDC subject in the downstream JSON body or OPA input. The raw client key is not forwarded downstream; store the service token as a secret and rotate it. OPA receives the pseudonymous principal ID plus trusted internal user_id.
 
 The downstream service should:
 - authenticate PACA++ as a service;
