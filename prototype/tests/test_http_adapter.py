@@ -118,6 +118,9 @@ class HTTPActionAdapterTests(unittest.TestCase):
         body = json.loads(request["body"])
         self.assertEqual(body["action"], "file.read")
         self.assertEqual(body["arguments"], {"path": "reports/q1.csv"})
+        self.assertEqual(body["principal_id"], self.request().principal.storage_id)
+        self.assertNotEqual(body["principal_id"], "user-1")
+        self.assertEqual(body["principal_issuer"], "https://identity.example")
 
     def test_adapter_rejects_redirects_without_forwarding_credentials(self):
         self.mode["value"] = "redirect"
