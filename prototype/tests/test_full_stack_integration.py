@@ -28,7 +28,7 @@ from paca_mvp.opa import OPAPolicyDecisionPoint
 
 
 OPA_BASE_URL = os.environ.get("PACA_OPA_BASE_URL")
-DATABASE_URL = os.environ.get("PACA_TEST_DATABASE_URL")
+DATABASE_URL = os.environ.get("PACA_TEST_RUNTIME_DATABASE_URL") or os.environ.get("PACA_TEST_DATABASE_URL")
 
 
 class DownstreamHandler(BaseHTTPRequestHandler):
@@ -90,16 +90,16 @@ class FullStackIntegrationTests(unittest.TestCase):
         )
         context_provider = CallbackContextProvider(
             subject_lookup=lambda _principal: {
-                "status": "active", "role": "analyst", "tenant_id": "tenant-a"
+                "status": "active", "role": "analyst", "tenant_id": "tenant-a", "user_id": "db-integration-user"
             },
             resource_lookup=lambda _principal, _action, resource, _args: {
-                "owner_id": "integration-user" if resource == "file:r1" else "another-user",
+                "owner_id": "db-integration-user" if resource == "file:r1" else "db-another-user",
                 "tenant_id": "tenant-a",
                 "canonical_path": "report-1" if resource == "file:r1" else "other-user-report",
             },
         )
         opa = OPAPolicyDecisionPoint(base_url=OPA_BASE_URL)
-        store = PostgresOperationStore(DATABASE_URL)
+        store = PostgresOperationStore(DATABASE_URL, initialize_schema=False)
         gateway = ProtectedToolGateway(
             authenticator=authenticator,
             context_provider=context_provider,
@@ -165,10 +165,10 @@ class FullStackIntegrationTests(unittest.TestCase):
         )
         context_provider = CallbackContextProvider(
             subject_lookup=lambda _principal: {
-                "status": "active", "role": "analyst", "tenant_id": "tenant-a"
+                "status": "active", "role": "analyst", "tenant_id": "tenant-a", "user_id": "db-integration-user"
             },
             resource_lookup=lambda _principal, _action, resource, _args: {
-                "owner_id": "integration-user" if resource == "file:r1" else "another-user",
+                "owner_id": "db-integration-user" if resource == "file:r1" else "db-another-user",
                 "tenant_id": "tenant-a",
                 "canonical_path": "report-1" if resource == "file:r1" else "other-user-report",
             },
@@ -177,7 +177,7 @@ class FullStackIntegrationTests(unittest.TestCase):
             authenticator=authenticator,
             context_provider=context_provider,
             policy_decision_point=OPAPolicyDecisionPoint(base_url=OPA_BASE_URL),
-            operation_store=PostgresOperationStore(DATABASE_URL),
+            operation_store=PostgresOperationStore(DATABASE_URL, initialize_schema=False),
         )
         gateway.register_action("file.read", HTTPJsonActionAdapter(
             f"http://127.0.0.1:{self.downstream.server_address[1]}/execute",
