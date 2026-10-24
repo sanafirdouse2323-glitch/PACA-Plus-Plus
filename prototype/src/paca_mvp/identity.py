@@ -43,8 +43,13 @@ class AuthenticatedPrincipal:
         return "oidc:" + hashlib.sha256(material).hexdigest()
 
     def opa_identity(self) -> dict[str, str]:
-        # Do not forward arbitrary token claims or personal data to the policy engine.
-        return {"id": self.subject, "issuer": self.issuer}
+        """Return an issuer-scoped identity; do not equate raw OIDC subject with an app user.
+
+        Ownership must use trusted user_id returned by the context provider after looking
+        up this issuer+subject pair in the application's identity mapping. The OIDC sub
+        claim is retained as subject for traceability only.
+        """
+        return {"id": self.storage_id, "issuer": self.issuer, "subject": self.subject}
 
 
 class JWTAuthenticator:
