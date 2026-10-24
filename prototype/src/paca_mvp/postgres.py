@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping
-from hashlib import sha256
 import json
 import uuid
 
@@ -306,7 +305,11 @@ class PostgresPermitStore:
                 row = db.execute(
                     "SELECT * FROM paca_permits WHERE permit_id=%s FOR UPDATE", (permit_id,)
                 ).fetchone()
-                if row is None or row["status"] != "executing":
+                if row is None:
+                    raise EffectOutcomeUnknown("execution claim is no longer active")
+                if row["status"] == "completed":
+                    return row["result_json"]
+                if row["status"] != "executing":
                     raise EffectOutcomeUnknown("execution claim is no longer active")
                 actor = row["actor_json"]
                 state_row = db.execute(
