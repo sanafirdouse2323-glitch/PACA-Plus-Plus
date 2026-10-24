@@ -657,9 +657,24 @@ class ProtectedToolAdapter(Protocol):
         """Call the protected tool/API with downstream idempotency if supported."""
 
 
+class DurablePermitStore(Protocol):
+    """Store interface shared by single-host SQLite and multi-host PostgreSQL."""
+
+    def record_event(self, event: str, permit_id: str | None,
+                     action: str | None, resource: str | None,
+                     details: Mapping[str, Any]) -> None: ...
+    def issue(self, action: str, resource: str, request_hash: str, policy_version: str,
+              ttl_seconds: float = 30.0, idempotency_key: str | None = None,
+              actor: Mapping[str, Any] | None = None) -> str: ...
+    def execute(self, permit_id: str, action: str, resource: str, request_hash: str,
+                current_policy_version: str, effect: Callable[[], Any],
+                idempotency_key: str | None = None,
+                pre_effect_check: Callable[[], None] | None = None) -> Any: ...
+
+
 class GuardedGateway:
     """Composes trusted context, OPA decisions, durable permits, and adapters."""
-    def __init__(self, opa: OPAClient, store: SQLitePermitStore,
+    def __init__(self, opa: OPAClient, store: DurablePermitStore,
                  identity_provider: IdentityProvider,
                  context_provider: AuthorizationContextProvider):
         self.opa, self.store = opa, store
