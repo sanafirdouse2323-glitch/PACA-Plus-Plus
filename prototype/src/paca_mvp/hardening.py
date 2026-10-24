@@ -133,28 +133,37 @@ class OPAClient:
     """
     def __init__(self, base_url: str, decision_path: str = "/v1/data/paca/authz/decision",
                  bearer_token: str | None = None, timeout_seconds: float = 2.0,
-                 max_request_bytes: int = 1_048_576):
+                 max_request_bytes: int = 1_048_576,
+                 policy_version_path: str | None = None):
         parsed = urlparse(base_url)
         loopback_http = parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
         if parsed.scheme != "https" and not loopback_http:
             raise ValueError("OPA base_url must use HTTPS (HTTP is allowed only for loopback development)")
         if not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("invalid OPA base_url")
-        if not decision_path.startswith("/v1/data/") or ".." in decision_path:
-            raise ValueError("decision_path must address an OPA /v1/data/ endpoint")
+        if (not decision_path.startswith("/v1/data/") or ".." in decision_path
+                or "?" in decision_path or "#" in decision_path):
+            raise ValueError("decision_path must be a path under OPA /v1/data/ without query/fragment")
+        if policy_version_path is None:
+            parent = decision_path.rsplit("/", 1)[0]
+            policy_version_path = parent + "/policy_version"
+        if (not policy_version_path.startswith("/v1/data/") or ".." in policy_version_path
+                or "?" in policy_version_path or "#" in policy_version_path):
+            raise ValueError("policy_version_path must be a path under OPA /v1/data/ without query/fragment")
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         if max_request_bytes < 1:
             raise ValueError("max_request_bytes must be positive")
         self.base_url = base_url.rstrip("/")
         self.decision_path = decision_path
+        self.policy_version_path = policy_version_path
         self.bearer_token = bearer_token
         self.timeout_seconds = timeout_seconds
         self.max_request_bytes = max_request_bytes
 
     def get_policy_version(self) -> str:
         """Fetch the active version marker from OPA immediately before effect commit."""
-        req = Request(self.base_url + "/v1/data/paca/authz/policy_version",
+        req = Request(self.base_url + self.policy_version_path,
                       headers={"Accept": "application/json"}, method="GET")
         if self.bearer_token:
             req.add_header("Authorization", "Bearer " + self.bearer_token)
@@ -291,6 +300,9 @@ class SQLitePermitStore:
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys=ON")
         db.execute(f"PRAGMA busy_timeout={int(self.busy_timeout_ms)}")
+        for filename in (self.database_path, self.database_path + "-wal", self.database_path + "-shm"):
+            if os.path.exists(filename):
+                os.chmod(filename, 0o600)
         return db
 
     def _audit(self, db: sqlite3.Connection, event: str, permit_id: str | None,
