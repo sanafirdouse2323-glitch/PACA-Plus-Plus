@@ -41,7 +41,7 @@ class FakeResponse:
 class OPAClientTests(unittest.TestCase):
     def test_named_decision_accepts_only_explicit_boolean(self):
         client = OPAClient("http://127.0.0.1:8181")
-        with patch("paca_mvp.hardening.urlopen", return_value=FakeResponse({
+        with patch("paca_mvp.hardening._urlopen_no_redirect", return_value=FakeResponse({
             "result": {"allow": True, "policy_version": "v1", "reason": "unit-test"}
         })) as mocked:
             decision = client.decide({"action": "file.read"})
@@ -61,8 +61,19 @@ class OPAClientTests(unittest.TestCase):
                 with self.assertRaises(PolicyUnavailable):
                     client.decide({"action": "file.read"})
 
+    def test_active_policy_version_is_retrieved_and_required(self):
+        client = OPAClient("http://127.0.0.1:8181")
+        with patch("paca_mvp.hardening._urlopen_no_redirect",
+                   return_value=FakeResponse({"result": "v2"})) as mocked:
+            self.assertEqual(client.get_policy_version(), "v2")
+            self.assertTrue(mocked.call_args.args[0].full_url.endswith("/v1/data/paca/authz/policy_version"))
+        with patch("paca_mvp.hardening._urlopen_no_redirect",
+                   return_value=FakeResponse({"result": None})):
+            with self.assertRaises(PolicyUnavailable):
+                client.get_policy_version()
+
     def test_network_failure_fails_closed(self):
-        with patch("paca_mvp.hardening.urlopen", side_effect=URLError("offline")):
+        with patch("paca_mvp.hardening._urlopen_no_redirect", side_effect=URLError("offline")):
             with self.assertRaises(PolicyUnavailable):
                 OPAClient("http://127.0.0.1:8181").decide({"action": "file.read"})
 
@@ -220,9 +231,10 @@ class ProviderAndGatewayTests(unittest.TestCase):
             HTTPAuthorizationContextProvider("https://context.example", "short")
 
     def test_trusted_context_cannot_override_authenticated_identity(self):
+        principal = self.principal
         class IdP:
             def authenticate(self, credential):
-                return self.principal
+                return principal
         class Context:
             def get_context(self, *args):
                 return {"identity": {"subject": "attacker"}}
@@ -305,7 +317,7 @@ class AdapterTests(unittest.TestCase):
             bearer_token="service-secret",
         )
         response = FakeResponse({"ticket_id": "t-1"})
-        with patch("paca_mvp.providers.urlopen", return_value=response) as mocked:
+        with patch("paca_mvp.providers._urlopen_no_redirect", return_value=response) as mocked:
             result = adapter.invoke("ticket.create", "ticket:123", {"title": "Hi"}, "idem-3")
         self.assertEqual(result, {"ticket_id": "t-1"})
         request = mocked.call_args.args[0]
