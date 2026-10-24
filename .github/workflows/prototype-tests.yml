@@ -1,4 +1,5 @@
 name: PACA++ prototype and hardening checks
+# Includes OIDC signature, trusted-context, policy-rollover, and real OPA tests.
 
 on:
   push:
