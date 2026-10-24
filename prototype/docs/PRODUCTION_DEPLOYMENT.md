@@ -8,7 +8,7 @@
 - **Protected execution:** `ProtectedToolGateway` registers action handlers on the server. It does not let a caller choose a Python callback or destination URL. It checks OPA, records an operation durably, re-fetches trusted context, re-evaluates OPA, then atomically claims before calling the handler.
 - **Downstream API adapter:** `HTTPJsonActionAdapter` sends JSON to a fixed, configured endpoint over HTTPS; rejects redirects; sends the idempotency key and operation ID; and uses a service credential provider.
 - **Durable coordination:** `PostgresOperationStore` uses a unique idempotency key and row locking for multi-process/multi-host coordination. Startup checks required tables and the audit-chain head. `SQLiteOperationStore` is useful for local development and single-host deployment; its database file is restricted to owner read/write on POSIX and symlink paths are rejected.
-- **Audit and recovery:** operation state is persisted, cached JSON tool responses are Fernet-encrypted when configured, audit events form a hash chain, stale in-progress operations can be marked unknown, and an operator can reconcile an unknown result after verifying the downstream system's authoritative record.
+- **Audit and recovery:** operation state is persisted, cached JSON tool responses are Fernet-encrypted when configured, and audit events form a hash chain. Verification checks both the event chain and that each stored response matches the digest in its completion/reconciliation event. Stale in-progress operations can be marked unknown, and an operator can reconcile an unknown result after verifying the downstream system's authoritative record.
 
 The baseline Rego policy deliberately permits only an active analyst reading a resource they own in the same tenant. Adapt it to your real business rules after reviewing the claims and resource attributes supplied by your actual application.
 
@@ -137,7 +137,7 @@ Run `store.recover_incomplete(older_than_seconds=...)` during a controlled recov
     python examples/authorize.py --policy examples/policy.json --context examples/context.json --action file.read --resource file:report-1 --principal-id demo-user --arguments-json '{"path":"report-1","mode":"read"}' --execute
     python experiments/run_experiments.py
 
-The GitHub Actions production integration workflow pins and checksum-verifies OPA, runs `opa check` and `opa test`, starts OPA and PostgreSQL, applies the database migration, verifies database role grants, then runs Python tests including live OPA and PostgreSQL integration tests, SQLite file-permission checks, and HTTP framing rejection tests.
+The GitHub Actions production integration workflow pins and checksum-verifies OPA v1.21.4 (the release pinned for this review), runs `opa check` and `opa test`, starts OPA and PostgreSQL, applies the database migration, assigns separate test credentials, and exercises data access through the least-privileged PostgreSQL runtime role. The Python suite includes live OPA policy tests, end-to-end OPA/PostgreSQL/HTTP-adapter tests, JWT/context-provider tests, replay and recovery cases, SQLite file-permission checks, cached-response audit-tampering checks, duplicate-key/non-finite JSON rejection, repeated security-header rejection, and redirect rejection.
 
 ## Production limitations that remain
 
