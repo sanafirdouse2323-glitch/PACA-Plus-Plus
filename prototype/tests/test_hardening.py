@@ -197,33 +197,85 @@ class DurableStoreTests(unittest.TestCase):
         permit_id = self.store.issue("file.write", "file:report-1", self.request_hash,
                                      "policy-v1", idempotency_key=None)
         entered, finish = threading.Event(), threading.Event()
-        calls, errors = [], []
+        calls, outcomes, errors = [], [], []
 
         def effect():
             calls.append("called")
             entered.set()
-            finish.wait(2)
+            if not finish.wait(3):
+                raise RuntimeError("test failed to release effect")
             return {"ok": True}
 
-        def first():
+        def invoke(result_list):
+            try:
+                result_list.append(self.store.execute(
+                    permit_id, "file.write", "file:report-1", self.request_hash,
+                    "policy-v1", effect if result_list is outcomes else
+                    lambda: calls.append("duplicate") or {"bad": True},
+                ))
+            except Exception as exc:
+                errors.append(exc)
+
+        first = threading.Thread(target=invoke, args=(outcomes,))
+        first.start()
+        self.assertTrue(entered.wait(2))
+        # Keep a reference to the second caller's result for the idempotent replay assertion.
+        second_results = []
+        second = threading.Thread(target=invoke, args=(second_results,))
+        second.start()
+        time.sleep(0.05)
+        finish.set()
+        first.join(3)
+        second.join(3)
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(calls, ["called"])
+        self.assertEqual(outcomes, [{"ok": True}])
+        self.assertEqual(second_results, [{"ok": True}])
+        self.assertEqual(errors, [])
+
+    def test_state_advance_cannot_race_a_running_effect(self):
+        permit_id = self.store.issue("file.write", "file:report-1", self.request_hash,
+                                     "policy-v1", idempotency_key=None)
+        entered, finish = threading.Event(), threading.Event()
+        milestones, errors = [], []
+
+        def effect():
+            milestones.append("effect_started")
+            entered.set()
+            if not finish.wait(3):
+                raise RuntimeError("test failed to release effect")
+            milestones.append("effect_finished")
+            return {"ok": True}
+
+        def execute():
             try:
                 self.store.execute(permit_id, "file.write", "file:report-1",
                                    self.request_hash, "policy-v1", effect)
             except Exception as exc:
                 errors.append(exc)
 
-        thread = threading.Thread(target=first)
-        thread.start()
+        def advance():
+            try:
+                version = self.store.advance_state()
+                milestones.append(("state_advanced", version))
+            except Exception as exc:
+                errors.append(exc)
+
+        effect_thread = threading.Thread(target=execute)
+        effect_thread.start()
         self.assertTrue(entered.wait(2))
-        with self.assertRaises(EffectOutcomeUnknown):
-            self.store.execute(permit_id, "file.write", "file:report-1",
-                               self.request_hash, "policy-v1",
-                               lambda: calls.append("duplicate"))
+        state_thread = threading.Thread(target=advance)
+        state_thread.start()
+        time.sleep(0.05)
+        self.assertNotIn(("state_advanced", 1), milestones)
         finish.set()
-        thread.join(2)
-        self.assertFalse(thread.is_alive())
-        self.assertEqual(calls, ["called"])
+        effect_thread.join(3)
+        state_thread.join(3)
+        self.assertFalse(effect_thread.is_alive())
+        self.assertFalse(state_thread.is_alive())
         self.assertEqual(errors, [])
+        self.assertLess(milestones.index("effect_finished"), milestones.index(("state_advanced", 1)))
 
     def test_expired_permit_is_not_executed(self):
         permit = self.store.issue("file.write", "file:report-1", self.request_hash,
