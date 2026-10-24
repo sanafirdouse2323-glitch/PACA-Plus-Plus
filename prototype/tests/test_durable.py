@@ -341,5 +341,45 @@ class DurableStoreTests(unittest.TestCase):
         self.assertFalse(self.store.verify_audit_chain())
 
 
+    def test_audit_verification_detects_policy_decision_row_tampering(self):
+        kwargs = dict(self.kwargs)
+        kwargs["policy_decision"] = {
+            "allow": True,
+            "reason": "permitted",
+            "policy_version": "paca-test-v1",
+        }
+        record, _ = self.store.create_or_get(**kwargs)
+        self.assertTrue(self.store.verify_audit_chain())
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE operations SET policy_decision_json=? WHERE operation_id=?",
+                ('{"allow":true,"reason":"forged","policy_version":"paca-test-v9"}',
+                 record.operation_id),
+            )
+        self.assertFalse(self.store.verify_audit_chain())
+
+    def test_audit_verification_detects_request_identity_row_tampering(self):
+        record, _ = self.store.create_or_get(**self.kwargs)
+        self.assertTrue(self.store.verify_audit_chain())
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE operations SET action=? WHERE operation_id=?",
+                ("file.delete", record.operation_id),
+            )
+        self.assertFalse(self.store.verify_audit_chain())
+
+    def test_audit_verification_detects_removed_success_response(self):
+        record, _ = self.store.create_or_get(**self.kwargs)
+        self.store.claim(record.operation_id)
+        self.store.complete(record.operation_id, {"ok": True})
+        self.assertTrue(self.store.verify_audit_chain())
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE operations SET response_json=NULL WHERE operation_id=?",
+                (record.operation_id,),
+            )
+        self.assertFalse(self.store.verify_audit_chain())
+
+
 if __name__ == "__main__":
     unittest.main()
