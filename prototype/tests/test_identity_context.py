@@ -18,8 +18,8 @@ class TrustedContextTests(unittest.TestCase):
         )
 
     def test_context_is_copied_to_a_stable_json_snapshot(self):
-        subject = {"status": "active", "roles": ["analyst"]}
-        resource = {"owner_id": "user-1", "canonical_path": "report.csv"}
+        subject = {"status": "active", "roles": ["analyst"], "user_id": "db-user-1"}
+        resource = {"owner_id": "db-user-1", "canonical_path": "report.csv"}
         provider = CallbackContextProvider(
             subject_lookup=lambda _principal: subject,
             resource_lookup=lambda _p, _a, _r, _args: resource,
@@ -33,7 +33,7 @@ class TrustedContextTests(unittest.TestCase):
     def test_non_finite_values_are_rejected(self):
         provider = CallbackContextProvider(
             subject_lookup=lambda _principal: {"status": "active", "weight": float("nan")},
-            resource_lookup=lambda _p, _a, _r, _args: {"owner_id": "user-1"},
+            resource_lookup=lambda _p, _a, _r, _args: {"owner_id": "db-user-1"},
         )
         with self.assertRaises(ContextRetrievalError):
             provider.load(self.principal, "file.read", "file:r1", {})
