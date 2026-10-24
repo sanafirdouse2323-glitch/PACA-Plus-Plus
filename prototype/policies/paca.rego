@@ -8,7 +8,7 @@ policy_version := "paca-example-v1"
 
 default decision := {
     "allow": false,
-    "policy_version": policy_version,
+    "policy_version": "paca-example-v1",
     "reason": "no_matching_permit",
 }
 
