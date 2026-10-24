@@ -155,7 +155,7 @@ class HttpApiTests(unittest.TestCase):
 
         response = send_raw(
             valid, "strict-" + uuid.uuid4().hex,
-            extra_headers="Idempotency-Key: attacker-key\\r\\n",
+            extra_headers="Idempotency-Key: attacker-key\r\n",
         )
         self.assertIn(b"400 Bad Request", response)
         self.assertIn(b"idempotency_key_header_required_once", response)
