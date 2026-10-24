@@ -32,6 +32,6 @@ The old **AuthorizationEngine** still uses a process-local permit store and its 
 - **verify_audit_chain()** detects un-recomputed edits in the stored hash chain, but is not tamper-proof against an attacker who can rewrite the database.
 - The HTTP adapter requires preconfigured routes and HTTPS and sends a downstream idempotency key. It cannot force the remote API to honor that key.
 - The filesystem adapter confines access to admin-configured logical resources under a configured root and uses POSIX no-follow path traversal. Run it with least privilege and do not expose it to untrusted callers without the gateway.
-- The sample Rego file is illustrative, and its version marker must be incremented as policy changes. Production deployments should use verified policy bundles/revisions, secure OPA, and coordinate policy rollout with effects.
+- The sample Rego policy uses owner-bound analyst reads plus support ticket creation gated by a trusted capability, requires an explicit non-suspended claim, and defaults other requests to deny. It is illustrative, and its version marker must be incremented as policy changes. Production deployments should use verified policy bundles/revisions, secure OPA, and coordinate policy rollout with effects.
 
 These components are a hardening foundation—not a production-readiness claim, independent security audit, formal proof, standards-compliance claim, or proof of research novelty.
