@@ -72,6 +72,17 @@ class OPAClientTests(unittest.TestCase):
             with self.assertRaises(PolicyUnavailable):
                 client.get_policy_version()
 
+    def test_custom_decision_path_uses_matching_version_path(self):
+        client = OPAClient(
+            "https://opa.example", decision_path="/v1/data/team/paca/decision"
+        )
+        with patch("paca_mvp.hardening._urlopen_no_redirect",
+                   return_value=FakeResponse({"result": "v3"})) as mocked:
+            self.assertEqual(client.get_policy_version(), "v3")
+        self.assertTrue(mocked.call_args.args[0].full_url.endswith("/v1/data/team/paca/policy_version"))
+        with self.assertRaises(ValueError):
+            OPAClient("https://opa.example", decision_path="/v1/data/team/paca")
+
     def test_request_size_and_non_json_values_fail_closed(self):
         client = OPAClient("http://127.0.0.1:8181", max_request_bytes=10)
         with self.assertRaises(PolicyUnavailable):
@@ -91,6 +102,7 @@ class DurableStoreTests(unittest.TestCase):
         self.path = str(Path(self.temp.name) / "state" / "paca.sqlite3")
         self.store = SQLitePermitStore(self.path)
         self.request_hash = "a" * 64
+        self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
 
     def tearDown(self):
         self.temp.cleanup()
