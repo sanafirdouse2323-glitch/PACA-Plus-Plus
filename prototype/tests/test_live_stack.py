@@ -92,7 +92,7 @@ class LiveEnforcementStackTests(unittest.TestCase):
                     "canonical_path": "secrets.csv",
                 },
                 "file:tenant2": {
-                    "owner_id": "user-1",
+                    "owner_id": "db-user-1",
                     "tenant_id": "tenant-2",
                     "canonical_path": "reports/other-tenant.csv",
                 },
