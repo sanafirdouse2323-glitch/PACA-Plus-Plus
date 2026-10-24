@@ -70,6 +70,7 @@ def main() -> int:
         decision_path=os.environ.get("PACA_OPA_DECISION_PATH", "paca/authz/decision"),
         timeout_seconds=float(os.environ.get("PACA_OPA_TIMEOUT_SECONDS", "1.5")),
         bearer_token=os.environ.get("PACA_OPA_BEARER_TOKEN") or None,
+        required_policy_version=os.environ.get("PACA_OPA_POLICY_VERSION", "paca-baseline-v1"),
     )
     # Require a reachable OPA with a defined deny-by-default decision before serving.
     opa.preflight()
