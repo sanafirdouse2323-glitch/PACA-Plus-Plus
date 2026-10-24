@@ -29,7 +29,7 @@ python examples/opa_smoke.py
 docker compose down
 ~~~
 
-The OPA Compose port is bound to loopback. The example Rego policy permits only a sample analyst read of a resource whose owner matches the verified subject and denies suspended subjects. It is an illustrative policy, not a universal production policy. Increment **policy_version** whenever authorization semantics change; production bundle deployments should tie this to an immutable, verified bundle revision and coordinate rollout.
+The OPA Compose port is bound to loopback. The example Rego policy permits an analyst to read only a resource owned by the verified subject, permits ticket creation only when a trusted context grants the support role and explicit capability, and denies suspended subjects or requests missing the explicit non-suspended claim. It is an illustrative policy, not a universal production policy. Increment **policy_version** whenever authorization semantics change; production bundle deployments should tie this to an immutable, verified bundle revision and coordinate rollout.
 
 ## Typical application wiring
 
@@ -70,7 +70,7 @@ result = gateway.authorize_and_execute(
 )
 ~~~
 
-The configured context service and policy must return the fields the Rego policy expects. The route/resource map, OIDC issuer/audience/JWKS URI, database path, OPA endpoint, and service credentials are trusted deployment configuration. Do not expose OPA's unauthenticated admin/decision endpoint to untrusted networks.
+For the ticket example, the trusted context service must return an authorization role of support and can_create_tickets=true for an authorized caller; those values must be derived server-side, not from tool arguments. The configured context service and policy must return the fields the Rego policy expects. The route/resource map, OIDC issuer/audience/JWKS URI, database path, OPA endpoint, and service credentials are trusted deployment configuration. Do not expose OPA's unauthenticated admin/decision endpoint to untrusted networks.
 
 ## Guarantees and boundaries
 
