@@ -144,10 +144,13 @@ class OPAClient:
             raise ValueError("decision_path must address an OPA /v1/data/ endpoint")
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
+        if max_request_bytes < 1:
+            raise ValueError("max_request_bytes must be positive")
         self.base_url = base_url.rstrip("/")
         self.decision_path = decision_path
         self.bearer_token = bearer_token
         self.timeout_seconds = timeout_seconds
+        self.max_request_bytes = max_request_bytes
 
     def get_policy_version(self) -> str:
         """Fetch the active version marker from OPA immediately before effect commit."""
