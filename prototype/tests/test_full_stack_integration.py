@@ -98,7 +98,7 @@ class FullStackIntegrationTests(unittest.TestCase):
                 "canonical_path": "report-1" if resource == "file:r1" else "other-user-report",
             },
         )
-        opa = OPAPolicyDecisionPoint(base_url=OPA_BASE_URL)
+        opa = OPAPolicyDecisionPoint(base_url=OPA_BASE_URL, required_policy_version="paca-baseline-v1")
         store = PostgresOperationStore(DATABASE_URL, initialize_schema=False)
         gateway = ProtectedToolGateway(
             authenticator=authenticator,
