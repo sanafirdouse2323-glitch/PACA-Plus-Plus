@@ -41,7 +41,7 @@ class TrustedContextTests(unittest.TestCase):
     def test_unserializable_values_are_rejected(self):
         provider = CallbackContextProvider(
             subject_lookup=lambda _principal: {"role": object()},
-            resource_lookup=lambda _p, _a, _r, _args: {"owner_id": "user-1"},
+            resource_lookup=lambda _p, _a, _r, _args: {"owner_id": "db-user-1"},
         )
         with self.assertRaises(ContextRetrievalError):
             provider.load(self.principal, "file.read", "file:r1", {})
@@ -51,7 +51,7 @@ class TrustedContextTests(unittest.TestCase):
             raise RuntimeError("database unavailable")
         provider = CallbackContextProvider(
             subject_lookup=fail,
-            resource_lookup=lambda _p, _a, _r, _args: {"owner_id": "user-1"},
+            resource_lookup=lambda _p, _a, _r, _args: {"owner_id": "db-user-1"},
         )
         with self.assertRaisesRegex(ContextRetrievalError, "trusted_context_lookup_failed"):
             provider.load(self.principal, "file.read", "file:r1", {})
