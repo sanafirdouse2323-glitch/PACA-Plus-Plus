@@ -157,9 +157,14 @@ def make_server(
             if not path.startswith(prefix):
                 self._error(404, "not_found")
                 return
+            authorization_headers = self.headers.get_all("Authorization", [])
+            if len(authorization_headers) != 1 or not authorization_headers[0].strip():
+                self._error(401 if not authorization_headers else 400,
+                            "authentication_required" if not authorization_headers else "duplicate_authorization_header")
+                return
             operation_id = path[len(prefix):]
             try:
-                result = gateway.get_operation_status(self.headers.get("Authorization"), operation_id)
+                result = gateway.get_operation_status(authorization_headers[0], operation_id)
                 self._send(200, result)
             except PermissionError:
                 self._error(401, "authentication_required")
