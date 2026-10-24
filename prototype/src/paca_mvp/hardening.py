@@ -705,6 +705,35 @@ class GuardedGateway:
             raise PermitRejected("OPA denied the operation")
         actor = {"subject": principal.subject, "issuer": principal.issuer,
                  "audience": principal.audience}
+        # Do not issue/return even an idempotent result if the policy changed
+        # between the decision call and this point.
+        try:
+            active_version = self.opa.get_policy_version()
+        except PolicyUnavailable:
+            with self.store._connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                try:
+                    self.store._audit(db, "authorization_aborted", None, action, resource,
+                                      {"actor": actor, "reason": "policy_version_unavailable",
+                                       "decision_policy_version": decision["policy_version"]})
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    raise
+            raise
+        if active_version != decision["policy_version"]:
+            with self.store._connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                try:
+                    self.store._audit(db, "authorization_aborted", None, action, resource,
+                                      {"actor": actor, "reason": "policy_version_changed",
+                                       "decision_policy_version": decision["policy_version"],
+                                       "active_policy_version": active_version})
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    raise
+            raise PermitRejected("active OPA policy version changed after authorization")
         permit_id = self.store.issue(action, resource, request_hash,
                                      decision["policy_version"], idempotency_key=idempotency_key,
                                      actor=actor)
