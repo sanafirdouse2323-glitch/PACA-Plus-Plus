@@ -7,7 +7,7 @@ name = "paca-mvp"
 version = "0.1.0"
 description = "Research MVP for testing action-bound authorization and guarded effects"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["PyJWT[crypto]>=2.10,<3"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
