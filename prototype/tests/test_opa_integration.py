@@ -18,11 +18,11 @@ class LiveOPATests(unittest.TestCase):
         cls.opa = OPAPolicyDecisionPoint(base_url=BASE_URL, decision_path="paca/authz/decision")
 
     @staticmethod
-    def input_doc(role="analyst", owner="db-user-1", subject="u1", user_id="db-user-1", subject_tenant="t1",
+    def input_doc(role="analyst", owner="db-user-1", user_id="db-user-1", subject_tenant="t1",
                   resource_tenant="t1", status="active", action="file.read",
                   argument_path="r1", canonical_path="r1"):
         return {
-            "subject": {"id": "oidc:fixture-principal", "subject": subject, "user_id": user_id,
+            "subject": {"id": "oidc:fixture-principal", "user_id": user_id,
                         "issuer": "https://identity.example", "status": status,
                         "role": role, "tenant_id": subject_tenant},
             "action": action,
@@ -40,7 +40,7 @@ class LiveOPATests(unittest.TestCase):
 
     def test_real_opa_does_not_compare_owner_to_raw_oidc_subject(self):
         self.assertFalse(self.opa.evaluate(
-            self.input_doc(owner="u1", subject="u1", user_id="db-user-1")
+            self.input_doc(owner="u1", user_id="db-user-1")
         ).allowed)
 
     def test_real_opa_denies_missing_internal_user_id(self):
