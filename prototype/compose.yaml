@@ -1,6 +1,6 @@
 services:
   opa:
-    image: openpolicyagent/opa:1.21.3
+    image: openpolicyagent/opa@sha256:22a9db16423b94d2acbd4a94da3bebeb79583ed6a52ac15cad459d3de2dbbc4d
     command: ["run", "--server", "--addr=0.0.0.0:8181", "/policies/paca.rego"]
     ports:
       - "127.0.0.1:8181:8181"
