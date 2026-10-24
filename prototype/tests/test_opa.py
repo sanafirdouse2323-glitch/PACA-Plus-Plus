@@ -129,5 +129,14 @@ class OPATests(unittest.TestCase):
                 self.client.preflight()
 
 
+    @patch("paca_mvp.opa._open_request")
+    def test_duplicate_allow_key_in_opa_response_is_rejected(self, mocked):
+        mocked.return_value = Response(
+            b'{"result":{"allow":false,"allow":true,"reason":"permitted"}}'
+        )
+        with self.assertRaises(OPAError):
+            self.client.evaluate({"action": "file.read"})
+
+
 if __name__ == "__main__":
     unittest.main()
