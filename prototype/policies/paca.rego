@@ -4,11 +4,11 @@ import rego.v1
 
 # Increment this version when the authorization semantics change. For managed
 # bundles, prefer returning the verified bundle revision in this field.
-policy_version := "paca-example-v1"
+policy_version := "paca-example-v2"
 
 default decision := {
     "allow": false,
-    "policy_version": "paca-example-v1",
+    "policy_version": "paca-example-v2",
     "reason": "no_matching_permit",
 }
 
@@ -46,4 +46,15 @@ decision := {
 } if {
     permit
     not deny
+    input.action == "file.read"
+}
+
+decision := {
+    "allow": true,
+    "policy_version": policy_version,
+    "reason": "support_ticket_create",
+} if {
+    permit
+    not deny
+    input.action == "ticket.create"
 }
