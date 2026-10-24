@@ -146,15 +146,16 @@ class LiveEnforcementStackTests(unittest.TestCase):
         self.assertEqual(len(self.downstream_requests), 1)
 
         request = self.downstream_requests[0]
+        headers = {name.lower(): value for name, value in request["headers"].items()}
         self.assertEqual(request["path"], "/v1/read")
         self.assertEqual(request["body"]["action"], "file.read")
         self.assertEqual(request["body"]["resource"], "file:r1")
         self.assertEqual(request["body"]["arguments"], {"path": "reports/q1.csv"})
-        self.assertEqual(request["headers"]["Authorization"], "Bearer test-downstream-service-token")
-        downstream_key = request["headers"]["Idempotency-Key"]
+        self.assertEqual(headers["authorization"], "Bearer test-downstream-service-token")
+        downstream_key = headers["idempotency-key"]
         self.assertRegex(downstream_key, r"^[0-9a-f]{64}$")
         self.assertNotEqual(downstream_key, key)
-        self.assertEqual(request["headers"]["X-PACA-Operation-ID"], first.operation_id)
+        self.assertEqual(headers["x-paca-operation-id"], first.operation_id)
         self.assertTrue(self.store.verify_audit_chain())
 
     def test_real_policy_denials_do_not_dispatch_to_downstream(self):
