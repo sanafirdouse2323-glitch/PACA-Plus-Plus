@@ -17,6 +17,22 @@ permissions:
 jobs:
   test-prototype:
     runs-on: ubuntu-latest
+    env:
+      PACA_TEST_POSTGRES_DSN: postgresql://paca:paca-test-only-password@localhost:5432/paca_test
+    services:
+      postgres:
+        image: postgres@sha256:f4610795587492cd4fb887c2dc3de301b813278bb6f616992061141b5f15ac36
+        env:
+          POSTGRES_USER: paca
+          POSTGRES_PASSWORD: paca-test-only-password
+          POSTGRES_DB: paca_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U paca -d paca_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     defaults:
       run:
         working-directory: prototype
