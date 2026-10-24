@@ -93,7 +93,7 @@ class OIDCIdentityTests(unittest.TestCase):
             bad_algorithm = jwt.encode(
                 {"iss": "https://issuer.example", "aud": "paca-api", "sub": "user-17",
                  "iat": self.now, "exp": self.now + 120},
-                "not-a-secret-for-rs256", algorithm="HS256", headers={"kid": "test-key"},
+                "test-only-hmac-key-that-is-long-enough-for-hs256", algorithm="HS256", headers={"kid": "test-key"},
             )
             with self.assertRaises(ContextUnavailable):
                 self.provider.authenticate(bad_algorithm)
