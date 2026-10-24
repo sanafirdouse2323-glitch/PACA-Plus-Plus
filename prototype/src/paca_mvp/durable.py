@@ -26,6 +26,7 @@ _ROOT_HASH = "0" * 64
 _IDEMPOTENCY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _ACTION_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+_POLICY_VERSION_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
 _MAX_TTL_SECONDS = 300.0
 _MAX_RESULT_BYTES = 1_048_576
 
@@ -338,11 +339,17 @@ class _BaseOperationStore:
         decision_id = policy_decision.get("decision_id")
         if not isinstance(decision_id, str) or not decision_id or len(decision_id) > 128:
             decision_id = None
-        policy_json = canonical_json({
+        policy_version = policy_decision.get("policy_version")
+        if not isinstance(policy_version, str) or not _POLICY_VERSION_RE.fullmatch(policy_version):
+            policy_version = None
+        decision_payload = {
             "allow": True,
             "reason": decision_reason[:128],
             "decision_id": decision_id,
-        })
+        }
+        if policy_version is not None:
+            decision_payload["policy_version"] = policy_version
+        policy_json = canonical_json(decision_payload)
         fingerprint = canonical_digest({
             "principal_id": principal_id, "action": action, "resource": resource,
             "arguments_digest": arguments_digest, "context_digest": context_digest,
@@ -406,11 +413,17 @@ class _BaseOperationStore:
             decision_id = policy_decision.get("decision_id")
             if not isinstance(decision_id, str) or not decision_id or len(decision_id) > 128:
                 decision_id = None
-            decision_json = canonical_json({
+            policy_version = policy_decision.get("policy_version")
+            if not isinstance(policy_version, str) or not _POLICY_VERSION_RE.fullmatch(policy_version):
+                policy_version = None
+            decision_payload = {
                 "allow": True,
                 "reason": reason[:128],
                 "decision_id": decision_id,
-            })
+            }
+            if policy_version is not None:
+                decision_payload["policy_version"] = policy_version
+            decision_json = canonical_json(decision_payload)
         else:
             decision_json = None
         error: str | None = None
