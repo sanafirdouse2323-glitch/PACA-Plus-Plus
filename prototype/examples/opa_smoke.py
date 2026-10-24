@@ -33,10 +33,37 @@ not_owner = {
 denied = client.decide(not_owner)
 assert denied["allowed"] is False, f"expected deny, got {denied!r}"
 
+missing_status = {
+    **base,
+    "principal": {"subject": "user-17", "claims": {"role": "analyst"}},
+}
+denied_missing_status = client.decide(missing_status)
+assert denied_missing_status["allowed"] is False, (
+    f"expected deny when suspended status is missing, got {denied_missing_status!r}"
+)
+
 suspended = {
     **base,
     "principal": {"subject": "user-17", "claims": {"suspended": True}},
 }
 denied_suspended = client.decide(suspended)
 assert denied_suspended["allowed"] is False, f"expected suspended-user deny, got {denied_suspended!r}"
-print(f"OPA integration smoke passed: policy={version}, allow/ownership-deny/suspension-deny verified")
+
+ticket = {
+    **base,
+    "action": "ticket.create",
+    "resource": "ticket-collection:default",
+    "principal": {"subject": "user-17", "claims": {"suspended": False}},
+    "context": {"authorization": {"role": "support", "can_create_tickets": True}},
+}
+assert client.decide(ticket)["allowed"] is True, "expected support ticket create to be permitted"
+ticket_denied = {
+    **ticket,
+    "context": {"authorization": {"role": "support", "can_create_tickets": False}},
+}
+assert client.decide(ticket_denied)["allowed"] is False, "expected ticket create without trusted capability to be denied"
+
+print(
+    f"OPA integration smoke passed: policy={version}, read permit, ownership deny, "
+    "missing-status deny, suspended deny, ticket-create permit/deny verified"
+)
