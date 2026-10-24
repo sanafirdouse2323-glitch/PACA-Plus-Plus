@@ -31,7 +31,7 @@ Install the production dependencies and start the supporting services by followi
 
 ## Critical guarantees and limits
 
-The HTTP caller cannot supply policy context or choose a Python handler. The authenticated subject ID comes from JWT claims verified against a configured issuer, audience, and signing key. Roles, status, tenant, resource owner and environment attributes must be loaded from authoritative server-side data by the application's context provider. The gateway does not invent your database schema or treat client-provided claims as trusted authorization attributes.
+The HTTP caller cannot supply policy context or choose a Python handler. The principal is authenticated from JWT claims verified against a configured issuer, audience, signing key and expiry. The trusted context provider maps the verified (issuer, subject) pair to an internal application user_id and loads status, role, tenant, resource owner and environment attributes from authoritative server-side data. OPA receives an issuer-scoped pseudonymous principal ID and the trusted internal user_id; resource ownership is compared within that internal-ID namespace, not against raw JWT sub. The gateway does not invent your database schema or treat client-provided claims as trusted authorization attributes.
 
 Idempotency and state transitions are coordinated by PostgreSQL across service instances; SQLite is intended for local/single-host use. If a remote tool times out or an effect handler raises after dispatch starts, the operation is marked unknown and is not automatically retried. Operators must confirm the true remote outcome before reconciling the record.
 
