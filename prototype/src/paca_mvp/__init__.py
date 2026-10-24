@@ -9,6 +9,7 @@ from .providers import (
     OIDCJWTIdentityProvider, HTTPAuthorizationContextProvider,
     HTTPJSONToolAdapter, HTTPRoute, FilesystemToolAdapter, ToolInvocationError,
 )
+from .postgres import PostgresPermitStore
 
 __all__ = [
     "AuthorizationEngine", "Decision", "Policy", "PolicyError", "Rule", "AuthorizationError",
@@ -16,5 +17,5 @@ __all__ = [
     "PolicyUnavailable", "ContextUnavailable", "PermitRejected",
     "IdempotencyConflict", "EffectOutcomeUnknown", "OIDCJWTIdentityProvider",
     "HTTPAuthorizationContextProvider", "HTTPJSONToolAdapter", "HTTPRoute",
-    "FilesystemToolAdapter", "ToolInvocationError",
+    "FilesystemToolAdapter", "ToolInvocationError", "PostgresPermitStore",
 ]
