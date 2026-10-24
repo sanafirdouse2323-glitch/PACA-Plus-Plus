@@ -18,8 +18,17 @@ deny if {
 
 permit if {
     input.action == "file.read"
+    input.principal.claims.suspended == false
     input.context.authorization.role == "analyst"
     input.context.resource.owner == input.principal.subject
+}
+
+permit if {
+    input.action == "ticket.create"
+    input.principal.claims.suspended == false
+    input.context.authorization.role == "support"
+    input.context.authorization.can_create_tickets == true
+    input.resource == "ticket-collection:default"
 }
 
 decision := {
