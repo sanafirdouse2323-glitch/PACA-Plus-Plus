@@ -17,7 +17,7 @@ OPA_URL = os.environ.get("PACA_OPA_BASE_URL")
 class LiveOPAPolicyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.pdp = OPAPolicyDecisionPoint(base_url=OPA_URL)
+        cls.pdp = OPAPolicyDecisionPoint(base_url=OPA_URL, required_policy_version="paca-baseline-v1")
         cls.pdp.preflight()
 
     @staticmethod
