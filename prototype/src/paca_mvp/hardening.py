@@ -29,8 +29,12 @@ class PolicyUnavailable(HardeningError):
     """Policy decision point failed or returned an invalid decision."""
 
 
+class AuthenticationFailed(HardeningError):
+    """A credential failed authentication or required claim validation."""
+
+
 class ContextUnavailable(HardeningError):
-    """Trusted identity/authorization context could not be established."""
+    """Trusted authorization context could not be established."""
 
 
 class PermitRejected(HardeningError):
@@ -688,18 +692,30 @@ class GuardedGateway:
         _validate_identifier(idempotency_key, "idempotency_key")
         if not isinstance(arguments, Mapping):
             raise ValueError("arguments must be a mapping")
-        # The credential is verified by the configured identity provider; claims
-        # supplied in arguments or request context are never treated as identity.
+        # Authentication and context failures are separated so an API boundary
+        # can return the right status and the audit trail never stores credentials.
         try:
             principal = self.identity_provider.authenticate(credential)
             identity_context = principal.to_context()
-            trusted_context = dict(self.context_provider.get_context(principal, action, resource))
         except Exception as exc:
-            raise ContextUnavailable("trusted authentication/context retrieval failed") from exc
-        if "identity" in trusted_context:
-            raise ContextUnavailable("trusted context service must not override verified identity")
-        # Verified identity is authoritative; context services may add attributes
-        # but cannot replace the authentication result.
+            self.store.record_event(
+                "authentication_failed", None, action, resource,
+                {"reason": "credential_verification_failed"},
+            )
+            raise AuthenticationFailed("credential verification failed") from exc
+        try:
+            trusted_context = dict(self.context_provider.get_context(principal, action, resource))
+            if "identity" in trusted_context:
+                raise ContextUnavailable("trusted context service must not override verified identity")
+            _canonical_json(trusted_context)
+        except Exception as exc:
+            self.store.record_event(
+                "authorization_context_unavailable", None, action, resource,
+                {"actor": {"subject": principal.subject, "issuer": principal.issuer,
+                           "audience": principal.audience},
+                 "reason": "trusted_context_retrieval_failed"},
+            )
+            raise ContextUnavailable("trusted authorization-context retrieval failed") from exc
         context = {**trusted_context, **identity_context}
         request = {"principal": identity_context["identity"], "action": action,
                    "resource": resource, "arguments": dict(arguments), "context": context}
