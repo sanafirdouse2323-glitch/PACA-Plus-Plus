@@ -2,6 +2,10 @@ package paca.authz
 
 import rego.v1
 
+# Increment when the policy semantics change. The gateway checks this declared
+# version against its deployment configuration and persists it with each operation.
+policy_version := "paca-baseline-v1"
+
 # Deny if subject status is absent or anything other than "active".
 deny if {
     not input.subject.status == "active"
@@ -23,15 +27,15 @@ permit if {
     input.arguments.path == input.resource.canonical_path
 }
 
-decision := {"allow": true, "reason": "permitted"} if {
+decision := {"allow": true, "reason": "permitted", "policy_version": policy_version} if {
     permit
 }
 
-decision := {"allow": false, "reason": "subject_not_active"} if {
+decision := {"allow": false, "reason": "subject_not_active", "policy_version": policy_version} if {
     deny
 }
 
-decision := {"allow": false, "reason": "no_matching_permit"} if {
+decision := {"allow": false, "reason": "no_matching_permit", "policy_version": policy_version} if {
     not permit
     not deny
 }
