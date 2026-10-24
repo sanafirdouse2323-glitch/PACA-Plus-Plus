@@ -109,11 +109,12 @@ class HTTPActionAdapterTests(unittest.TestCase):
         self.assertEqual(result, {"ok": True, "result": "test"})
         self.assertEqual(len(self.received), 1)
         request = self.received[0]
+        headers = {name.lower(): value for name, value in request["headers"].items()}
         self.assertEqual(request["path"], "/fixed/action")
-        self.assertEqual(request["headers"]["Authorization"], "Bearer trusted-downstream-token")
-        self.assertEqual(request["headers"]["X-PACA-Operation-ID"], "a" * 32)
-        self.assertRegex(request["headers"]["Idempotency-Key"], r"^[0-9a-f]{64}$")
-        self.assertNotEqual(request["headers"]["Idempotency-Key"], "client-request-17")
+        self.assertEqual(headers["authorization"], "Bearer trusted-downstream-token")
+        self.assertEqual(headers["x-paca-operation-id"], "a" * 32)
+        self.assertRegex(headers["idempotency-key"], r"^[0-9a-f]{64}$")
+        self.assertNotEqual(headers["idempotency-key"], "client-request-17")
         body = json.loads(request["body"])
         self.assertEqual(body["action"], "file.read")
         self.assertEqual(body["arguments"], {"path": "reports/q1.csv"})
