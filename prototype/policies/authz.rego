@@ -13,7 +13,10 @@ permit if {
     not deny
     input.action == "file.read"
     input.subject.role == "analyst"
-    input.resource.owner_id == input.subject.id
+    # owner_id is an internal application user ID. Never compare it with raw OIDC sub:
+    # sub is only issuer-scoped. The trusted context provider resolves user_id using
+    # the authenticated (issuer, subject) pair.
+    input.resource.owner_id == input.subject.user_id
     input.resource.tenant_id == input.subject.tenant_id
     # Bind caller arguments to the authoritative resource mapping. For files this
     # prevents authorizing one record while asking the downstream service for another path.
