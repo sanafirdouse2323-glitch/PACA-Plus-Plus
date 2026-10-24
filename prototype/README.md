@@ -21,7 +21,7 @@ python examples/authorize.py --policy examples/policy.json --context examples/co
 - `identity.py`: JWT verification against a configured HTTPS JWKS URL, plus a trusted server-side context-provider interface.
 - `gateway.py`: registered action gateway; re-fetches context and re-evaluates OPA immediately before dispatch.
 - `http_api.py`: bounded HTTP JSON API with `POST /v1/execute` and authenticated operation-status lookup.
-- `HTTPJsonActionAdapter`: sends calls only to a fixed configured HTTPS endpoint and rejects redirects.
+- `HTTPJsonActionAdapter`: sends calls only to a fixed configured HTTPS endpoint, rejects redirects, and sends an issuer-scoped pseudonymous principal ID rather than raw OIDC `sub`.
 - `durable.py`: durable SQLite store for single-host use and PostgreSQL store for coordinated multi-instance operation state. Includes principal-scoped idempotency, recovery states, strict unambiguous JSON parsing, encrypted cached responses, and a hash-chained audit log that replays operation transitions and cross-checks identity/fingerprints, idempotency-key digest, timestamps, status/error fields, policy-decision metadata, and cached response presence/content.
 - `policies/authz.rego`: baseline example policy; intentionally narrow and must be adapted to verified business rules.
 - `compose.dependencies.yml`: OPA and PostgreSQL dependencies for local integration.
