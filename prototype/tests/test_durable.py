@@ -19,6 +19,7 @@ from paca_mvp.durable import (
     SQLiteOperationStore,
     StoreError,
     canonical_json,
+    strict_json_loads,
 )
 
 
@@ -286,6 +287,34 @@ class DurableStoreTests(unittest.TestCase):
         link.symlink_to(target)
         with self.assertRaisesRegex(ValueError, "must not be a symlink"):
             SQLiteOperationStore(link)
+
+
+    def test_strict_json_rejects_duplicate_keys_and_non_standard_numbers(self):
+        self.assertEqual(strict_json_loads('{"safe": 1}'), {"safe": 1})
+        for raw in (
+            '{"allow": false, "allow": true}',
+            '{"nested": {"owner": "u1", "owner": "attacker"}}',
+            '{"number": NaN}',
+            '{"number": Infinity}',
+            '{"number": -Infinity}',
+        ):
+            with self.subTest(raw=raw):
+                with self.assertRaises(ValueError):
+                    strict_json_loads(raw)
+
+    def test_audit_verification_detects_cached_response_tampering(self):
+        record, created = self.store.create_or_get(**self.kwargs)
+        self.assertTrue(created)
+        self.store.claim(record.operation_id)
+        self.store.complete(record.operation_id, {"ok": True, "value": 3})
+        self.assertTrue(self.store.verify_audit_chain())
+
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE operations SET response_json=? WHERE operation_id=?",
+                ('{"ok":false,"value":999}', record.operation_id),
+            )
+        self.assertFalse(self.store.verify_audit_chain())
 
 
 if __name__ == "__main__":
