@@ -7,6 +7,7 @@ import unittest
 import uuid
 
 DSN = os.environ.get("PACA_TEST_POSTGRES_DSN")
+_DEFAULT_IDEMPOTENCY = object()
 if DSN:
     import sys
     from pathlib import Path
@@ -30,11 +31,11 @@ class PostgresPermitStoreTests(unittest.TestCase):
             "audience": "paca-test",
         }
 
-    def issue(self, key=None):
+    def issue(self, key=_DEFAULT_IDEMPOTENCY):
+        idempotency_key = self.idempotency_key if key is _DEFAULT_IDEMPOTENCY else key
         return self.store.issue(
             self.action, self.resource, self.request_hash, self.policy_version,
-            idempotency_key=self.idempotency_key if key is None else key,
-            actor=self.actor,
+            idempotency_key=idempotency_key, actor=self.actor,
         )
 
     def test_durable_result_and_idempotency_survive_new_store_instance(self):
