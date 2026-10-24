@@ -8,7 +8,7 @@ from paca_mvp.hardening import OPAClient
 
 client = OPAClient(os.environ.get("OPA_URL", "http://127.0.0.1:8181"))
 version = client.get_policy_version()
-assert version == "paca-example-v1", f"unexpected policy version: {version!r}"
+assert version == "paca-example-v2", f"unexpected policy version: {version!r}"
 
 base = {
     "principal": {"subject": "user-17", "claims": {"suspended": False}},
