@@ -253,6 +253,8 @@ class ProviderAndGatewayTests(unittest.TestCase):
             def decide(self, request):
                 captured["request"] = request
                 return {"allowed": True, "policy_version": "v1", "reason": "permitted"}
+            def get_policy_version(self):
+                return "v1"
         class Adapter:
             def invoke(self, action, resource, arguments, idempotency_key):
                 captured["effect"] = (action, resource, dict(arguments), idempotency_key)
