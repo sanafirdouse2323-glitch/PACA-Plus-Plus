@@ -18,6 +18,7 @@ from .durable import (
     OperationStateError,
     canonical_digest,
     canonical_json,
+    strict_json_loads,
 )
 from .identity import (
     AuthenticatedPrincipal,
@@ -390,9 +391,9 @@ class HTTPJsonActionAdapter:
         if len(raw) > self.max_response_bytes:
             raise RemoteToolError("downstream_response_too_large")
         try:
-            decoded = json.loads(raw)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise RemoteToolError("downstream_returned_invalid_json") from exc
+            decoded = strict_json_loads(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
+            raise RemoteToolError("downstream_returned_invalid_or_ambiguous_json") from exc
         try:
             canonical_json(decoded)
         except ValueError as exc:
