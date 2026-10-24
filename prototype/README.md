@@ -17,7 +17,7 @@ python examples/authorize.py --policy examples/policy.json --context examples/co
 
 ## Production-oriented integration layer
 
-- `opa.py`: OPA Data API decision client; undefined decisions and service failures do not allow access.
+- `opa.py`: OPA Data API decision client; undefined decisions and service failures do not allow access. Production startup requires the configured declared policy version, which is persisted in operation metadata and the audit chain.
 - `identity.py`: JWT verification against a configured HTTPS JWKS URL, plus a trusted server-side context-provider interface.
 - `gateway.py`: registered action gateway; re-fetches context and re-evaluates OPA immediately before dispatch.
 - `http_api.py`: bounded HTTP JSON API with `POST /v1/execute` and authenticated operation-status lookup.
