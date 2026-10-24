@@ -157,6 +157,8 @@ class LiveEnforcementStackTests(unittest.TestCase):
         self.assertRegex(downstream_key, r"^[0-9a-f]{64}$")
         self.assertNotEqual(downstream_key, key)
         self.assertEqual(headers["x-paca-operation-id"], first.operation_id)
+        stored = self.store.get_operation(first.operation_id)
+        self.assertEqual(stored.policy_decision.get("policy_version"), "paca-baseline-v1")
         self.assertTrue(self.store.verify_audit_chain())
 
     def test_real_policy_denials_do_not_dispatch_to_downstream(self):
