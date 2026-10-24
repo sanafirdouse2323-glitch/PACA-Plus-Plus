@@ -2,7 +2,7 @@
 
 ## What this code now provides
 
-- **OPA decision point:** `OPAPolicyDecisionPoint` queries OPA's named Data API decision (`data.paca.authz.decision`). Missing/undefined decisions are denials; network, HTTP, and protocol failures fail closed. Startup preflight refuses an unavailable OPA, an undefined decision for empty input, or a decision that permits empty input.
+- **OPA decision point:** `OPAPolicyDecisionPoint` queries OPA's named Data API decision (`data.paca.authz.decision`). Missing/undefined decisions are denials; network, HTTP, and protocol failures fail closed. Every decision includes a declared `policy_version`; production startup checks it against `PACA_OPA_POLICY_VERSION` (default `paca-baseline-v1`) and refuses a missing or mismatched version, an unavailable OPA, an undefined decision, or a decision that permits empty input.
 - **Verified caller identity:** `JWTAuthenticator` validates signatures using a fixed asymmetric algorithm allow-list, a trusted HTTPS JWKS endpoint, issuer, audience, expiration and required claims.
 - **Trusted context retrieval:** `CallbackContextProvider` calls application-supplied readers for subject, resource and environment attributes. No request-supplied context field is accepted by the HTTP API.
 - **Protected execution:** `ProtectedToolGateway` registers action handlers on the server. It does not let a caller choose a Python callback or destination URL. It checks OPA, records an operation durably, re-fetches trusted context, re-evaluates OPA, then atomically claims before calling the handler.
@@ -43,6 +43,7 @@ The connection examples above are loopback-only. For a non-loopback PostgreSQL h
     # Keep the active key first; append retiring keys during rotation.
     export PACA_RESULT_ENCRYPTION_KEYS="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
     export PACA_OPA_BASE_URL='http://127.0.0.1:8181'
+    export PACA_OPA_POLICY_VERSION='paca-baseline-v1'
     export PACA_CONTEXT_PROVIDER='your_application.authz:build_context_provider'
     export PACA_FILE_READ_ENDPOINT='https://your-downstream-service.example/v1/read'
     export PACA_DOWNSTREAM_SERVICE_TOKEN='inject-this-from-a-secret-manager'
@@ -150,7 +151,7 @@ This phase does not make the project certified or ready for an arbitrary product
 2. **OIDC configuration must be validated against your identity provider.** The code verifies JWTs but does not provision accounts, groups, roles, or sessions.
 3. **Generic exactly-once external effects are impossible to promise.** The gateway provides coordinated at-most-once dispatch attempts and conservative unknown-outcome recovery. Stronger guarantees require downstream idempotency or a shared transaction.
 4. **Policy-update atomicity with external execution is not guaranteed.** OPA is re-queried immediately before dispatch, but a policy can change after evaluation. Sensitive systems need versioned policy rollout and/or enforcement inside the same trusted transaction boundary.
-5. **The hash chain is tamper-evident, not tamper-proof.** A database administrator who can rewrite all rows and the head can rebuild it. Export/checkpoint audit hashes to an independently controlled append-only system for stronger assurance.
+5. **The hash chain is tamper-evident, not tamper-proof.** A database administrator who can rewrite all rows and the head can rebuild it. Export/checkpoint audit hashes to an independently controlled append-only system for stronger assurance. The policy version is an operator-managed declaration emitted by Rego, not a cryptographic digest of the policy bundle; increment it when policy semantics change and protect the policy rollout/configuration pipeline.
 6. **The server is HTTP and binds to loopback by default.** If deployed across hosts, terminate TLS at a trusted reverse proxy, protect that hop, and expose only the intended route. Never expose OPA's management interface to untrusted clients.
 7. **Operational hardening still needs deployment-specific work:** secret management, migrations, backups, retention policy, metrics, alerting, rate limits, load/chaos testing, dependency and container digest pinning, independent threat review, and recovery drills.
 
