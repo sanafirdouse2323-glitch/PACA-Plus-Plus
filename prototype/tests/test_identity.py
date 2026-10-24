@@ -52,9 +52,16 @@ class JWTAuthenticatorTests(unittest.TestCase):
         principal = self.authenticate(self.token())
         self.assertEqual(principal.subject, "user-42")
         self.assertEqual(principal.issuer, self.issuer)
-        self.assertEqual(principal.opa_identity(), {"id": "user-42", "issuer": self.issuer})
+        self.assertEqual(principal.opa_identity(), {"id": principal.storage_id, "issuer": self.issuer, "subject": "user-42"})
         self.assertTrue(principal.storage_id.startswith("oidc:"))
         self.assertNotEqual(principal.storage_id, principal.subject)
+
+    def test_same_subject_under_different_issuers_has_different_policy_identity(self):
+        first = AuthenticatedPrincipal("same-subject", self.issuer, {"sub": "same-subject"})
+        second = AuthenticatedPrincipal("same-subject", "https://another-identity.example", {"sub": "same-subject"})
+        self.assertNotEqual(first.storage_id, second.storage_id)
+        self.assertNotEqual(first.opa_identity()["id"], second.opa_identity()["id"])
+        self.assertEqual(first.opa_identity()["subject"], second.opa_identity()["subject"])
 
     def test_rejects_signature_from_untrusted_key(self):
         now = int(datetime.now(timezone.utc).timestamp())
@@ -121,8 +128,8 @@ class JWTAuthenticatorTests(unittest.TestCase):
 class TrustedContextProviderTests(unittest.TestCase):
     def test_context_is_loaded_from_callbacks_and_snapshotted(self):
         principal = AuthenticatedPrincipal("user-42", "https://identity.example", {"sub": "user-42"})
-        subject = {"status": "active", "role": "analyst", "tenant_id": "tenant-1"}
-        resource = {"owner_id": "user-42", "tenant_id": "tenant-1", "canonical_path": "reports/q1.csv"}
+        subject = {"status": "active", "role": "analyst", "tenant_id": "tenant-1", "user_id": "db-user-42"}
+        resource = {"owner_id": "db-user-42", "tenant_id": "tenant-1", "canonical_path": "reports/q1.csv"}
         calls = []
 
         def subject_lookup(p):
@@ -149,7 +156,7 @@ class TrustedContextProviderTests(unittest.TestCase):
         principal = AuthenticatedPrincipal("user-42", "https://identity.example", {"sub": "user-42"})
         provider = CallbackContextProvider(
             lambda _p: {"status": "active", "score": float("nan")},
-            lambda _p, _a, _r, _args: {"owner_id": "user-42"},
+            lambda _p, _a, _r, _args: {"owner_id": "db-user-42"},
         )
         with self.assertRaises(ContextRetrievalError):
             provider.load(principal, "file.read", "file:r1", {})
