@@ -82,12 +82,12 @@ class LiveEnforcementStackTests(unittest.TestCase):
         class ContextProvider:
             resources = {
                 "file:r1": {
-                    "owner_id": "user-1",
+                    "owner_id": "db-user-1",
                     "tenant_id": "tenant-1",
                     "canonical_path": "reports/q1.csv",
                 },
                 "file:r2": {
-                    "owner_id": "user-2",
+                    "owner_id": "db-user-2",
                     "tenant_id": "tenant-1",
                     "canonical_path": "secrets.csv",
                 },
@@ -105,6 +105,7 @@ class LiveEnforcementStackTests(unittest.TestCase):
                         "status": "active",
                         "role": "analyst",
                         "tenant_id": "tenant-1",
+                        "user_id": "db-user-1",
                     },
                     resource_attributes=attrs,
                     environment={"test": True},
