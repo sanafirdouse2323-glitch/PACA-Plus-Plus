@@ -39,7 +39,7 @@ def _print(payload: dict[str, Any]) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Privileged PACA++ durable-store operations")
     parser.add_argument("--backend", choices=("postgres", "sqlite"), required=True)
-    parser.add_argument("--dsn", help="PostgreSQL DSN; alternatively PACA_POSTGRES_DSN")
+    parser.add_argument("--dsn", help="PostgreSQL DSN; alternatively PACA_OPERATOR_POSTGRES_DSN")
     parser.add_argument("--path", help="SQLite database path; alternatively PACA_SQLITE_PATH")
     commands = parser.add_subparsers(dest="command", required=True)
 
