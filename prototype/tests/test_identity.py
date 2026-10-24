@@ -52,7 +52,7 @@ class JWTAuthenticatorTests(unittest.TestCase):
         principal = self.authenticate(self.token())
         self.assertEqual(principal.subject, "user-42")
         self.assertEqual(principal.issuer, self.issuer)
-        self.assertEqual(principal.opa_identity(), {"id": principal.storage_id, "issuer": self.issuer, "subject": "user-42"})
+        self.assertEqual(principal.opa_identity(), {"id": principal.storage_id, "issuer": self.issuer})
         self.assertTrue(principal.storage_id.startswith("oidc:"))
         self.assertNotEqual(principal.storage_id, principal.subject)
 
@@ -61,7 +61,8 @@ class JWTAuthenticatorTests(unittest.TestCase):
         second = AuthenticatedPrincipal("same-subject", "https://another-identity.example", {"sub": "same-subject"})
         self.assertNotEqual(first.storage_id, second.storage_id)
         self.assertNotEqual(first.opa_identity()["id"], second.opa_identity()["id"])
-        self.assertEqual(first.opa_identity()["subject"], second.opa_identity()["subject"])
+        self.assertEqual(first.subject, second.subject)
+        self.assertNotIn("subject", first.opa_identity())
 
     def test_rejects_signature_from_untrusted_key(self):
         now = int(datetime.now(timezone.utc).timestamp())
