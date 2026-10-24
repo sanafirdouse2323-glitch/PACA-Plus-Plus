@@ -38,12 +38,12 @@ jobs:
       - name: Run deterministic scenarios
         run: python experiments/run_experiments.py
       - name: Validate Rego policy with pinned OPA
-        run: docker run --rm -v "$GITHUB_WORKSPACE/prototype/policies:/policies:ro" openpolicyagent/opa:1.21.3 check --strict /policies/paca.rego
+        run: docker run --rm -v "$GITHUB_WORKSPACE/prototype/policies:/policies:ro" openpolicyagent/opa@sha256:22a9db16423b94d2acbd4a94da3bebeb79583ed6a52ac15cad459d3de2dbbc4d check --strict /policies/paca.rego
       - name: Start real OPA for decision API integration test
         run: |
           docker run -d --name paca-opa -p 127.0.0.1:8181:8181 \
             -v "$GITHUB_WORKSPACE/prototype/policies:/policies:ro" \
-            openpolicyagent/opa:1.21.3 run --server --addr=0.0.0.0:8181 /policies/paca.rego
+            openpolicyagent/opa@sha256:22a9db16423b94d2acbd4a94da3bebeb79583ed6a52ac15cad459d3de2dbbc4d run --server --addr=0.0.0.0:8181 /policies/paca.rego
           for attempt in $(seq 1 30); do
             if curl --fail --silent http://127.0.0.1:8181/health >/dev/null; then
               exit 0
