@@ -1,0 +1,13 @@
+services:
+  opa:
+    image: openpolicyagent/opa:1.21.3
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "/policies/paca.rego"]
+    ports:
+      - "127.0.0.1:8181:8181"
+    volumes:
+      - ./policies:/policies:ro
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
