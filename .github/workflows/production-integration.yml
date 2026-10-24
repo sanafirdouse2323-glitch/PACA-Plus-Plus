@@ -9,6 +9,7 @@ on:
   pull_request:
     branches:
       - main
+      - production/phase-1-security-hardening
 
 permissions:
   contents: read
