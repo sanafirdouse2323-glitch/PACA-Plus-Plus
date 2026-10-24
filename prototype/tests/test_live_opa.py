@@ -48,6 +48,7 @@ class LiveOPAPolicyTests(unittest.TestCase):
         decision = self.pdp.evaluate(self.input_document())
         self.assertTrue(decision.allowed)
         self.assertEqual(decision.reason, "permitted")
+        self.assertEqual(decision.policy_version, "paca-baseline-v1")
 
     def test_live_opa_denies_other_owner(self):
         decision = self.pdp.evaluate(self.input_document(owner="db-user-2"))
