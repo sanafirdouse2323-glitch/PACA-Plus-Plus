@@ -163,11 +163,11 @@ class HttpApiTests(unittest.TestCase):
 
     def test_status_endpoint_rejects_duplicate_authorization_headers(self):
         request = (
-            "GET /v1/operations/00000000000000000000000000000000 HTTP/1.1\\r\\n"
-            "Host: 127.0.0.1\\r\\n"
-            "Authorization: Bearer valid\\r\\n"
-            "Authorization: Bearer attacker\\r\\n"
-            "Connection: close\\r\\n\\r\\n"
+            "GET /v1/operations/00000000000000000000000000000000 HTTP/1.1\r\n"
+            "Host: 127.0.0.1\r\n"
+            "Authorization: Bearer valid\r\n"
+            "Authorization: Bearer attacker\r\n"
+            "Connection: close\r\n\r\n"
         ).encode("ascii")
         with socket.create_connection(("127.0.0.1", self.port), timeout=3) as client:
             client.sendall(request)
