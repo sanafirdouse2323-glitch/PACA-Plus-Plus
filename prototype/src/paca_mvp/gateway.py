@@ -367,7 +367,7 @@ class HTTPJsonActionAdapter:
     def __call__(self, operation: ActionRequest) -> Any:
         body = canonical_json({
             "operation_id": operation.operation_id,
-            "principal_id": operation.principal.subject,
+            "principal_id": operation.principal.storage_id,
             "principal_issuer": operation.principal.issuer,
             "action": operation.action,
             "resource": operation.resource,
