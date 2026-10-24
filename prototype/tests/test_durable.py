@@ -43,6 +43,30 @@ class DurableStoreTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_policy_version_is_persisted_on_precheck_and_dispatch_audit(self):
+        kwargs = dict(self.kwargs)
+        kwargs["policy_decision"] = {
+            "allow": True,
+            "reason": "policy_permitted",
+            "policy_version": "paca-test-v7",
+            "decision_id": "decision-7",
+        }
+        record, created = self.store.create_or_get(**kwargs)
+        self.assertTrue(created)
+        self.assertEqual(record.policy_decision["policy_version"], "paca-test-v7")
+
+        claimed = self.store.claim(
+            record.operation_id,
+            policy_decision={
+                "allow": True,
+                "reason": "policy_permitted",
+                "policy_version": "paca-test-v7",
+                "decision_id": "decision-8",
+            },
+        )
+        self.assertEqual(claimed.policy_decision["policy_version"], "paca-test-v7")
+        self.assertTrue(self.store.verify_audit_chain())
+
     def test_lifecycle_and_cached_result(self):
         record, created = self.store.create_or_get(**self.kwargs)
         self.assertTrue(created)
