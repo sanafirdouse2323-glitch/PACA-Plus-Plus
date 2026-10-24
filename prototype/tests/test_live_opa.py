@@ -21,12 +21,14 @@ class LiveOPAPolicyTests(unittest.TestCase):
         cls.pdp.preflight()
 
     @staticmethod
-    def input_document(*, owner="user-1", tenant="tenant-1", status="active",
+    def input_document(*, owner="db-user-1", tenant="tenant-1", status="active",
                        action="file.read", resource_path="reports/q1.csv",
                        argument_path="reports/q1.csv", role="analyst"):
         return {
             "subject": {
-                "id": "user-1",
+                "id": "oidc:fixture-principal",
+                "subject": "user-1",
+                "user_id": "db-user-1",
                 "issuer": "https://identity.example",
                 "status": status,
                 "role": role,
@@ -49,7 +51,7 @@ class LiveOPAPolicyTests(unittest.TestCase):
         self.assertEqual(decision.reason, "permitted")
 
     def test_live_opa_denies_other_owner(self):
-        decision = self.pdp.evaluate(self.input_document(owner="user-2"))
+        decision = self.pdp.evaluate(self.input_document(owner="db-user-2"))
         self.assertFalse(decision.allowed)
 
     def test_live_opa_denies_cross_tenant(self):
