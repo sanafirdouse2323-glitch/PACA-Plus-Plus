@@ -11,7 +11,7 @@ import os
 import sys
 from typing import Any
 
-from .durable import FernetResponseProtector, PostgresOperationStore, SQLiteOperationStore
+from .durable import FernetResponseProtector, PostgresOperationStore, SQLiteOperationStore, strict_json_loads
 
 
 def _store(args: argparse.Namespace):
@@ -105,12 +105,9 @@ def main(argv: list[str] | None = None) -> int:
                     raw_response = sys.stdin.read(1_048_577)
                     if len(raw_response.encode("utf-8")) > 1_048_576:
                         raise ValueError("response exceeds 1 MiB")
-                    response = json.loads(
-                        raw_response,
-                        parse_constant=lambda x: (_ for _ in ()).throw(ValueError(x)),
-                    )
-                except (json.JSONDecodeError, ValueError) as exc:
-                    raise ValueError("--response-stdin must contain finite JSON up to 1 MiB") from exc
+                    response = strict_json_loads(raw_response)
+                except (json.JSONDecodeError, ValueError, RecursionError) as exc:
+                    raise ValueError("--response-stdin must contain unambiguous finite JSON up to 1 MiB") from exc
             operation = store.reconcile_unknown(
                 args.operation_id, outcome=args.outcome, reason=args.reason, response=response
             )
