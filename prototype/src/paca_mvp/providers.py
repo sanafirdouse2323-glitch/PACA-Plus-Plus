@@ -202,7 +202,7 @@ class HTTPJSONToolAdapter:
             headers["Authorization"] = "Bearer " + self.bearer_token
         req = Request(self.base_url + route.path, data=body, headers=headers, method=route.method)
         try:
-            with urlopen(req, timeout=self.timeout_seconds) as response:
+            with _urlopen_no_redirect(req, timeout=self.timeout_seconds) as response:
                 raw = response.read(self.max_response_bytes + 1)
                 if len(raw) > self.max_response_bytes:
                     raise ToolInvocationError("protected API response exceeded configured limit")
