@@ -239,7 +239,8 @@ class ProtectedToolGateway:
                 context_digest=canonical_digest(input_snapshot),
                 # Persist only the decision outcome and bounded reason, not arbitrary policy data.
                 policy_decision={"allow": True, "reason": initial_decision.reason[:128],
-                                 "decision_id": initial_decision.decision_id},
+                                 "decision_id": initial_decision.decision_id,
+                                 "policy_version": initial_decision.policy_version},
                 ttl_seconds=self.permit_ttl_seconds,
             )
         except IdempotencyConflict:
@@ -278,7 +279,8 @@ class ProtectedToolGateway:
             claimed = self.operation_store.claim(
                 operation.operation_id,
                 policy_decision={"allow": True, "reason": current_decision.reason[:128],
-                                 "decision_id": current_decision.decision_id},
+                                 "decision_id": current_decision.decision_id,
+                                 "policy_version": current_decision.policy_version},
             )
         except OperationOutcomeUnknown as exc:
             raise OperationOutcomeUnresolved(str(exc)) from exc
