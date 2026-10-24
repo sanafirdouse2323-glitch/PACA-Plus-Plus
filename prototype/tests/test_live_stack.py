@@ -99,7 +99,7 @@ class LiveEnforcementStackTests(unittest.TestCase):
             }
 
             def load(_self, principal, action, resource, arguments):
-                attrs = dict(self.resources.get(resource, {}))
+                attrs = dict(_self.resources.get(resource, {}))
                 return TrustedAuthorizationContext(
                     subject_attributes={
                         "status": "active",
