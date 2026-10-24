@@ -381,5 +381,44 @@ class DurableStoreTests(unittest.TestCase):
         self.assertFalse(self.store.verify_audit_chain())
 
 
+
+    def test_audit_verification_accepts_store_claim_using_precheck_decision(self):
+        record, created = self.store.create_or_get(**self.kwargs)
+        self.assertTrue(created)
+        claimed = self.store.claim(record.operation_id)
+        self.assertEqual(claimed.status, "in_progress")
+        self.assertTrue(self.store.verify_audit_chain())
+
+    def test_audit_verification_detects_status_row_tampering(self):
+        record, _ = self.store.create_or_get(**self.kwargs)
+        self.assertTrue(self.store.verify_audit_chain())
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE operations SET status=? WHERE operation_id=?",
+                ("cancelled", record.operation_id),
+            )
+        self.assertFalse(self.store.verify_audit_chain())
+
+    def test_audit_verification_detects_expiry_row_tampering(self):
+        record, _ = self.store.create_or_get(**self.kwargs)
+        self.assertTrue(self.store.verify_audit_chain())
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE operations SET expires_at=? WHERE operation_id=?",
+                ("2099-01-01T00:00:00.000000+00:00", record.operation_id),
+            )
+        self.assertFalse(self.store.verify_audit_chain())
+
+    def test_audit_verification_detects_idempotency_key_row_tampering(self):
+        record, _ = self.store.create_or_get(**self.kwargs)
+        self.assertTrue(self.store.verify_audit_chain())
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                "UPDATE operations SET idempotency_key=? WHERE operation_id=?",
+                ("mutated-key-" + uuid.uuid4().hex, record.operation_id),
+            )
+        self.assertFalse(self.store.verify_audit_chain())
+
+
 if __name__ == "__main__":
     unittest.main()
