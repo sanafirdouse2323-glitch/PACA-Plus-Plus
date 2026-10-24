@@ -353,6 +353,19 @@ class SQLitePermitStore:
             rows = db.execute("SELECT * FROM audit ORDER BY sequence").fetchall()
         return [{**dict(row), "details": json.loads(row["details_json"])} for row in rows]
 
+    def record_event(self, event: str, permit_id: str | None,
+                     action: str | None, resource: str | None,
+                     details: Mapping[str, Any]) -> None:
+        """Append a durable audit event using the same transaction/chain lock."""
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                self._audit(db, event, permit_id, action, resource, details)
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+
     def current_state_version(self) -> int:
         with self._connect() as db:
             return int(db.execute("SELECT state_version FROM state WHERE singleton=1").fetchone()[0])
@@ -692,18 +705,13 @@ class GuardedGateway:
         stable_request["context"] = stable_context
         request_hash = _digest(stable_request)
         if not decision["allowed"]:
-            with self.store._connect() as db:
-                db.execute("BEGIN IMMEDIATE")
-                try:
-                    self.store._audit(db, "authorization_denied", None, action, resource,
-                                      {"actor": {"subject": principal.subject, "issuer": principal.issuer,
-                                                 "audience": principal.audience},
-                                       "reason": decision["reason"], "request_hash": request_hash,
-                                       "decision_id": decision.get("decision_id")})
-                    db.commit()
-                except Exception:
-                    db.rollback()
-                    raise
+            self.store.record_event(
+                "authorization_denied", None, action, resource,
+                {"actor": {"subject": principal.subject, "issuer": principal.issuer,
+                           "audience": principal.audience},
+                 "reason": decision["reason"], "request_hash": request_hash,
+                 "decision_id": decision.get("decision_id")},
+            )
             raise PermitRejected("OPA denied the operation")
         actor = {"subject": principal.subject, "issuer": principal.issuer,
                  "audience": principal.audience}
@@ -712,29 +720,19 @@ class GuardedGateway:
         try:
             active_version = self.opa.get_policy_version()
         except PolicyUnavailable:
-            with self.store._connect() as db:
-                db.execute("BEGIN IMMEDIATE")
-                try:
-                    self.store._audit(db, "authorization_aborted", None, action, resource,
-                                      {"actor": actor, "reason": "policy_version_unavailable",
-                                       "decision_policy_version": decision["policy_version"]})
-                    db.commit()
-                except Exception:
-                    db.rollback()
-                    raise
+            self.store.record_event(
+                "authorization_aborted", None, action, resource,
+                {"actor": actor, "reason": "policy_version_unavailable",
+                 "decision_policy_version": decision["policy_version"]},
+            )
             raise
         if active_version != decision["policy_version"]:
-            with self.store._connect() as db:
-                db.execute("BEGIN IMMEDIATE")
-                try:
-                    self.store._audit(db, "authorization_aborted", None, action, resource,
-                                      {"actor": actor, "reason": "policy_version_changed",
-                                       "decision_policy_version": decision["policy_version"],
-                                       "active_policy_version": active_version})
-                    db.commit()
-                except Exception:
-                    db.rollback()
-                    raise
+            self.store.record_event(
+                "authorization_aborted", None, action, resource,
+                {"actor": actor, "reason": "policy_version_changed",
+                 "decision_policy_version": decision["policy_version"],
+                 "active_policy_version": active_version},
+            )
             raise PermitRejected("stale policy: active OPA policy version changed after authorization")
         permit_id = self.store.issue(action, resource, request_hash,
                                      decision["policy_version"], idempotency_key=idempotency_key,
