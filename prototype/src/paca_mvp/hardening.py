@@ -226,6 +226,7 @@ class SQLitePermitStore:
                     action TEXT NOT NULL,
                     resource TEXT NOT NULL,
                     request_hash TEXT NOT NULL,
+                    actor_json TEXT,
                     policy_version TEXT NOT NULL,
                     state_version INTEGER NOT NULL,
                     expires_at TEXT NOT NULL,
@@ -264,6 +265,9 @@ class SQLitePermitStore:
                     updated_at TEXT NOT NULL
                 );
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(permits)").fetchall()}
+            if "actor_json" not in columns:
+                db.execute("ALTER TABLE permits ADD COLUMN actor_json TEXT")
             db.execute("PRAGMA journal_mode=WAL")
             db.execute(f"PRAGMA busy_timeout={int(self.busy_timeout_ms)}")
 
@@ -333,7 +337,8 @@ class SQLitePermitStore:
                 raise
 
     def issue(self, action: str, resource: str, request_hash: str, policy_version: str,
-              ttl_seconds: float = 30.0, idempotency_key: str | None = None) -> str:
+              ttl_seconds: float = 30.0, idempotency_key: str | None = None,
+              actor: Mapping[str, Any] | None = None) -> str:
         _validate_identifier(action, "action")
         _validate_identifier(resource, "resource")
         _validate_identifier(policy_version, "policy_version")
@@ -341,6 +346,7 @@ class SQLitePermitStore:
             raise ValueError("ttl_seconds must be in (0, 3600]")
         if idempotency_key is not None:
             _validate_identifier(idempotency_key, "idempotency_key")
+        actor_json = _canonical_json(dict(actor)) if actor is not None else None
         permit_id = uuid.uuid4().hex
         now = datetime.now(timezone.utc)
         with self._connect() as db:
@@ -362,10 +368,10 @@ class SQLitePermitStore:
                         # failed/rejected operations are not silently retried under the same key
                         raise PermitRejected("idempotency key refers to a terminal failed operation")
                 db.execute("""INSERT INTO permits
-                    (permit_id,action,resource,request_hash,policy_version,state_version,expires_at,
+                    (permit_id,action,resource,request_hash,actor_json,policy_version,state_version,expires_at,
                      status,idempotency_key,created_at,updated_at)
-                    VALUES(?,?,?,?,?,?,?,'issued',?,?,?)""",
-                    (permit_id, action, resource, request_hash, policy_version, state_version,
+                    VALUES(?,?,?,?,?,?,?,?,'issued',?,?,?)""",
+                    (permit_id, action, resource, request_hash, actor_json, policy_version, state_version,
                      (now + timedelta(seconds=ttl_seconds)).isoformat(), idempotency_key,
                      now.isoformat(), now.isoformat()))
                 if idempotency_key:
@@ -374,7 +380,8 @@ class SQLitePermitStore:
                         VALUES(?,?,?,'issued',?)""",
                         (idempotency_key, request_hash, permit_id, now.isoformat()))
                 self._audit(db, "permit_issued", permit_id, action, resource, {
-                    "request_hash": request_hash, "policy_version": policy_version,
+                    "request_hash": request_hash, "actor": dict(actor) if actor is not None else None,
+                    "policy_version": policy_version,
                     "state_version": state_version, "expires_at": (now + timedelta(seconds=ttl_seconds)).isoformat(),
                     "idempotency_key_hash": _digest(idempotency_key) if idempotency_key else None,
                 })
@@ -402,9 +409,10 @@ class SQLitePermitStore:
                 row = db.execute("SELECT * FROM permits WHERE permit_id=?", (permit_id,)).fetchone()
                 if row is None:
                     raise PermitRejected("unknown permit")
+                actor = json.loads(row["actor_json"]) if row["actor_json"] else None
                 if row["action"] != action or row["resource"] != resource:
                     self._audit(db, "permit_rejected", permit_id, action, resource,
-                                {"reason": "action_or_resource_mismatch"})
+                                {"reason": "action_or_resource_mismatch", "actor": actor})
                     db.commit()
                     raise PermitRejected("action or resource mismatch")
                 if row["request_hash"] != request_hash:
@@ -425,7 +433,7 @@ class SQLitePermitStore:
                     if idempotency_key:
                         db.execute("UPDATE idempotency SET status='rejected',updated_at=? WHERE idempotency_key=?",
                                    (now.isoformat(), idempotency_key))
-                    self._audit(db, "permit_rejected", permit_id, action, resource, {"reason": "expired"})
+                    self._audit(db, "permit_rejected", permit_id, action, resource, {"reason": "expired", "actor": actor})
                     db.commit()
                     raise PermitRejected("permit expired")
                 state_version = int(db.execute(
@@ -437,7 +445,8 @@ class SQLitePermitStore:
                         db.execute("UPDATE idempotency SET status='rejected',updated_at=? WHERE idempotency_key=?",
                                    (now.isoformat(), idempotency_key))
                     self._audit(db, "permit_rejected", permit_id, action, resource,
-                                {"reason": "stale_state", "issued_state_version": row["state_version"],
+                                {"reason": "stale_state", "actor": actor,
+                                 "issued_state_version": row["state_version"],
                                  "current_state_version": state_version})
                     db.commit()
                     raise PermitRejected("stale state")
@@ -448,7 +457,8 @@ class SQLitePermitStore:
                         db.execute("UPDATE idempotency SET status='rejected',updated_at=? WHERE idempotency_key=?",
                                    (now.isoformat(), idempotency_key))
                     self._audit(db, "permit_rejected", permit_id, action, resource,
-                                {"reason": "stale_policy", "issued_policy_version": row["policy_version"],
+                                {"reason": "stale_policy", "actor": actor,
+                                 "issued_policy_version": row["policy_version"],
                                  "current_policy_version": current_policy_version})
                     db.commit()
                     raise PermitRejected("stale policy")
@@ -458,7 +468,8 @@ class SQLitePermitStore:
                     db.execute("UPDATE idempotency SET status='executing',updated_at=? WHERE idempotency_key=?",
                                (now.isoformat(), idempotency_key))
                 self._audit(db, "effect_claimed", permit_id, action, resource, {
-                    "state_version": state_version, "policy_version": current_policy_version,
+                    "actor": actor, "state_version": state_version,
+                    "policy_version": current_policy_version,
                 })
                 db.commit()
             except Exception:
@@ -479,7 +490,7 @@ class SQLitePermitStore:
                         db.execute("UPDATE idempotency SET status='unknown',updated_at=? WHERE idempotency_key=?",
                                    (_utcnow(), idempotency_key))
                     self._audit(db, "effect_outcome_unknown", permit_id, action, resource,
-                                {"exception_type": type(exc).__name__})
+                                {"actor": actor, "exception_type": type(exc).__name__})
                     db.commit()
                 except Exception:
                     db.rollback()
@@ -496,7 +507,7 @@ class SQLitePermitStore:
                                   WHERE idempotency_key=?""",
                                (serialized, _utcnow(), idempotency_key))
                 self._audit(db, "effect_completed", permit_id, action, resource,
-                            {"result_hash": _digest(result)})
+                            {"actor": actor, "result_hash": _digest(result)})
                 db.commit()
             except Exception:
                 db.rollback()
@@ -509,7 +520,7 @@ class SQLitePermitStore:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
-                rows = db.execute("SELECT permit_id,action,resource,idempotency_key FROM permits WHERE status='executing'").fetchall()
+                rows = db.execute("SELECT permit_id,action,resource,idempotency_key,actor_json FROM permits WHERE status='executing'").fetchall()
                 for row in rows:
                     db.execute("UPDATE permits SET status='unknown',updated_at=? WHERE permit_id=?",
                                (_utcnow(), row["permit_id"]))
@@ -517,7 +528,8 @@ class SQLitePermitStore:
                         db.execute("UPDATE idempotency SET status='unknown',updated_at=? WHERE idempotency_key=?",
                                    (_utcnow(), row["idempotency_key"]))
                     self._audit(db, "crash_recovery_unknown", row["permit_id"], row["action"],
-                                row["resource"], {"note": "reconcile downstream before retry"})
+                                row["resource"], {"actor": json.loads(row["actor_json"]) if row["actor_json"] else None,
+                                                  "note": "reconcile downstream before retry"})
                 db.commit()
                 return len(rows)
             except Exception:
@@ -584,15 +596,20 @@ class GuardedGateway:
                 db.execute("BEGIN IMMEDIATE")
                 try:
                     self.store._audit(db, "authorization_denied", None, action, resource,
-                                      {"reason": decision["reason"], "request_hash": request_hash,
+                                      {"actor": {"subject": principal.subject, "issuer": principal.issuer,
+                                                 "audience": principal.audience},
+                                       "reason": decision["reason"], "request_hash": request_hash,
                                        "decision_id": decision.get("decision_id")})
                     db.commit()
                 except Exception:
                     db.rollback()
                     raise
             raise PermitRejected("OPA denied the operation")
+        actor = {"subject": principal.subject, "issuer": principal.issuer,
+                 "audience": principal.audience}
         permit_id = self.store.issue(action, resource, request_hash,
-                                     decision["policy_version"], idempotency_key=idempotency_key)
+                                     decision["policy_version"], idempotency_key=idempotency_key,
+                                     actor=actor)
         # Adapter must make this downstream key durable/idempotent or provide a
         # reconciliation API. Local authorization cannot make arbitrary APIs atomic.
         # Check the live marker again immediately before the guarded effect. This
