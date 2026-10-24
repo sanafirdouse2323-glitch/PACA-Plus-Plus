@@ -13,7 +13,8 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import Any, Callable, Mapping, Protocol
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
+from urllib.parse import urlparse
 import json
 import os
 import sqlite3
@@ -42,6 +43,24 @@ class IdempotencyConflict(HardeningError):
 
 class EffectOutcomeUnknown(HardeningError):
     """A prior remote operation was claimed but its result cannot be recovered."""
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _urlopen_no_redirect(request: Request, timeout: float):
+    """Do not forward credentials or protected payloads across HTTP redirects."""
+    return build_opener(_NoRedirectHandler()).open(request, timeout=timeout)
+
+
+class _ClosingConnection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
 
 
 def _utcnow() -> str:
@@ -114,8 +133,12 @@ class OPAClient:
     """
     def __init__(self, base_url: str, decision_path: str = "/v1/data/paca/authz/decision",
                  bearer_token: str | None = None, timeout_seconds: float = 2.0):
-        if not base_url.startswith(("http://", "https://")):
-            raise ValueError("OPA base_url must be an http(s) URL")
+        parsed = urlparse(base_url)
+        loopback_http = parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+        if parsed.scheme != "https" and not loopback_http:
+            raise ValueError("OPA base_url must use HTTPS (HTTP is allowed only for loopback development)")
+        if not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("invalid OPA base_url")
         if not decision_path.startswith("/v1/data/") or ".." in decision_path:
             raise ValueError("decision_path must address an OPA /v1/data/ endpoint")
         if timeout_seconds <= 0:
@@ -132,7 +155,7 @@ class OPAClient:
         if self.bearer_token:
             req.add_header("Authorization", "Bearer " + self.bearer_token)
         try:
-            with urlopen(req, timeout=self.timeout_seconds) as response:
+            with _urlopen_no_redirect(req, timeout=self.timeout_seconds) as response:
                 if response.status != 200:
                     raise PolicyUnavailable(f"OPA version query returned HTTP {response.status}")
                 raw = response.read(65537)
@@ -189,8 +212,11 @@ class SQLitePermitStore:
     store for multi-host deployments.
     """
     def __init__(self, database_path: str, busy_timeout_ms: int = 5000):
-        if database_path != ":memory:":
-            os.makedirs(os.path.dirname(os.path.abspath(database_path)), exist_ok=True)
+        if database_path == ":memory:":
+            raise ValueError("SQLitePermitStore requires a file-backed database for durable state")
+        if busy_timeout_ms < 1 or busy_timeout_ms > 120000:
+            raise ValueError("busy_timeout_ms must be between 1 and 120000")
+        os.makedirs(os.path.dirname(os.path.abspath(database_path)), exist_ok=True)
         self.database_path = database_path
         self.busy_timeout_ms = busy_timeout_ms
         with self._connect() as db:
@@ -243,7 +269,7 @@ class SQLitePermitStore:
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.database_path, timeout=self.busy_timeout_ms / 1000,
-                             isolation_level=None)
+                             isolation_level=None, factory=_ClosingConnection)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys=ON")
         db.execute(f"PRAGMA busy_timeout={int(self.busy_timeout_ms)}")
