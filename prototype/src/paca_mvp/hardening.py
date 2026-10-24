@@ -580,6 +580,8 @@ class SQLitePermitStore:
                                     {"actor": actor, "reason": "pre_effect_check_failed",
                                      "exception_type": type(exc).__name__})
                         db.commit()
+                        if isinstance(exc, PermitRejected):
+                            raise
                         raise PermitRejected("pre-effect validation failed; no effect was invoked") from exc
 
                 try:
@@ -746,7 +748,7 @@ class GuardedGateway:
         def verify_active_policy() -> None:
             active_version = self.opa.get_policy_version()
             if active_version != decision["policy_version"]:
-                raise PolicyUnavailable("active OPA policy version changed after authorization")
+                raise PermitRejected("stale policy: active OPA policy version changed after authorization")
 
         return self.store.execute(
             permit_id, action, resource, request_hash, decision["policy_version"],
