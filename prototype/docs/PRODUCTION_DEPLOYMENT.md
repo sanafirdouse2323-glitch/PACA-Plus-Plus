@@ -77,8 +77,11 @@ Implement a trusted provider in your application:
 
     class YourContextProvider:
         def load(self, principal, action, resource, arguments):
-            # Query authoritative user and resource data using both principal.issuer and principal.subject as the identity key; never assume subject is globally unique across issuers.
-            # Do not take role, tenant, owner, status, or permissions from request JSON.
+            # Resolve the application's internal user row by BOTH principal.issuer and
+            # principal.subject; OIDC sub values are not globally unique.
+            # Put that row's stable internal primary key in subject_attributes["user_id"].
+            # Resolve resource.owner_id from the same internal user-ID namespace.
+            # Never take user_id, role, tenant, owner, status or permissions from request JSON.
             # Return TrustedAuthorizationContext(subject_attributes=...,
             #     resource_attributes=..., environment=...)
             ...
@@ -87,7 +90,7 @@ The `resource` identifier is caller-supplied input; the lookup must enforce tena
 
 ## Tool/API adapter contract
 
-Register a handler only in trusted server-side setup. For example, `serve.py` registers only `file.read` and maps it to one environment-configured downstream endpoint. Do not build an endpoint URL from user-supplied hostnames or forward the user's bearer token to a downstream API. The adapter sends a separately configured service token and a derived downstream idempotency key scoped to the verified issuer, principal, and client key. The raw client key is not forwarded downstream; store the service token as a secret and rotate it.
+Register a handler only in trusted server-side setup. For example, `serve.py` registers only `file.read` and maps it to one environment-configured downstream endpoint. Do not build an endpoint URL from user-supplied hostnames or forward the user's bearer token to a downstream API. The adapter sends a separately configured service token and a derived downstream idempotency key scoped to the verified issuer, principal, and client key. The raw client key is not forwarded downstream; store the service token as a secret and rotate it. OPA receives only an issuer-scoped pseudonymous principal ID plus trusted internal user_id; the raw OIDC subject is not copied into the OPA input.
 
 The downstream service should:
 - authenticate PACA++ as a service;
