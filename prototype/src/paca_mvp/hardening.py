@@ -178,7 +178,7 @@ class OPAClient:
         req = Request(self.base_url + self.decision_path, data=body,
                       headers=headers, method="POST")
         try:
-            with urlopen(req, timeout=self.timeout_seconds) as response:
+            with _urlopen_no_redirect(req, timeout=self.timeout_seconds) as response:
                 if response.status != 200:
                     raise PolicyUnavailable(f"OPA returned HTTP {response.status}")
                 raw = response.read(1_048_577)
