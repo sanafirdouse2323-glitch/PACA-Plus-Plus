@@ -77,6 +77,25 @@ def canonical_json(value: Any) -> str:
         raise ValueError("value_must_be_finite_unambiguous_json") from exc
 
 
+def strict_json_loads(value: str | bytes) -> Any:
+    """Parse JSON while rejecting duplicate object keys and non-standard constants."""
+    def unique_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in result:
+                raise ValueError("duplicate_json_object_key")
+            result[key] = item
+        return result
+
+    def reject_constant(constant: str) -> Any:
+        raise ValueError("non_finite_json_number")
+
+    try:
+        return json.loads(value, object_pairs_hook=unique_object_pairs, parse_constant=reject_constant)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError, RecursionError) as exc:
+        raise ValueError("invalid_unambiguous_json") from exc
+
+
 def canonical_digest(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
@@ -193,7 +212,7 @@ class _BaseOperationStore:
                 raise StoreError("encrypted_cached_response_requires_response_protector")
             stored = self._response_protector.unprotect(stored)
         try:
-            return json.loads(stored, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+            return strict_json_loads(stored)
         except (json.JSONDecodeError, ValueError) as exc:
             raise StoreError("cached_response_json_invalid") from exc
 
@@ -545,28 +564,66 @@ class _BaseOperationStore:
         return recovered
 
     def verify_audit_chain(self) -> bool:
-        with self._transaction() as session:
-            # Lock the audit head first so concurrent appends cannot make this read
-            # observe events and a head value from different database snapshots.
-            head = session.one("SELECT head_hash FROM audit_head WHERE singleton=1", for_update=True)
-            rows = session.all("SELECT * FROM audit_events ORDER BY seq ASC")
-        previous = _ROOT_HASH
-        for row in rows:
-            material = {
-                "event_id": row["event_id"],
-                "event_time": row["event_time"],
-                "event_type": row["event_type"],
-                "operation_id": row["operation_id"],
-                "principal_id": row["principal_id"],
-                "payload": json.loads(row["payload_json"]),
-                "previous_hash": previous,
-            }
-            calculated = canonical_digest(material)
-            if row["previous_hash"] != previous or row["entry_hash"] != calculated:
-                return False
-            previous = calculated
-        return head is not None and head["head_hash"] == previous
+        """Verify the hash chain and cross-check persisted successful responses.
 
+        A valid event chain alone would not detect someone editing response_json while
+        leaving the audit log untouched. Successful response records are therefore
+        compared with the response digest in their immutable completion/reconciliation
+        audit event. This is tamper-evident, not tamper-proof against a DB administrator
+        able to rewrite both the rows and the chain.
+        """
+        try:
+            with self._transaction() as session:
+                # Lock the audit head first so concurrent appends cannot make this read
+                # observe events and a head value from different database snapshots.
+                head = session.one("SELECT head_hash FROM audit_head WHERE singleton=1", for_update=True)
+                rows = session.all("SELECT * FROM audit_events ORDER BY seq ASC")
+                response_rows = session.all(
+                    "SELECT operation_id,response_json FROM operations WHERE response_json IS NOT NULL"
+                )
+            previous = _ROOT_HASH
+            response_digests: dict[str, str] = {}
+            for row in rows:
+                payload = strict_json_loads(row["payload_json"])
+                material = {
+                    "event_id": row["event_id"],
+                    "event_time": row["event_time"],
+                    "event_type": row["event_type"],
+                    "operation_id": row["operation_id"],
+                    "principal_id": row["principal_id"],
+                    "payload": payload,
+                    "previous_hash": previous,
+                }
+                calculated = canonical_digest(material)
+                if row["previous_hash"] != previous or row["entry_hash"] != calculated:
+                    return False
+                event_type = row["event_type"]
+                operation_id = row["operation_id"]
+                if operation_id and event_type == "effect_completed":
+                    digest = payload.get("response_digest") if isinstance(payload, dict) else None
+                    if not isinstance(digest, str) or not _DIGEST_RE.fullmatch(digest):
+                        return False
+                    response_digests[operation_id] = digest
+                elif (operation_id and event_type == "operator_reconciliation"
+                      and isinstance(payload, dict) and payload.get("outcome") == "succeeded"):
+                    digest = payload.get("response_digest")
+                    if not isinstance(digest, str) or not _DIGEST_RE.fullmatch(digest):
+                        return False
+                    response_digests[operation_id] = digest
+                previous = calculated
+            if head is None or head["head_hash"] != previous:
+                return False
+            for row in response_rows:
+                try:
+                    decoded = self._decode_response(row["response_json"])
+                    expected_digest = response_digests.get(row["operation_id"])
+                    if expected_digest is None or canonical_digest(decoded) != expected_digest:
+                        return False
+                except Exception:
+                    return False
+            return True
+        except Exception:
+            return False
 
 class SQLiteOperationStore(_BaseOperationStore):
     """Durable store for one host or several processes sharing one SQLite database file."""
