@@ -28,7 +28,7 @@ DATABASE_DSN = os.environ.get("PACA_TEST_RUNTIME_DATABASE_URL")
 class LiveEnforcementStackTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.pdp = OPAPolicyDecisionPoint(base_url=OPA_URL)
+        cls.pdp = OPAPolicyDecisionPoint(base_url=OPA_URL, required_policy_version="paca-baseline-v1")
         cls.pdp.preflight()
         cls.store = PostgresOperationStore(DATABASE_DSN, initialize_schema=False)
         cls.store.check_ready()
