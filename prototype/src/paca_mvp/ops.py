@@ -92,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
                 "error_code": operation.error_code,
                 "arguments_digest": operation.arguments_digest,
                 "context_digest": operation.context_digest,
+                "policy_version": operation.policy_decision.get("policy_version"),
             })
             return 0
         if args.handler == "reconcile_unknown":
