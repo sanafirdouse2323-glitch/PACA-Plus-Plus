@@ -31,7 +31,8 @@ jobs:
           --health-timeout 3s
           --health-retries 20
     env:
-      PACA_TEST_DATABASE_URL: postgresql://paca:paca_test_password@127.0.0.1:5432/paca_test
+      PACA_TEST_ADMIN_DATABASE_URL: postgresql://paca:paca_test_password@127.0.0.1:5432/paca_test
+      PACA_TEST_RUNTIME_DATABASE_URL: postgresql://paca_runtime:paca_runtime_ci_password@127.0.0.1:5432/paca_test
       PACA_OPA_BASE_URL: http://127.0.0.1:8181
     defaults:
       run:
@@ -89,7 +90,8 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y postgresql-client
           fi
-          psql "$PACA_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/001_runtime_roles_and_schema.sql
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/001_runtime_roles_and_schema.sql
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -c "ALTER ROLE paca_runtime WITH LOGIN PASSWORD 'paca_runtime_ci_password'; ALTER ROLE paca_operator WITH LOGIN PASSWORD 'paca_operator_ci_password';"
       - name: Run unit, adversarial and local HTTP integration tests
         run: python -m unittest discover -s tests -v
       - name: Run simulated demo
