@@ -20,7 +20,7 @@ import uuid
 import threading
 from datetime import datetime, timezone
 
-from .hardening import ContextUnavailable, TrustedPrincipal, _canonical_json, _validate_identifier
+from .hardening import ContextUnavailable, TrustedPrincipal, _canonical_json, _validate_identifier, _urlopen_no_redirect
 
 
 class ToolInvocationError(RuntimeError):
@@ -118,7 +118,7 @@ class HTTPAuthorizationContextProvider:
             "Content-Type": "application/json", "Accept": "application/json",
         })
         try:
-            with urlopen(req, timeout=self.timeout_seconds) as response:
+            with _urlopen_no_redirect(req, timeout=self.timeout_seconds) as response:
                 if response.status != 200:
                     raise ContextUnavailable(f"context service returned HTTP {response.status}")
                 raw = response.read(1_048_577)
