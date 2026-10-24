@@ -1,10 +1,11 @@
-name: PACA++ prototype checks
+name: PACA++ prototype and hardening checks
 
 on:
   push:
     branches:
       - main
       - prototype/full-design-mvp
+      - hardening/opa-durable-enforcement
   pull_request:
     branches:
       - main
@@ -25,11 +26,33 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run unit tests
+      - name: Install package and JWT verification dependency
+        run: python -m pip install -e .
+      - name: Run unit and adversarial integration tests
         run: python -m unittest discover -s tests -v
-      - name: Run demonstration
+      - name: Run legacy MVP demonstration
         run: python examples/demo.py
-      - name: Exercise JSON-policy CLI
+      - name: Exercise legacy JSON-policy CLI
         run: python examples/authorize.py --policy examples/policy.json --context examples/context.json --action file.read --resource file:report-1 --execute
       - name: Run deterministic scenarios
         run: python experiments/run_experiments.py
+      - name: Validate Rego policy with pinned OPA
+        run: docker run --rm -v "$GITHUB_WORKSPACE/prototype/policies:/policies:ro" openpolicyagent/opa:1.21.3 check --strict /policies/paca.rego
+      - name: Start real OPA for decision API integration test
+        run: |
+          docker run -d --name paca-opa -p 127.0.0.1:8181:8181 \
+            -v "$GITHUB_WORKSPACE/prototype/policies:/policies:ro" \
+            openpolicyagent/opa:1.21.3 run --server --addr=0.0.0.0:8181 /policies/paca.rego
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8181/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs paca-opa
+          exit 1
+      - name: Exercise real OPA permit and deny decisions
+        run: python examples/opa_smoke.py
+      - name: Clean up OPA test service
+        if: always()
+        run: docker rm -f paca-opa || true
