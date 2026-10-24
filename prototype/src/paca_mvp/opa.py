@@ -16,6 +16,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from .durable import strict_json_loads
+
 
 class OPAError(RuntimeError):
     """OPA could not produce a trustworthy decision."""
@@ -126,9 +128,9 @@ class OPAPolicyDecisionPoint:
         if len(raw) > self.max_response_bytes:
             raise OPAError("OPA response exceeded configured size limit")
         try:
-            document = json.loads(raw, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            raise OPAError("OPA returned invalid JSON") from exc
+            document = strict_json_loads(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError) as exc:
+            raise OPAError("OPA returned invalid or ambiguous JSON") from exc
         if not isinstance(document, dict):
             raise OPAError("OPA response must be a JSON object")
         if "result" not in document:
