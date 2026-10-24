@@ -30,15 +30,15 @@ class Auth:
 class Context:
     def load(self, principal, action, resource, arguments):
         return TrustedAuthorizationContext(
-            subject_attributes={"role": "analyst", "status": "active", "tenant_id": "t1"},
-            resource_attributes={"owner_id": "u1", "tenant_id": "t1"},
+            subject_attributes={"role": "analyst", "status": "active", "tenant_id": "t1", "user_id": "db-u1"},
+            resource_attributes={"owner_id": "db-u1", "tenant_id": "t1"},
             environment={},
         )
 
 
 class PDP:
     def evaluate(self, value):
-        allow = value["action"] == "file.read" and value["resource"].get("owner_id") == value["subject"]["id"]
+        allow = value["action"] == "file.read" and value["resource"].get("owner_id") == value["subject"].get("user_id")
         return OPADecision(allow, "permitted" if allow else "no_matching_permit",
                            {"allow": allow, "reason": "permitted" if allow else "no_matching_permit"})
 
