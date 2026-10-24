@@ -11,7 +11,7 @@ import re
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from .durable import IdempotencyConflict, OperationOutcomeUnknown, OperationStateError
+from .durable import IdempotencyConflict, OperationOutcomeUnknown, OperationStateError, strict_json_loads
 from .gateway import (
     AuthorizationDenied,
     ContextChanged,
@@ -92,8 +92,8 @@ def make_server(
                 self._error(400, "incomplete_request_body")
                 return
             try:
-                payload = json.loads(raw)
-            except (UnicodeDecodeError, json.JSONDecodeError):
+                payload = strict_json_loads(raw)
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
                 self._error(400, "invalid_json")
                 return
             if not isinstance(payload, dict) or set(payload) - {"action", "resource", "arguments"}:
