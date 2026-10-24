@@ -1,4 +1,4 @@
-# Production-oriented deployment guide (phase 1)
+# Production-oriented deployment guide
 
 ## What this code now provides
 
