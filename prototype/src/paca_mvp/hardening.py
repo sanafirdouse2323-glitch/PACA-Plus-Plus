@@ -125,6 +125,28 @@ class OPAClient:
         self.bearer_token = bearer_token
         self.timeout_seconds = timeout_seconds
 
+    def get_policy_version(self) -> str:
+        """Fetch the active version marker from OPA immediately before effect commit."""
+        req = Request(self.base_url + "/v1/data/paca/authz/policy_version",
+                      headers={"Accept": "application/json"}, method="GET")
+        if self.bearer_token:
+            req.add_header("Authorization", "Bearer " + self.bearer_token)
+        try:
+            with urlopen(req, timeout=self.timeout_seconds) as response:
+                if response.status != 200:
+                    raise PolicyUnavailable(f"OPA version query returned HTTP {response.status}")
+                raw = response.read(65537)
+                if len(raw) > 65536:
+                    raise PolicyUnavailable("OPA version response exceeded 64 KiB")
+            payload = json.loads(raw.decode("utf-8"))
+            version = payload["result"]
+            if not isinstance(version, str) or not version.strip():
+                raise ValueError("policy version must be a non-empty string")
+            return version
+        except (HTTPError, URLError, TimeoutError, OSError, UnicodeDecodeError,
+                json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise PolicyUnavailable("could not retrieve active OPA policy version") from exc
+
     def decide(self, request: Mapping[str, Any]) -> dict[str, Any]:
         body = _canonical_json({"input": dict(request)}).encode("utf-8")
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -516,7 +538,21 @@ class GuardedGateway:
         request = {"principal": identity_context["identity"], "action": action,
                    "resource": resource, "arguments": dict(arguments), "context": context}
         decision = self.opa.decide(request)
-        request_hash = _digest(request)
+        # Exclude volatile JWT timestamps and authentication-observation time from
+        # the idempotency fingerprint, while retaining identity and authorization
+        # claims that can change the policy outcome.
+        stable_identity = dict(identity_context["identity"])
+        stable_identity.pop("authenticated_at", None)
+        stable_claims = dict(stable_identity.get("claims", {}))
+        for temporal_claim in ("exp", "iat", "nbf", "jti"):
+            stable_claims.pop(temporal_claim, None)
+        stable_identity["claims"] = stable_claims
+        stable_request = dict(request)
+        stable_request["principal"] = stable_identity
+        stable_context = dict(context)
+        stable_context["identity"] = stable_identity
+        stable_request["context"] = stable_context
+        request_hash = _digest(stable_request)
         if not decision["allowed"]:
             with self.store._connect() as db:
                 db.execute("BEGIN IMMEDIATE")
@@ -533,8 +569,12 @@ class GuardedGateway:
                                      decision["policy_version"], idempotency_key=idempotency_key)
         # Adapter must make this downstream key durable/idempotent or provide a
         # reconciliation API. Local authorization cannot make arbitrary APIs atomic.
+        # Check the live marker again immediately before the guarded effect. This
+        # narrows (but cannot eliminate) the distributed race with OPA bundle reload;
+        # high-assurance deployments must coordinate policy rollout with effect commit.
+        current_policy_version = self.opa.get_policy_version()
         return self.store.execute(
-            permit_id, action, resource, request_hash, decision["policy_version"],
+            permit_id, action, resource, request_hash, current_policy_version,
             lambda: adapter.invoke(action, resource, arguments, idempotency_key),
             idempotency_key=idempotency_key,
         )
