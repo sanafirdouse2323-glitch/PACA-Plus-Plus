@@ -1,35 +1,37 @@
-# PACA++ Research Prototype MVP
+# PACA++ Research Prototype
 
-This is a runnable research prototype kept separate from the repository's original ALFA/UCON+ goal. It currently uses a small JSON policy format; it does **not** yet parse or compile ALFA/UCON+ policies or invoke real external tools.
+The repository keeps its original ALFA/UCON+ compiler goal distinct from its Python research prototypes. The checked-in Python package currently does not parse or compile ALFA/UCON+ policies.
 
 ## Requirements
-- Python 3.10 or newer
-- No third-party runtime dependencies for direct execution
+
+- Python 3.10 or newer.
+- PyJWT with cryptography support is installed by the project package for configured RS256/OIDC verification.
+- Docker is needed only for the real OPA policy smoke test.
 
 ## Run from this directory
 
-```bash
+~~~bash
+python -m pip install -e .
 python -m unittest discover -s tests -v
 python examples/demo.py
 python experiments/run_experiments.py
-python examples/authorize.py --policy examples/policy.json --context examples/context.json --action file.read --resource file:report-1 --execute
-```
+docker compose up -d opa
+python examples/opa_smoke.py
+docker compose down
+~~~
 
-The final command evaluates the JSON policy and, when permitted, performs only a **simulated** effect. It never reads a real file or calls an external tool.
+The old **AuthorizationEngine** still uses a process-local permit store and its demo runs only a simulated effect. The separate hardening path adds **OPAClient**, **OIDCJWTIdentityProvider**, **HTTPAuthorizationContextProvider**, **SQLitePermitStore**, **GuardedGateway**, **FilesystemToolAdapter**, and **HTTPJSONToolAdapter**. See [the hardening guide](docs/SECURITY_HARDENING.md) for configuration and limitations.
 
-To try a denied action, change `--action file.read` to `--action file.delete`. The CLI prints a JSON decision and does not execute the simulated effect after denial.
+## Security boundaries
 
-## Implemented safeguards
-- Default deny when no permit rule matches.
-- Missing attributes fail closed, including `ne`.
-- Exact action and resource binding at effect time.
-- Deny-overrides policy combination.
-- Short-lived, one-use permits.
-- Policy/state version revalidation.
-- A local lock around permit validation and the effect callback.
-- Tests for substitution, replay, stale state/policy, namespace confusion, and concurrent replay.
+- OPA decision failures, missing or malformed permit results, and missing active policy versions must fail closed.
+- The OIDC adapter verifies RS256 signatures and issuer/audience/expiry claims against a configured HTTPS JWKS endpoint. A real identity provider, suitable claims, and revocation/tenant policy remain deployment responsibilities.
+- The trusted context provider must be an administrator-configured service. Caller-supplied identity and role claims are not authorization context.
+- SQLite transactions coordinate processes sharing one local database file; SQLite is not the multi-host coordination store for a distributed deployment.
+- Durable permits and idempotency records prevent automatic replay. A crash during a remote effect results in an **unknown** operation requiring downstream reconciliation; local SQLite and an arbitrary remote service do not share an atomic transaction.
+- **verify_audit_chain()** detects un-recomputed edits in the stored hash chain, but is not tamper-proof against an attacker who can rewrite the database.
+- The HTTP adapter requires preconfigured routes and HTTPS and sends a downstream idempotency key. It cannot force the remote API to honor that key.
+- The filesystem adapter confines access to admin-configured logical resources under a configured root and uses POSIX no-follow path traversal. Run it with least privilege and do not expose it to untrusted callers without the gateway.
+- The sample Rego file is illustrative, and its version marker must be incremented as policy changes. Production deployments should use verified policy bundles/revisions, secure OPA, and coordinate policy rollout with effects.
 
-## Limitations
-This is a research scaffold, not a production authorization service. It uses an in-memory, process-local permit store and assumes trusted identity/context and stable resource identifiers. The local lock does not provide distributed transactions or undo a remote side effect. There is no production identity provider, durable tamper-resistant audit, complete ALFA/UCON+ DSL, real ASP/Cedar backend, external tool adapter, formal proof, or independently validated novelty claim.
-
-See [the design specification](docs/PACA_Prototype_Full_Design.md), [threat model](THREAT_MODEL.md), and [local verification report](docs/LOCAL_VERIFICATION_REPORT.md).
+These components are a hardening foundation—not a production-readiness claim, independent security audit, formal proof, standards-compliance claim, or proof of research novelty.
