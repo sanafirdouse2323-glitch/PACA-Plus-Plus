@@ -237,6 +237,13 @@ class SQLitePermitStore:
         if busy_timeout_ms < 1 or busy_timeout_ms > 120000:
             raise ValueError("busy_timeout_ms must be between 1 and 120000")
         os.makedirs(os.path.dirname(os.path.abspath(database_path)), exist_ok=True)
+        # Create the database with private permissions from the first byte, rather
+        # than relying only on a chmod after SQLite has opened it.
+        try:
+            fd = os.open(database_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+            os.close(fd)
+        except FileExistsError:
+            os.chmod(database_path, 0o600)
         self.database_path = database_path
         self.busy_timeout_ms = busy_timeout_ms
         with self._connect() as db:
