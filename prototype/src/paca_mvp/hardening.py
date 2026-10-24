@@ -145,6 +145,8 @@ class OPAClient:
                 or "?" in decision_path or "#" in decision_path):
             raise ValueError("decision_path must be a path under OPA /v1/data/ without query/fragment")
         if policy_version_path is None:
+            if decision_path.rsplit("/", 1)[-1] != "decision":
+                raise ValueError("custom decision paths must specify policy_version_path explicitly")
             parent = decision_path.rsplit("/", 1)[0]
             policy_version_path = parent + "/policy_version"
         if (not policy_version_path.startswith("/v1/data/") or ".." in policy_version_path
