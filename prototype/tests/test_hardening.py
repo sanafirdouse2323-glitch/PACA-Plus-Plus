@@ -72,6 +72,13 @@ class OPAClientTests(unittest.TestCase):
             with self.assertRaises(PolicyUnavailable):
                 client.get_policy_version()
 
+    def test_request_size_and_non_json_values_fail_closed(self):
+        client = OPAClient("http://127.0.0.1:8181", max_request_bytes=10)
+        with self.assertRaises(PolicyUnavailable):
+            client.decide({"action": "file.read"})
+        with self.assertRaises(PolicyUnavailable):
+            OPAClient("http://127.0.0.1:8181").decide({"number": float("nan")})
+
     def test_network_failure_fails_closed(self):
         with patch("paca_mvp.hardening._urlopen_no_redirect", side_effect=URLError("offline")):
             with self.assertRaises(PolicyUnavailable):
@@ -88,12 +95,13 @@ class DurableStoreTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def issue(self, key="request-1"):
+    def issue(self, key="request-1", actor=None):
         return self.store.issue("file.write", "file:report-1", self.request_hash,
-                                "policy-v1", idempotency_key=key)
+                                "policy-v1", idempotency_key=key, actor=actor)
 
     def test_durability_and_idempotent_replay_after_reopen(self):
-        permit_id = self.issue()
+        actor = {"subject": "user-17", "issuer": "https://issuer.example", "audience": "paca-api"}
+        permit_id = self.issue(actor=actor)
         calls = []
         result = self.store.execute(permit_id, "file.write", "file:report-1",
                                     self.request_hash, "policy-v1",
@@ -109,6 +117,11 @@ class DurableStoreTests(unittest.TestCase):
         self.assertEqual(permit_id, same_id)
         self.assertEqual(result, result2)
         self.assertEqual(calls, ["once"])
+        events = reopened.audit_events()
+        issue_event = next(event for event in events if event["event"] == "permit_issued")
+        completed_event = next(event for event in events if event["event"] == "effect_completed")
+        self.assertEqual(issue_event["details"]["actor"], actor)
+        self.assertEqual(completed_event["details"]["actor"], actor)
         self.assertTrue(reopened.verify_audit_chain())
 
     def test_same_idempotency_key_cannot_be_rebound_to_another_request(self):
