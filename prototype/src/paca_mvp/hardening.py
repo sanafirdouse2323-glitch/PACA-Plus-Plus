@@ -68,7 +68,7 @@ def _utcnow() -> str:
 
 
 def _canonical_json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
 
 
 def _digest(value: Any) -> str:
@@ -132,7 +132,8 @@ class OPAClient:
     connection errors raise PolicyUnavailable and must never turn into a permit.
     """
     def __init__(self, base_url: str, decision_path: str = "/v1/data/paca/authz/decision",
-                 bearer_token: str | None = None, timeout_seconds: float = 2.0):
+                 bearer_token: str | None = None, timeout_seconds: float = 2.0,
+                 max_request_bytes: int = 1_048_576):
         parsed = urlparse(base_url)
         loopback_http = parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
         if parsed.scheme != "https" and not loopback_http:
@@ -171,7 +172,12 @@ class OPAClient:
             raise PolicyUnavailable("could not retrieve active OPA policy version") from exc
 
     def decide(self, request: Mapping[str, Any]) -> dict[str, Any]:
-        body = _canonical_json({"input": dict(request)}).encode("utf-8")
+        try:
+            body = _canonical_json({"input": dict(request)}).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise PolicyUnavailable("OPA input is not valid canonical JSON") from exc
+        if len(body) > self.max_request_bytes:
+            raise PolicyUnavailable("OPA input exceeded configured request limit")
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if self.bearer_token:
             headers["Authorization"] = "Bearer " + self.bearer_token
@@ -270,6 +276,11 @@ class SQLitePermitStore:
                 db.execute("ALTER TABLE permits ADD COLUMN actor_json TEXT")
             db.execute("PRAGMA journal_mode=WAL")
             db.execute(f"PRAGMA busy_timeout={int(self.busy_timeout_ms)}")
+        # Permit/audit rows can contain protected result data; keep the local
+        # database and any already-created WAL sidecars accessible only to its owner.
+        for filename in (self.database_path, self.database_path + "-wal", self.database_path + "-shm"):
+            if os.path.exists(filename):
+                os.chmod(filename, 0o600)
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.database_path, timeout=self.busy_timeout_ms / 1000,
