@@ -73,7 +73,7 @@ def test_authenticator_verifies_signature_issuer_audience_and_required_claims(rs
 
 
 def test_authenticator_pins_rs256_and_rejects_unsigned_or_hmac_tokens(rsa_keys):
-    private, public = rsa_keys
+    _private, public = rsa_keys
     auth = JWTAuthenticator(ISSUER, AUDIENCE, "https://identity.example.org/jwks", jwks_client=FakeJWKS(public))
     now = datetime.now(UTC)
     token = jwt.encode(
