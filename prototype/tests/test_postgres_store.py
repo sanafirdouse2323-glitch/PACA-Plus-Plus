@@ -64,6 +64,13 @@ class PostgresPermitStoreTests(unittest.TestCase):
                      if event["event"] == "effect_completed" and event["permit_id"] == permit_id]
         self.assertEqual(completed[-1]["details"]["actor"], self.actor)
 
+    def test_request_fingerprint_must_be_sha256_hex(self):
+        with self.assertRaisesRegex(ValueError, "SHA-256"):
+            self.store.issue(
+                self.action, self.resource, "invalid", self.policy_version,
+                idempotency_key="bad-hash:" + uuid.uuid4().hex,
+            )
+
     def test_idempotency_key_cannot_be_rebound(self):
         self.issue()
         with self.assertRaises(IdempotencyConflict):
