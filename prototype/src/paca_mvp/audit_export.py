@@ -40,6 +40,9 @@ class AuditSink(Protocol):
 
 
 class AuditOutboxStore(Protocol):
+    def verify_audit_chain(self) -> bool:
+        """Verify the retained local audit chain and its separately stored head."""
+        ...
     def claim_audit_outbox(
         self, worker_id: str, limit: int = 100, lease_seconds: int = 30
     ) -> list[dict[str, Any]]: ...
@@ -150,6 +153,13 @@ class AuditOutboxWorker:
         self.max_retry_seconds = max_retry_seconds
 
     def run_once(self, limit: int = 100) -> dict[str, int]:
+        # Refuse to export any local event if the chain integrity check fails.
+        # This is tamper-evidence, not protection against an attacker who can
+        # rewrite the entire chain/head or control the database administrator.
+        if not self.store.verify_audit_chain():
+            raise HardeningError(
+                "local audit chain failed verification; refusing to export events"
+            )
         claimed = self.store.claim_audit_outbox(
             self.worker_id, limit=limit, lease_seconds=self.lease_seconds
         )
