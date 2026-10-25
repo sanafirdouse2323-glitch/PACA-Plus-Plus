@@ -86,6 +86,22 @@ result = gateway.authorize_and_execute(
 
 For the ticket example, the context tables must contain a tenant registration for `ticket-collection:default` and an active support principal with `can_create_tickets=true` and `suspended=false`. A file resource must be registered with an internal owner principal ID in the same tenant. These records are not seeded automatically. In production, grant the context service only `SELECT` on `paca_context_principals` and `paca_context_resources`; use a separately authenticated administrator process to change roles, capabilities, ownership, activation, or suspension. The OPA client requires a bearer token for non-loopback HTTPS OPA endpoints; loopback HTTP is permitted only for local development. The protected HTTP adapter also requires a configured bearer token. Do not expose OPA's unauthenticated admin/decision endpoint to untrusted networks.
 
+## Independent audit delivery
+
+Every new local audit event and its outbox delivery intent are committed in the same SQLite or PostgreSQL transaction. Migration 003 adds the PostgreSQL outbox; the migration runner validates the retained audit chain and queues historical entries that predate the outbox. SQLite queues retained valid events during store initialization. The worker uses leases so multiple instances can share PostgreSQL, and bounded exponential retry avoids a tight loop during sink outages.
+
+Configure the destination URL and service token in .env (or inject them from a secrets manager), then run a single batch:
+
+~~~bash
+cd prototype
+python -m pip install -e ".[web,test]"
+python -m paca_mvp.audit_export --once
+~~~
+
+Run without --once for a polling worker. The command reads PACA_DATABASE_URL for PostgreSQL or PACA_SQLITE_PATH for a single-host SQLite store, plus PACA_AUDIT_SINK_URL and PACA_AUDIT_SINK_TOKEN. Monitor the JSON output's outbox.pending, retry_scheduled, retry_state_errors, and ack_state_errors; alert on persistent backlog and delivery failures. The exporter stores only exception *types* for retry diagnostics, not raw error messages.
+
+The HTTPS receiver contract is intentionally explicit: validate the event hash, durably append before returning 2xx, deduplicate by the Idempotency-Key/event ID, and reject conflicting reuse. Delivery is **at least once**, not exactly once: if the receiver commits but the worker crashes before acknowledging the local outbox row, the event may be sent again. The receiver must deduplicate. Point the endpoint to a receiver backed by independently controlled append-only or WORM storage with access restrictions and retention controls. This repo includes the exporter and contract, not a deployed WORM destination or proof that a chosen receiver is immutable. Do not put real sink credentials in source control.
+
 ## Guarantees and boundaries
 
 - When all relevant effects go through **GuardedGateway** and a supplied adapter, a missing/invalid decision fails closed, the permit is bound to the canonical JSON request fingerprint, identity and trusted context are rechecked immediately before the effect, and the persistent claim prevents a second local execution claim for the same permit. This narrows time-of-check/time-of-use exposure but cannot make OPA, the context database, permit database, and a remote side effect one atomic transaction.
@@ -93,7 +109,7 @@ For the ticket example, the context tables must contain a tenant registration fo
 - The sample filesystem adapter applies file effects, but its root directory, resource mapping, process privileges, mount configuration, and threat model still matter. Restrict OS permissions and run it with least privilege.
 - SQLite is for single-host development/deployment. Use a transactional shared database with appropriate isolation/locking for multi-host replicas. The PostgreSQL adapter is included and CI integration-tested, but production deployments still need managed database provisioning, least-privilege roles, TLS/network restrictions, migrations, backups and operational monitoring.
 - OIDC revocation and tenant-specific authorization still depend on the configured issuer and context service. JWT signature validation alone does not establish every application-specific authorization fact.
-- The audit hash chain and stored head detect some tampering, including tail truncation if the head is not rewritten; they are not equivalent to an external WORM log, a signature, or a tamper-proof audit guarantee.
+- The audit hash chain and stored head detect some tampering, including tail truncation if the head is not rewritten; they are not equivalent to an external WORM log, a signature, or a tamper-proof audit guarantee. The transactional outbox preserves export intent with each audit event and retries delivery, but remote delivery is at least once and depends on an independently controlled, idempotent destination.
 - The sample uses a manually versioned Rego policy marker (`paca-example-v4` in this branch). Version 4 binds ownership to internal principal IDs and tenant IDs instead of raw OIDC subjects. Production should validate and pin signed bundles, expose immutable bundle revisions, secure the OPA management plane, configure decision logs, and coordinate policy version changes with the protected effect boundary.
 - This does not complete or validate the repository's original ALFA/UCON+ parser/compiler, establish formal correctness, certify compliance, demonstrate a novel research contribution, or constitute an independent security audit.
 
@@ -103,5 +119,5 @@ For the ticket example, the context tables must contain a tenant registration fo
 2. Configure a real OIDC issuer/JWKS, claim mapping, token lifetime/revocation policy, and a trusted authorization-context service.
 3. Use PostgresPermitStore for multi-host deployment with a managed PostgreSQL instance, a least-privilege runtime role, TLS/network restrictions, explicit schema migrations, backups and disaster recovery; reserve SQLite for single-host use. Apply all numbered migrations with the dedicated migration DSN using `python examples/apply_postgres_migration.py`, then run the gateway with `PACA_DATABASE_AUTO_MIGRATE=false`.
 4. Require durable downstream idempotency or reconciliation for each remote effect; exercise timeout-after-commit and process-kill recovery tests against a non-production service.
-5. Send audit events to an independently controlled log, restrict database and secret access, and define incident response.
+5. Configure and operate the audit outbox exporter to deliver to an independently controlled append-only/WORM destination. Verify deduplication, retention, alerting, backlog handling and restore procedures. Restrict database and secret access, and define incident response.
 6. Run the full CI suite, real OPA integration smoke, concurrency/fault-injection tests, adapter-specific adversarial tests, and a human security review against the deployment threat model.
