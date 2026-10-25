@@ -1,0 +1,42 @@
+name: Temporary Ruff import fix
+
+on:
+  push:
+    branches:
+      - production/phase-1-security-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  fix-imports:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: production/phase-1-security-hardening
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ruff
+        run: python -m pip install "ruff>=0.8,<1"
+
+      - name: Apply only import-order fixes
+        run: ruff check --select I --fix production_service
+
+      - name: Commit formatting changes if needed
+        run: |
+          if git diff --quiet; then
+            echo "No import fixes needed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add production_service
+          git commit -m "Fix production service import ordering"
+          git push origin HEAD:production/phase-1-security-hardening
