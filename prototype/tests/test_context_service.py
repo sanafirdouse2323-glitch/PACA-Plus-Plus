@@ -90,6 +90,18 @@ class ContextServiceHTTPTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 401)
         self.assertEqual(self.repo.calls, [])
 
+    def test_oversized_context_request_is_rejected_before_json_parsing(self):
+        response = self.client.post(
+            "/v1/attributes",
+            content=b"x" * (16 * 1024 + 1),
+            headers={
+                "Authorization": "Bearer " + TOKEN,
+                "Content-Type": "application/json",
+            },
+        )
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(self.repo.calls, [])
+
     def test_duplicate_authorization_headers_are_rejected_before_lookup(self):
         response = self.call_context(headers=[
             ("Authorization", "Bearer " + TOKEN),
