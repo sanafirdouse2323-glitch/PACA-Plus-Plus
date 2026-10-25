@@ -14,8 +14,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from paca_mvp.hardening import (
-    ContextUnavailable, GuardedGateway, OPAClient, PermitRejected,
-    SQLitePermitStore, TrustedPrincipal,
+    AuthenticationFailed, ContextUnavailable, GuardedGateway, OPAClient,
+    PermitRejected, SQLitePermitStore, TrustedPrincipal,
 )
 from paca_mvp.providers import HTTPAuthorizationContextProvider, OIDCJWTIdentityProvider
 
@@ -83,7 +83,7 @@ class OIDCIdentityTests(unittest.TestCase):
                 return SigningKey()
 
         with patch("jwt.PyJWKClient", return_value=FakeJWKClient()):
-            with self.assertRaises(ContextUnavailable):
+            with self.assertRaises(AuthenticationFailed):
                 self.provider.authenticate(self.token(iss="https://attacker.example"))
             with self.assertRaises(ContextUnavailable):
                 self.provider.authenticate(self.token(aud="different-api"))
