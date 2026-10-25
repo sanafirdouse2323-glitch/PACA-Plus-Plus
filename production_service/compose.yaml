@@ -22,10 +22,9 @@ services:
 
   opa:
     image: openpolicyagent/opa:1.21.3@sha256:22a9db16423b94d2acbd4a94da3bebeb79583ed6a52ac15cad459d3de2dbbc4d
-    command: ["run", "--server", "--addr=0.0.0.0:8181", "--log-format=json", "/policies"]
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "--log-format=json", "/bundle"]
     volumes:
-      - ./opa/policies:/policies:ro
-      - ./opa/data.json:/policies/data.json:ro
+      - ./opa:/bundle:ro
     restart: unless-stopped
     networks: [control-plane]
     security_opt: ["no-new-privileges:true"]
