@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import httpx
 import jwt
-import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
+import pytest
 from jwt.exceptions import PyJWKClientConnectionError
 
 from paca_service.auth import (
@@ -54,7 +54,7 @@ def rsa_keys():
 
 
 def test_authenticator_verifies_signature_issuer_audience_and_required_claims(rsa_keys):
-    private, public = rsa_keys
+    _private, public = rsa_keys
     auth = JWTAuthenticator(ISSUER, AUDIENCE, "https://identity.example.org/jwks", jwks_client=FakeJWKS(public))
     principal = auth.authenticate(signed_token(private))
     assert principal.subject == "alice"
