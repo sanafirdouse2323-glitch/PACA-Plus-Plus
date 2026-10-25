@@ -164,6 +164,56 @@ class TrustedContextTests(unittest.TestCase):
 
 
 class PolicyRolloverTests(unittest.TestCase):
+    def test_fresh_opa_deny_blocks_effect_even_when_policy_version_is_same(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = SQLitePermitStore(str(Path(temp) / "paca.sqlite3"))
+            principal = TrustedPrincipal(
+                "user-17", "https://issuer.example", "paca-api",
+                {"sub": "user-17", "suspended": False},
+                "2026-01-01T00:00:00+00:00",
+            )
+
+            class IdP:
+                def authenticate(self, credential):
+                    return principal
+
+            class Context:
+                def get_context(self, *args):
+                    return {
+                        "authorization": {"role": "analyst", "suspended": False},
+                        "resource": {"owner": "user-17"},
+                    }
+
+            class OPA:
+                calls = 0
+                def decide(self, request):
+                    self.calls += 1
+                    return {
+                        "allowed": self.calls == 1,
+                        "policy_version": "v1",
+                        "reason": "initial_permit" if self.calls == 1 else "fresh_deny",
+                    }
+                def get_policy_version(self):
+                    return "v1"
+
+            class Adapter:
+                called = False
+                def invoke(self, *args):
+                    self.called = True
+                    return {"unsafe": True}
+
+            opa, adapter = OPA(), Adapter()
+            gateway = GuardedGateway(opa, store, IdP(), Context())
+            with self.assertRaisesRegex(PermitRejected, "current authorization policy denied"):
+                gateway.authorize_and_execute(
+                    "credential", "file.read", "file:report-1", {},
+                    adapter, "idem-fresh-deny",
+                )
+            self.assertEqual(opa.calls, 2)
+            self.assertFalse(adapter.called)
+            self.assertTrue(store.verify_audit_chain())
+            self.assertEqual(store.audit_events()[-1]["event"], "permit_rejected")
+
     def test_current_suspension_change_before_effect_blocks_permit(self):
         with tempfile.TemporaryDirectory() as temp:
             store = SQLitePermitStore(str(Path(temp) / "paca.sqlite3"))
