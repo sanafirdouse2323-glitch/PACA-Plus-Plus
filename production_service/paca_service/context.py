@@ -31,7 +31,7 @@ class AuthorizationContextProvider:
             raise ResourceNotFound("resource_not_found")
         attributes = row.get("attributes") or {}
         if not isinstance(attributes, dict):
-            raise RuntimeError("resource_attributes_invalid")
+            raise TypeError("resource_attributes_invalid")
         return {
             "principal": {
                 "id": principal.subject,
