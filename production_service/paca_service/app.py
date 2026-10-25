@@ -21,8 +21,8 @@ from .adapters import (
 from .auth import AuthenticationError, IdentityProviderUnavailable, JWTAuthenticator, Principal
 from .config import Settings
 from .context import AuthorizationContextProvider, ResourceNotFound
-from .opa import OPAClient, PolicyEngineUnavailable
 from .http_boundary import RequestBoundaryMiddleware
+from .opa import OPAClient, PolicyEngineUnavailable
 from .security import InvalidCanonicalValue, canonical_digest
 
 logger = logging.getLogger("paca_service")
