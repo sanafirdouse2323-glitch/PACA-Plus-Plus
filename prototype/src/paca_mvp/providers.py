@@ -20,7 +20,7 @@ import threading
 from datetime import datetime, timezone
 
 from .hardening import (
-    ContextUnavailable, TrustedPrincipal, _canonical_json,
+    AuthenticationFailed, ContextUnavailable, TrustedPrincipal, _canonical_json,
     _validate_identifier, _urlopen_no_redirect,
 )
 
@@ -54,7 +54,7 @@ class OIDCJWTIdentityProvider:
 
     def authenticate(self, credential: str) -> TrustedPrincipal:
         if not isinstance(credential, str) or not credential or len(credential) > 16384:
-            raise ContextUnavailable("missing or invalid bearer credential")
+            raise AuthenticationFailed("missing or invalid bearer credential")
         try:
             import jwt
             with self._client_lock:
@@ -84,7 +84,7 @@ class OIDCJWTIdentityProvider:
                 claims=claims, authenticated_at=datetime.now(timezone.utc).isoformat(),
             )
         except Exception as exc:
-            raise ContextUnavailable("credential verification failed") from exc
+            raise AuthenticationFailed("credential verification failed") from exc
 
 
 class HTTPAuthorizationContextProvider:
