@@ -35,7 +35,7 @@ The OPA and PostgreSQL Compose ports are bound to loopback. PostgreSQL is enable
 ## Run the HTTP gateway
 
 1. Configure a real OIDC issuer, audience and JWKS endpoint, a trusted HTTPS context service, OPA, a downstream HTTPS API and its idempotency semantics in `.env` using `.env.example` as a template. Never commit real secrets.
-2. Start local OPA and PostgreSQL: `docker compose up -d opa` and `docker compose --profile integration up -d postgres`. Local startup auto-initializes the schema by default. For production, apply `migrations/001_postgres_schema.sql` using a migration role and set `PACA_DATABASE_AUTO_MIGRATE=false` for the runtime service.
+2. Start local OPA and PostgreSQL: `docker compose up -d opa` and `docker compose --profile integration up -d postgres`. Local startup auto-initializes the schema by default. To apply the checked-in migration explicitly, set `PACA_MIGRATION_DSN` to the intended database URL and run `python examples/apply_postgres_migration.py`. For production, use a dedicated migration role, then set `PACA_DATABASE_AUTO_MIGRATE=false` for the runtime service. Non-loopback PostgreSQL DSNs must use `sslmode=verify-full`.
 3. Load your environment in the shell (for example, `set -a; . ./.env; set +a`) and run `uvicorn paca_mvp.service:create_app --factory --host 127.0.0.1 --port 8080`.
 4. Call `POST /v1/tickets` with a valid `Authorization: Bearer ...`, a stable `Idempotency-Key`, and a JSON body such as `{"title":"Example","description":"Details" }`. The endpoint fixes the action/resource itself; callers cannot choose the adapter, URL or route.
 5. Use `GET /readyz` to check OPA and database readiness. It is not a substitute for downstream/context-service health checks.
@@ -98,7 +98,7 @@ For the ticket example, the trusted context service must return an authorization
 
 1. Deploy an authenticated/TLS-protected OPA instance, verify policy bundles and pin a bundle revision.
 2. Configure a real OIDC issuer/JWKS, claim mapping, token lifetime/revocation policy, and a trusted authorization-context service.
-3. Use PostgresPermitStore for multi-host deployment with a managed PostgreSQL instance, least-privilege role, TLS/network restrictions, schema migrations, backups and disaster recovery; reserve SQLite for single-host use.
+3. Use PostgresPermitStore for multi-host deployment with a managed PostgreSQL instance, a least-privilege runtime role, TLS/network restrictions, explicit schema migrations, backups and disaster recovery; reserve SQLite for single-host use. Apply `migrations/001_postgres_schema.sql` with the dedicated migration DSN using `python examples/apply_postgres_migration.py`, then run the service with `PACA_DATABASE_AUTO_MIGRATE=false`.
 4. Require durable downstream idempotency or reconciliation for each remote effect; exercise timeout-after-commit and process-kill recovery tests against a non-production service.
 5. Send audit events to an independently controlled log, restrict database and secret access, and define incident response.
 6. Run the full CI suite, real OPA integration smoke, concurrency/fault-injection tests, adapter-specific adversarial tests, and a human security review against the deployment threat model.
