@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -199,6 +200,36 @@ class DurableStoreTests(unittest.TestCase):
         with self.assertRaises(EffectOutcomeUnknown):
             self.store.issue("file.write", "file:report-1", self.request_hash,
                              "policy-v1", idempotency_key="request-1")
+        self.assertTrue(self.store.verify_audit_chain())
+
+    def test_completion_persistence_failure_is_unknown_and_never_replays_effect(self):
+        permit_id = self.issue()
+        calls = []
+        original_audit = self.store._audit
+
+        def fail_completion_audit(db, event, permit_id_arg, action, resource, details):
+            if event == "effect_completed":
+                raise sqlite3.OperationalError("simulated audit storage failure")
+            return original_audit(db, event, permit_id_arg, action, resource, details)
+
+        with patch.object(self.store, "_audit", side_effect=fail_completion_audit):
+            with self.assertRaises(EffectOutcomeUnknown):
+                self.store.execute(
+                    permit_id, "file.write", "file:report-1", self.request_hash,
+                    "policy-v1", lambda: calls.append("called") or {"ok": True},
+                    idempotency_key="request-1",
+                )
+
+        self.assertEqual(calls, ["called"])
+        # Phase-1's durable executing claim survived phase-2 rollback.
+        with self.assertRaises(EffectOutcomeUnknown):
+            self.store.execute(
+                permit_id, "file.write", "file:report-1", self.request_hash,
+                "policy-v1", lambda: calls.append("unsafe-replay") or {"ok": False},
+                idempotency_key="request-1",
+            )
+        self.assertEqual(calls, ["called"])
+        self.assertEqual(self.store.mark_unknown_operations_for_reconciliation(), 1)
         self.assertTrue(self.store.verify_audit_chain())
 
     def test_crash_recovery_marks_claimed_effect_unknown_not_replayable(self):
