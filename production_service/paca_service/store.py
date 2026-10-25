@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 import json
 import re
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -98,7 +98,7 @@ class PostgresStore:
         request_id: str | None,
     ) -> PermitRecord:
         permit_id = uuid4()
-        expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+        expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
         with self.pool.connection() as conn:
             with conn.transaction():
                 conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (tenant_id,))
@@ -241,7 +241,7 @@ class PostgresStore:
                     if prior_by_permit and prior_by_permit["idempotency_key"] == idempotency_key:
                         return self._existing_claim(prior_by_permit, request_digest)
                     mismatch = "permit_not_issued"
-                elif permit["expires_at"] <= datetime.now(timezone.utc):
+                elif permit["expires_at"] <= datetime.now(UTC):
                     conn.execute(
                         "UPDATE authz_permits SET status = 'expired', updated_at = now() WHERE permit_id = %s",
                         (permit_uuid,),
