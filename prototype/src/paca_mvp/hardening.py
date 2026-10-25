@@ -479,11 +479,12 @@ class SQLitePermitStore:
             db.execute("BEGIN IMMEDIATE")
             try:
                 rows = db.execute("""
-                    SELECT event_id,payload_json,attempts
-                    FROM audit_outbox
-                    WHERE delivered_at IS NULL AND next_attempt_at <= ?
-                      AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
-                    ORDER BY sequence LIMIT ?
+                    SELECT o.event_id,o.payload_json,o.attempts,a.event_hash AS source_event_hash
+                    FROM audit_outbox AS o
+                    LEFT JOIN audit AS a ON a.event_id=o.event_id
+                    WHERE o.delivered_at IS NULL AND o.next_attempt_at <= ?
+                      AND (o.lease_expires_at IS NULL OR o.lease_expires_at <= ?)
+                    ORDER BY o.sequence LIMIT ?
                 """, (now_text, now_text, limit)).fetchall()
                 claimed = []
                 for row in rows:
@@ -496,6 +497,7 @@ class SQLitePermitStore:
                         "event_id": row["event_id"],
                         "payload_json": row["payload_json"],
                         "attempts": int(row["attempts"]) + 1,
+                        "source_event_hash": row["source_event_hash"],
                     })
                 db.commit()
                 return claimed
