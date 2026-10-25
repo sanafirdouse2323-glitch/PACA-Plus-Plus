@@ -160,6 +160,8 @@ class OPAClient:
             raise ValueError("timeout_seconds must be positive")
         if max_request_bytes < 1:
             raise ValueError("max_request_bytes must be positive")
+        if parsed.scheme == "https" and (not bearer_token or not bearer_token.strip()):
+            raise ValueError("remote OPA requires a configured bearer token with this client")
         self.base_url = base_url.rstrip("/")
         self.decision_path = decision_path
         self.policy_version_path = policy_version_path
