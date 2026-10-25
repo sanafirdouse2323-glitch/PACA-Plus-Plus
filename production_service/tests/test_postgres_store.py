@@ -5,10 +5,10 @@ from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
 import psycopg
+import pytest
 from psycopg.errors import InsufficientPrivilege
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
-import pytest
 
 from paca_service.security import canonical_digest
 from paca_service.store import PostgresStore
@@ -154,12 +154,10 @@ class TestPostgresStoreIntegration:
                 (self.tenant_id,),
             ).fetchone()
         assert row is not None
-        with pytest.raises(InsufficientPrivilege):
-            with self.store.pool.connection() as conn:
-                conn.execute(
-                    "UPDATE audit_events SET event_type = 'tampered' WHERE event_id = %s",
-                    (row["event_id"],),
-                )
-        with pytest.raises(InsufficientPrivilege):
-            with self.store.pool.connection() as conn:
-                conn.execute("DELETE FROM audit_events WHERE event_id = %s", (row["event_id"],))
+        with pytest.raises(InsufficientPrivilege), self.store.pool.connection() as conn:
+            conn.execute(
+                "UPDATE audit_events SET event_type = 'tampered' WHERE event_id = %s",
+                (row["event_id"],),
+            )
+        with pytest.raises(InsufficientPrivilege), self.store.pool.connection() as conn:
+            conn.execute("DELETE FROM audit_events WHERE event_id = %s", (row["event_id"],))
