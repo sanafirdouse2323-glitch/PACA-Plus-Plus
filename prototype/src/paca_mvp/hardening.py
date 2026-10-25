@@ -645,7 +645,10 @@ class SQLitePermitStore:
                                     {"actor": actor, "reason": "pre_effect_check_failed",
                                      "exception_type": type(exc).__name__})
                         db.commit()
-                        if isinstance(exc, (PermitRejected, PolicyUnavailable)):
+                        if isinstance(exc, (
+                            PermitRejected, PolicyUnavailable, ContextUnavailable,
+                            AuthenticationFailed, IdentityProviderUnavailable,
+                        )):
                             raise
                         raise PermitRejected("pre-effect validation failed; no effect was invoked") from exc
 
@@ -850,9 +853,78 @@ class GuardedGateway:
         # reload and arbitrary remote side effect an atomic transaction. Production
         # rollouts must coordinate policy revisions with protected effects.
         def verify_active_policy() -> None:
+            # Re-authenticate the exact credential immediately before the protected
+            # effect. This rechecks token expiry/signature under the configured IdP.
+            try:
+                current_principal = self.identity_provider.authenticate(credential)
+            except (AuthenticationFailed, IdentityProviderUnavailable):
+                raise
+            except Exception as exc:
+                raise AuthenticationFailed("credential could not be revalidated before effect") from exc
+
+            current_identity_context = current_principal.to_context()
+            current_identity = dict(current_identity_context["identity"])
+            current_identity.pop("authenticated_at", None)
+            current_claims = dict(current_identity.get("claims", {}))
+            for temporal_claim in ("exp", "iat", "nbf", "jti"):
+                current_claims.pop(temporal_claim, None)
+            current_identity["claims"] = current_claims
+            if _canonical_json(current_identity) != _canonical_json(stable_identity):
+                raise PermitRejected("authenticated identity or stable claims changed before effect")
+
+            # Roles, owner mapping, capabilities, tenant association and current
+            # suspension are volatile authorization inputs. Query them again;
+            # any change causes this permit to be rejected and a new request is
+            # required so authorization and request fingerprints cannot be mixed.
+            try:
+                current_trusted_context = dict(
+                    self.context_provider.get_context(current_principal, action, resource)
+                )
+                if "identity" in current_trusted_context:
+                    raise ContextUnavailable(
+                        "trusted context service must not override verified identity"
+                    )
+                _canonical_json(current_trusted_context)
+            except ContextUnavailable:
+                raise
+            except Exception as exc:
+                raise ContextUnavailable(
+                    "trusted authorization context could not be revalidated before effect"
+                ) from exc
+            if _canonical_json(current_trusted_context) != _canonical_json(trusted_context):
+                raise PermitRejected(
+                    "trusted authorization context changed before effect; submit a new request"
+                )
+
+            # Re-run the policy decision on the refreshed authenticated identity
+            # and trusted context. This is a final authorization check, not an
+            # atomic transaction with OPA: deployment must still coordinate policy
+            # and context changes with effects.
+            current_context = {**current_trusted_context, **current_identity_context}
+            current_request = {
+                "principal": current_identity_context["identity"],
+                "action": action,
+                "resource": resource,
+                "arguments": dict(arguments),
+                "context": current_context,
+            }
+            current_stable_request = dict(current_request)
+            current_stable_request["principal"] = current_identity
+            current_stable_context = dict(current_context)
+            current_stable_context["identity"] = current_identity
+            current_stable_request["context"] = current_stable_context
+            if _digest(current_stable_request) != request_hash:
+                raise PermitRejected("authorization inputs changed before effect")
+
+            current_decision = self.opa.decide(current_request)
+            if not current_decision["allowed"]:
+                raise PermitRejected("current authorization policy denied the operation")
             active_version = self.opa.get_policy_version()
-            if active_version != decision["policy_version"]:
-                raise PermitRejected("stale policy: active OPA policy version changed after authorization")
+            if (active_version != decision["policy_version"]
+                    or current_decision["policy_version"] != decision["policy_version"]):
+                raise PermitRejected(
+                    "stale policy: active OPA policy version changed after authorization"
+                )
 
         return self.store.execute(
             permit_id, action, resource, request_hash, decision["policy_version"],
