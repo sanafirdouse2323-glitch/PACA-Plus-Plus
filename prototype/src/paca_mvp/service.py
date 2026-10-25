@@ -128,7 +128,7 @@ def build_gateway_from_environment():
     )
     database_url = os.environ.get("PACA_DATABASE_URL", "").strip()
     if database_url:
-        auto_migrate_value = os.environ.get("PACA_DATABASE_AUTO_MIGRATE", "true").strip().lower()
+        auto_migrate_value = os.environ.get("PACA_DATABASE_AUTO_MIGRATE", "false").strip().lower()
         if auto_migrate_value not in {"true", "false", "1", "0", "yes", "no"}:
             raise RuntimeError("PACA_DATABASE_AUTO_MIGRATE must be true/false, 1/0, or yes/no")
         auto_migrate = auto_migrate_value in {"true", "1", "yes"}
