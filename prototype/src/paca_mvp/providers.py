@@ -39,6 +39,11 @@ class OIDCJWTIdentityProvider:
                  timeout_seconds: float = 3.0, jwks_cache_seconds: int = 300):
         for name, value in (("issuer", issuer), ("audience", audience)):
             _validate_identifier(value, name)
+        issuer_parsed = urlparse(issuer)
+        if (issuer_parsed.scheme != "https" or not issuer_parsed.hostname
+                or issuer_parsed.username or issuer_parsed.password
+                or issuer_parsed.query or issuer_parsed.fragment):
+            raise ValueError("OIDC issuer must be an HTTPS URL without credentials/query/fragment")
         jwks_parsed = urlparse(jwks_url)
         if (jwks_parsed.scheme != "https" or not jwks_parsed.hostname
                 or jwks_parsed.username or jwks_parsed.password
@@ -164,8 +169,9 @@ class HTTPJSONToolAdapter:
         parsed = urlparse(base_url)
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
             raise ValueError("protected API base_url must be an HTTPS origin/base path")
-        if parsed.query or parsed.fragment:
-            raise ValueError("API base_url must not contain query or fragment")
+        if (parsed.query or parsed.fragment
+                or any(part in {".", ".."} for part in parsed.path.split("/"))):
+            raise ValueError("API base_url must not contain query, fragment or path traversal")
         if timeout_seconds <= 0 or max_response_bytes < 1:
             raise ValueError("invalid timeout/response size")
         if (not isinstance(bearer_token, str) or not bearer_token.strip()
