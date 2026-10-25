@@ -33,6 +33,10 @@ class AuthenticationFailed(HardeningError):
     """A credential failed authentication or required claim validation."""
 
 
+class IdentityProviderUnavailable(HardeningError):
+    """The identity provider/JWKS service is unavailable; authentication cannot be decided."""
+
+
 class ContextUnavailable(HardeningError):
     """Trusted authorization context could not be established."""
 
@@ -730,6 +734,12 @@ class GuardedGateway:
         try:
             principal = self.identity_provider.authenticate(credential)
             identity_context = principal.to_context()
+        except IdentityProviderUnavailable:
+            self.store.record_event(
+                "identity_provider_unavailable", None, action, resource,
+                {"reason": "identity_provider_or_jwks_unavailable"},
+            )
+            raise
         except Exception as exc:
             self.store.record_event(
                 "authentication_failed", None, action, resource,
