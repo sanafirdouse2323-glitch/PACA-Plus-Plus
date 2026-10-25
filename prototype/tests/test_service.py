@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from paca_mvp.hardening import (
     AuthenticationFailed, ContextUnavailable, EffectOutcomeUnknown,
-    IdempotencyConflict, PermitRejected, PolicyUnavailable,
+    IdempotencyConflict, IdentityProviderUnavailable, PermitRejected, PolicyUnavailable,
 )
 from paca_mvp.service import (
     MAX_REQUEST_BYTES, TICKET_ACTION, TICKET_RESOURCE, build_gateway_from_environment, create_app,
@@ -105,6 +105,7 @@ class GatewayAppTests(unittest.TestCase):
     def test_dependency_and_policy_errors_map_to_safe_http_statuses(self):
         mappings = [
             (AuthenticationFailed("internal details"), 401),
+            (IdentityProviderUnavailable("internal details"), 503),
             (ContextUnavailable("internal details"), 503),
             (PolicyUnavailable("internal details"), 503),
             (IdempotencyConflict("internal details"), 409),
