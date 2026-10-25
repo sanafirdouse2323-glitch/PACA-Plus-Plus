@@ -295,7 +295,7 @@ def test_authentication_is_required_before_authorization():
 
 
 def test_successful_operation_replays_result_without_calling_adapter_twice():
-    app, store, opa, adapter = make_client()
+    app, _store, opa, adapter = make_client()
     with TestClient(app) as client:
         permit = authorize(client)
         first = execute(client, permit["permit_id"])
