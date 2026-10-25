@@ -64,7 +64,7 @@ class ContextServiceHTTPTests(unittest.TestCase):
         return self.client.post(
             "/v1/attributes",
             json=self.payload if payload is None else payload,
-            headers=headers or {"Authorization": "Bearer " + TOKEN},
+            headers=({"Authorization": "Bearer " + TOKEN} if headers is None else headers),
         )
 
     def test_endpoint_authenticates_service_and_returns_database_authority(self):
