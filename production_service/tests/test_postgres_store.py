@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import os
 from concurrent.futures import ThreadPoolExecutor
+import os
 from uuid import uuid4
 
 import pytest
@@ -112,8 +112,7 @@ class TestPostgresStoreIntegration:
             event_type="integration-test", tenant_id=self.tenant_id,
             principal_id=self.principal_id, request_id="test-request",
         )
-        with pytest.raises(Exception, match="append-only"):
-            with self.store.pool.connection() as conn:
+        with pytest.raises(Exception, match="append-only"), self.store.pool.connection() as conn:
                 conn.execute(
                     "UPDATE audit_events SET event_type = 'tampered' "
                     "WHERE event_type = 'integration-test' AND tenant_id = %s",
