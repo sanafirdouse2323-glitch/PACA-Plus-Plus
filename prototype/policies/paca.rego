@@ -4,11 +4,11 @@ import rego.v1
 
 # Increment this version when the authorization semantics change. For managed
 # bundles, prefer returning the verified bundle revision in this field.
-policy_version := "paca-example-v3"
+policy_version := "paca-example-v4"
 
 default decision := {
     "allow": false,
-    "policy_version": "paca-example-v3",
+    "policy_version": "paca-example-v4",
     "reason": "no_matching_permit",
 }
 
@@ -26,7 +26,8 @@ permit if {
     input.action == "file.read"
     input.context.authorization.suspended == false
     input.context.authorization.role == "analyst"
-    input.context.resource.owner == input.principal.subject
+    input.context.authorization.principal_id == input.context.resource.owner_principal_id
+    input.context.authorization.tenant_id == input.context.resource.tenant_id
 }
 
 permit if {
@@ -34,6 +35,8 @@ permit if {
     input.context.authorization.suspended == false
     input.context.authorization.role == "support"
     input.context.authorization.can_create_tickets == true
+    input.context.authorization.principal_id != null
+    input.context.authorization.tenant_id == input.context.resource.tenant_id
     input.resource == "ticket-collection:default"
 }
 
