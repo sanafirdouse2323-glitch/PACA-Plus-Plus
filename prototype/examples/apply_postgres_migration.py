@@ -40,8 +40,14 @@ def main() -> None:
     for migration in migrations:
         version = migration.stem
         sql = migration.read_text(encoding="utf-8")
+        # These checked-in migrations use ordinary SQL line comments and
+        # simple DDL without procedural blocks. Strip -- comments before splitting
+        # on statement terminators, because comments may themselves contain ';'.
+        uncommented = "\n".join(
+            line.split("--", 1)[0] for line in sql.splitlines()
+        )
         lines = [
-            line for line in sql.splitlines()
+            line for line in uncommented.splitlines()
             if line.strip().upper() not in {"BEGIN;", "COMMIT;"}
         ]
         statements = [
