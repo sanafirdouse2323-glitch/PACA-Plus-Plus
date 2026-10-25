@@ -576,6 +576,7 @@ class SQLitePermitStore:
         # Phase 2: retain the write lock while revalidating and invoking the effect.
         # State advances and other permit claims wait until the effect outcome is
         # durably recorded, closing the local check/effect race.
+        effect_started = False
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
@@ -638,6 +639,10 @@ class SQLitePermitStore:
                             raise
                         raise PermitRejected("pre-effect validation failed; no effect was invoked") from exc
 
+                # From this point onward an external side effect may have
+                # happened. Any failure while persisting its completion must be
+                # reported as unknown and must not make the claim replayable.
+                effect_started = True
                 try:
                     result = effect()
                     serialized = _canonical_json(result)
@@ -664,9 +669,17 @@ class SQLitePermitStore:
                             {"actor": actor, "result_hash": _digest(result)})
                 db.commit()
                 return result
-            except Exception:
+            except EffectOutcomeUnknown:
                 if db.in_transaction:
                     db.rollback()
+                raise
+            except Exception as exc:
+                if db.in_transaction:
+                    db.rollback()
+                if effect_started:
+                    raise EffectOutcomeUnknown(
+                        "effect may have succeeded but durable completion could not be confirmed"
+                    ) from exc
                 raise
 
     def mark_unknown_operations_for_reconciliation(self) -> int:
