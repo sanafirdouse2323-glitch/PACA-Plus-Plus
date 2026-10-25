@@ -98,6 +98,13 @@ class OIDCIdentityTests(unittest.TestCase):
             with self.assertRaises(AuthenticationFailed):
                 self.provider.authenticate(bad_algorithm)
 
+    def test_non_https_issuer_is_rejected_at_configuration_time(self):
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            OIDCJWTIdentityProvider(
+                issuer="http://issuer.example", audience="paca-api",
+                jwks_url="https://issuer.example/.well-known/jwks.json",
+            )
+
     def test_malformed_credential_fails_closed(self):
         with self.assertRaises(AuthenticationFailed):
             self.provider.authenticate("not.a.jwt")
