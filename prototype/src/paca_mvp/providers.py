@@ -20,8 +20,8 @@ import threading
 from datetime import datetime, timezone
 
 from .hardening import (
-    AuthenticationFailed, ContextUnavailable, TrustedPrincipal, _canonical_json,
-    _validate_identifier, _urlopen_no_redirect,
+    AuthenticationFailed, ContextUnavailable, IdentityProviderUnavailable,
+    TrustedPrincipal, _canonical_json, _validate_identifier, _urlopen_no_redirect,
 )
 
 
@@ -60,8 +60,11 @@ class OIDCJWTIdentityProvider:
     def authenticate(self, credential: str) -> TrustedPrincipal:
         if not isinstance(credential, str) or not credential or len(credential) > 16384:
             raise AuthenticationFailed("missing or invalid bearer credential")
+        connection_error_type = None
         try:
             import jwt
+            from jwt.exceptions import PyJWKClientConnectionError
+            connection_error_type = PyJWKClientConnectionError
             with self._client_lock:
                 if self._jwks_client is None:
                     self._jwks_client = jwt.PyJWKClient(
@@ -89,6 +92,8 @@ class OIDCJWTIdentityProvider:
                 claims=claims, authenticated_at=datetime.now(timezone.utc).isoformat(),
             )
         except Exception as exc:
+            if connection_error_type is not None and isinstance(exc, connection_error_type):
+                raise IdentityProviderUnavailable("OIDC JWKS endpoint is unavailable") from exc
             raise AuthenticationFailed("credential verification failed") from exc
 
 
