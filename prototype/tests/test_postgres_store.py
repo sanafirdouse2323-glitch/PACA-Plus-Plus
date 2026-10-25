@@ -59,6 +59,57 @@ class PostgresPermitStoreTests(unittest.TestCase):
                     ON CONFLICT(singleton) DO UPDATE SET event_hash=EXCLUDED.event_hash
                 """, (original_head,))
 
+    def test_audit_event_and_export_intent_are_stored_together(self):
+        import json
+        marker = uuid.uuid4().hex
+        self.store.record_event("outbox_integration_test", None, self.action,
+                                self.resource, {"marker": marker})
+        event = next(
+            item for item in reversed(self.store.audit_events())
+            if item["event"] == "outbox_integration_test"
+            and item["details"].get("marker") == marker
+        )
+        with self.store._connect() as db:
+            outbox = db.execute(
+                "SELECT * FROM paca_audit_outbox WHERE event_id=%s",
+                (event["event_id"],),
+            ).fetchone()
+        self.assertIsNotNone(outbox)
+        payload = json.loads(outbox["payload_json"])
+        self.assertEqual(payload["event_id"], event["event_id"])
+        self.assertEqual(payload["event_hash"], event["event_hash"])
+        self.assertEqual(payload["details"]["marker"], marker)
+        self.assertEqual(outbox["attempts"], 0)
+        self.assertIsNone(outbox["delivered_at"])
+        self.assertTrue(self.store.verify_audit_chain())
+
+    def test_audit_and_outbox_rollback_together(self):
+        original = self.store._audit
+
+        def add_then_fail(*args, **kwargs):
+            original(*args, **kwargs)
+            raise RuntimeError("simulated audit transaction rollback")
+
+        from unittest.mock import patch
+        with patch.object(self.store, "_audit", side_effect=add_then_fail):
+            with self.assertRaisesRegex(RuntimeError, "transaction rollback"):
+                self.store.record_event(
+                    "outbox_must_rollback", None, None, None,
+                    {"marker": uuid.uuid4().hex},
+                )
+        with self.store._connect() as db:
+            audit = db.execute(
+                "SELECT 1 FROM paca_audit WHERE event='outbox_must_rollback'"
+            ).fetchone()
+            outbox = db.execute("""
+                SELECT 1 FROM paca_audit_outbox o
+                JOIN paca_audit a ON a.event_id=o.event_id
+                WHERE a.event='outbox_must_rollback'
+            """).fetchone()
+        self.assertIsNone(audit)
+        self.assertIsNone(outbox)
+        self.assertTrue(self.store.verify_audit_chain())
+
     def test_durable_result_and_idempotency_survive_new_store_instance(self):
         permit_id = self.issue()
         calls = []
