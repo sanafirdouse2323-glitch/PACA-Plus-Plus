@@ -55,17 +55,38 @@ class RequestSizeLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        headers = dict(scope.get("headers", []))
-        raw_length = headers.get(b"content-length")
+        # Preserve duplicates until security-sensitive headers are validated.
+        # Converting the ASGI list directly to a dict silently discards duplicates
+        # and can make the app and an upstream proxy disagree about the request.
+        grouped: dict[bytes, list[bytes]] = {}
+        for name, value in scope.get("headers", []):
+            grouped.setdefault(name.lower(), []).append(value)
+
+        singletons = (b"content-length", b"host", b"content-type", b"transfer-encoding")
+        if any(len(grouped.get(name, [])) > 1 for name in singletons):
+            await self._respond(send, 400, {"detail": "ambiguous request headers"})
+            return
+        if (b"content-length" in grouped and b"transfer-encoding" in grouped):
+            await self._respond(send, 400, {"detail": "ambiguous request framing"})
+            return
+
+        # Authorization and idempotency affect identity and replay semantics.
+        # Reject duplicates before framework header parsing can select one value.
+        if scope.get("path") == TICKET_PATH and any(
+            len(grouped.get(name, [])) > 1
+            for name in (b"authorization", b"idempotency-key")
+        ):
+            await self._respond(send, 400, {"detail": "duplicate security-sensitive header"})
+            return
+
+        raw_length = grouped.get(b"content-length", [None])[0]
         if raw_length is not None:
-            try:
-                content_length = int(raw_length)
-            except ValueError:
+            # Accept only the ASCII decimal form; int() alone also accepts signs
+            # and surrounding whitespace, which are undesirable at a trust boundary.
+            if not raw_length or not raw_length.isdigit():
                 await self._respond(send, 400, {"detail": "invalid Content-Length"})
                 return
-            if content_length < 0:
-                await self._respond(send, 400, {"detail": "invalid Content-Length"})
-                return
+            content_length = int(raw_length)
             if content_length > self.max_bytes:
                 await self._respond(send, 413, {"detail": "request body too large"})
                 return
