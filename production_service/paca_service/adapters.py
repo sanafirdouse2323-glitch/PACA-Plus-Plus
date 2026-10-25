@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import secrets
 import stat
-from typing import Any, Callable
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, ClassVar
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -65,7 +66,7 @@ class HttpAPIAdapter(ExecutionAdapter):
     upstream Idempotency-Key; upstream services must honor that contract.
     """
 
-    _METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
+    _METHODS: ClassVar[frozenset[str]] = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"})
     _ACTION_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]*$")
 
     def __init__(
@@ -90,7 +91,7 @@ class HttpAPIAdapter(ExecutionAdapter):
             if not self._ACTION_RE.fullmatch(action):
                 raise ValueError("invalid_upstream_action")
             if not isinstance(raw, dict):
-                raise ValueError("invalid_upstream_route")
+                raise TypeError("invalid_upstream_route")
             method = raw.get("method")
             path = raw.get("path")
             args_mode = raw.get("args_mode", "json" if method != "GET" else "query")
@@ -161,9 +162,7 @@ class HttpAPIAdapter(ExecutionAdapter):
             except ValueError:
                 summary["response_body_omitted"] = "invalid_json"
             else:
-                if isinstance(decoded, dict):
-                    summary["body"] = decoded
-                elif isinstance(decoded, list):
+                if isinstance(decoded, (dict, list)):
                     summary["body"] = decoded
                 else:
                     summary["body"] = {"value": decoded}
@@ -189,7 +188,7 @@ class ToolRegistryAdapter(ExecutionAdapter):
         if name in self._handlers:
             raise ValueError("duplicate_tool_registration")
         if not callable(handler):
-            raise ValueError("tool_handler_must_be_callable")
+            raise TypeError("tool_handler_must_be_callable")
         self._handlers[name] = handler
 
     def supports(
