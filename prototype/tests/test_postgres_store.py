@@ -68,7 +68,7 @@ class PostgresPermitStoreTests(unittest.TestCase):
         self.issue()
         with self.assertRaises(IdempotencyConflict):
             self.store.issue(
-                self.action, self.resource, "different-request-hash",
+                self.action, self.resource, "f" * 64,
                 self.policy_version, idempotency_key=self.idempotency_key,
             )
 
