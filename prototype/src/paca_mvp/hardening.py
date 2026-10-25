@@ -719,7 +719,16 @@ class GuardedGateway:
         context = {**trusted_context, **identity_context}
         request = {"principal": identity_context["identity"], "action": action,
                    "resource": resource, "arguments": dict(arguments), "context": context}
-        decision = self.opa.decide(request)
+        try:
+            decision = self.opa.decide(request)
+        except PolicyUnavailable:
+            self.store.record_event(
+                "policy_decision_failed", None, action, resource,
+                {"actor": {"subject": principal.subject, "issuer": principal.issuer,
+                           "audience": principal.audience},
+                 "reason": "policy_decision_unavailable"},
+            )
+            raise
         # Exclude volatile JWT timestamps and authentication-observation time from
         # the idempotency fingerprint, while retaining identity and authorization
         # claims that can change the policy outcome.
