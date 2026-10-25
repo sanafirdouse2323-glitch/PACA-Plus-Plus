@@ -35,7 +35,7 @@ The OPA and PostgreSQL Compose ports are bound to loopback. PostgreSQL is enable
 ## Run the HTTP gateway
 
 1. Configure a real OIDC issuer, audience and JWKS endpoint, a trusted HTTPS context service, OPA, a downstream HTTPS API and its idempotency semantics in `.env` using `.env.example` as a template. Never commit real secrets.
-2. Start local OPA and PostgreSQL: `docker compose up -d opa` and `docker compose --profile integration up -d postgres`.
+2. Start local OPA and PostgreSQL: `docker compose up -d opa` and `docker compose --profile integration up -d postgres`. Local startup auto-initializes the schema by default. For production, apply `migrations/001_postgres_schema.sql` using a migration role and set `PACA_DATABASE_AUTO_MIGRATE=false` for the runtime service.
 3. Load your environment in the shell (for example, `set -a; . ./.env; set +a`) and run `uvicorn paca_mvp.service:create_app --factory --host 127.0.0.1 --port 8080`.
 4. Call `POST /v1/tickets` with a valid `Authorization: Bearer ...`, a stable `Idempotency-Key`, and a JSON body such as `{"title":"Example","description":"Details" }`. The endpoint fixes the action/resource itself; callers cannot choose the adapter, URL or route.
 5. Use `GET /readyz` to check OPA and database readiness. It is not a substitute for downstream/context-service health checks.
