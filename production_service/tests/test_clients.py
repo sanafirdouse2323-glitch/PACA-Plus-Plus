@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import httpx
 import jwt
-from cryptography.hazmat.primitives.asymmetric import rsa
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.exceptions import PyJWKClientConnectionError
 
 from paca_service.auth import (
@@ -30,7 +30,7 @@ class FakeJWKS:
 
 
 def signed_token(private_key, **overrides):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "iss": ISSUER,
         "aud": AUDIENCE,
@@ -75,7 +75,7 @@ def test_authenticator_verifies_signature_issuer_audience_and_required_claims(rs
 def test_authenticator_pins_rs256_and_rejects_unsigned_or_hmac_tokens(rsa_keys):
     private, public = rsa_keys
     auth = JWTAuthenticator(ISSUER, AUDIENCE, "https://identity.example.org/jwks", jwks_client=FakeJWKS(public))
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     token = jwt.encode(
         {
             "iss": ISSUER, "aud": AUDIENCE, "sub": "alice", "tenant_id": "tenant-1",
