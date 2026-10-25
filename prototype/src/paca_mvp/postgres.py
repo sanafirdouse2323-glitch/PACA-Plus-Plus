@@ -162,7 +162,13 @@ class PostgresPermitStore:
 
     def verify_audit_chain(self) -> bool:
         with self._connect() as db:
+            # Read the rows and separately stored head from one snapshot so a
+            # concurrent append cannot produce a false verification failure.
+            db.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             rows = db.execute("SELECT * FROM paca_audit ORDER BY sequence").fetchall()
+            head = db.execute(
+                "SELECT event_hash FROM paca_audit_head WHERE singleton=1"
+            ).fetchone()
         previous_hash = "0" * 64
         for row in rows:
             created_at = row["created_at"].astimezone(timezone.utc).isoformat()
@@ -175,7 +181,9 @@ class PostgresPermitStore:
             if row["previous_hash"] != previous_hash or _digest(content) != row["event_hash"]:
                 return False
             previous_hash = row["event_hash"]
-        return True
+        # A retained head detects truncation of the audit table's tail unless
+        # the head is also rewritten; this is tamper-evident, not WORM storage.
+        return head is not None and head["event_hash"] == previous_hash
 
     def current_state_version(self) -> int:
         with self._connect() as db:
