@@ -135,6 +135,48 @@ class GatewayAppTests(unittest.TestCase):
                 self.assertNotIn("internal details", response.text)
         self.gateway.authorize_and_execute.side_effect = None
 
+    def test_duplicate_authorization_headers_fail_closed(self):
+        response = self.client.post(
+            "/v1/tickets",
+            json={"title": "Incident"},
+            headers=[
+                ("Authorization", "Bearer valid-format-token"),
+                ("Authorization", "Bearer different-token"),
+                ("Idempotency-Key", "op-duplicate-auth"),
+            ],
+        )
+        self.assertEqual(response.status_code, 400)
+        self.gateway.authorize_and_execute.assert_not_called()
+
+    def test_duplicate_idempotency_headers_fail_closed(self):
+        response = self.client.post(
+            "/v1/tickets",
+            json={"title": "Incident"},
+            headers=[
+                ("Authorization", "Bearer valid-format-token"),
+                ("Idempotency-Key", "op-first"),
+                ("Idempotency-Key", "op-second"),
+            ],
+        )
+        self.assertEqual(response.status_code, 400)
+        self.gateway.authorize_and_execute.assert_not_called()
+
+    def test_duplicate_content_length_headers_fail_closed(self):
+        body = b'{"title":"Incident"}'
+        response = self.client.post(
+            "/v1/tickets",
+            content=body,
+            headers=[
+                ("Content-Type", "application/json"),
+                ("Content-Length", str(len(body))),
+                ("Content-Length", str(len(body))),
+                ("Authorization", "Bearer valid-format-token"),
+                ("Idempotency-Key", "op-duplicate-length"),
+            ],
+        )
+        self.assertEqual(response.status_code, 400)
+        self.gateway.authorize_and_execute.assert_not_called()
+
     def test_bad_bearer_scheme_is_rejected(self):
         response = self.client.post(
             "/v1/tickets", json={"title": "Incident"},
