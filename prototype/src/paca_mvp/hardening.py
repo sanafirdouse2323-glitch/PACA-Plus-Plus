@@ -351,6 +351,10 @@ class SQLitePermitStore:
         head = db.execute("SELECT event_hash FROM audit_head WHERE singleton=1").fetchone()
         if head is None:
             raise HardeningError("audit head is missing; refusing to append an unanchored event")
+        tail = db.execute("SELECT event_hash FROM audit ORDER BY sequence DESC LIMIT 1").fetchone()
+        actual_tail_hash = tail["event_hash"] if tail else "0" * 64
+        if actual_tail_hash != head["event_hash"]:
+            raise HardeningError("audit head does not match stored audit chain; refusing to append")
         previous_hash = head["event_hash"]
         event_id, created_at = uuid.uuid4().hex, _utcnow()
         content = {
