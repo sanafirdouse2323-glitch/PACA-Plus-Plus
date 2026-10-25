@@ -599,7 +599,7 @@ class SQLitePermitStore:
                                     {"actor": actor, "reason": "pre_effect_check_failed",
                                      "exception_type": type(exc).__name__})
                         db.commit()
-                        if isinstance(exc, PermitRejected):
+                        if isinstance(exc, (PermitRejected, PolicyUnavailable)):
                             raise
                         raise PermitRejected("pre-effect validation failed; no effect was invoked") from exc
 
