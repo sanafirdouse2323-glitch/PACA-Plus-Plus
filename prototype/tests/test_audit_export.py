@@ -148,6 +148,20 @@ class AuditOutboxWorkerTests(unittest.TestCase):
         # Backoff keeps an outage from causing a tight retry loop.
         self.assertEqual(worker.run_once()["claimed"], 0)
 
+    def test_worker_refuses_to_export_when_source_audit_chain_is_tampered(self):
+        self.store.record_event("test_event", None, None, None, {"original": True})
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE audit SET details_json=?",
+                (json.dumps({"original": False}),),
+            )
+        sink = FakeSink()
+        worker = AuditOutboxWorker(self.store, sink, worker_id="worker-broken-chain")
+        with self.assertRaisesRegex(HardeningError, "chain failed verification"):
+            worker.run_once()
+        self.assertEqual(sink.events, [])
+        self.assertEqual(self.store.audit_outbox_counts()["delivered"], 0)
+
     def test_worker_rejects_tampered_outbox_before_calling_sink(self):
         self.store.record_event("test_event", None, None, None, {"original": True})
         with self.store._connect() as db:
