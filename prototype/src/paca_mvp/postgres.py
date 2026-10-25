@@ -126,7 +126,26 @@ class PostgresPermitStore:
                     )
                     ON CONFLICT(singleton) DO NOTHING
                 """, ("0" * 64,))
-    
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS paca_audit_outbox (
+                        sequence BIGSERIAL PRIMARY KEY,
+                        event_id TEXT NOT NULL UNIQUE,
+                        payload_json TEXT NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL,
+                        attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+                        next_attempt_at TIMESTAMPTZ NOT NULL,
+                        lease_owner TEXT,
+                        lease_expires_at TIMESTAMPTZ,
+                        delivered_at TIMESTAMPTZ,
+                        last_error_type TEXT
+                    )
+                """)
+                db.execute("""
+                    CREATE INDEX IF NOT EXISTS paca_audit_outbox_pending_idx
+                    ON paca_audit_outbox(delivered_at,next_attempt_at,lease_expires_at,sequence)
+                """)
+            self.backfill_audit_outbox()
+
     def _connect(self):
         return self._psycopg.connect(
             self.dsn, connect_timeout=self.connect_timeout, row_factory=self._dict_row
@@ -164,6 +183,114 @@ class PostgresPermitStore:
         """, (event_id, created_at, event, permit_id, action, resource,
               _canonical_json(detail_dict), previous_hash, event_hash))
         db.execute("UPDATE paca_audit_head SET event_hash=%s WHERE singleton=1", (event_hash,))
+        # Commit the export intent in the same transaction as the local audit
+        # event. The independent sink is delivered asynchronously and idempotently.
+        db.execute("""
+            INSERT INTO paca_audit_outbox(event_id,payload_json,created_at,next_attempt_at)
+            VALUES(%s,%s,%s,%s)
+        """, (event_id, _canonical_json({**content, "event_hash": event_hash}),
+              created_at, created_at))
+
+    def backfill_audit_outbox(self) -> int:
+        """Queue retained, previously recorded events that predate the outbox schema."""
+        if not self.verify_audit_chain():
+            raise HardeningError("cannot backfill an invalid audit chain")
+        added = 0
+        with self._connect() as db:
+            rows = db.execute("""
+                SELECT a.* FROM paca_audit a
+                LEFT JOIN paca_audit_outbox o ON o.event_id = a.event_id
+                WHERE o.event_id IS NULL
+                ORDER BY a.sequence
+            """).fetchall()
+            for row in rows:
+                created_at = row["created_at"].astimezone(timezone.utc).isoformat()
+                content = {
+                    "event_id": row["event_id"], "created_at": created_at,
+                    "event": row["event"], "permit_id": row["permit_id"],
+                    "action": row["action"], "resource": row["resource"],
+                    "details": row["details_json"], "previous_hash": row["previous_hash"],
+                }
+                if _digest(content) != row["event_hash"]:
+                    raise HardeningError("audit event changed during outbox backfill")
+                db.execute("""
+                    INSERT INTO paca_audit_outbox
+                        (event_id,payload_json,created_at,next_attempt_at)
+                    VALUES(%s,%s,%s,%s)
+                    ON CONFLICT(event_id) DO NOTHING
+                """, (row["event_id"], _canonical_json({**content, "event_hash": row["event_hash"]}),
+                      row["created_at"], row["created_at"]))
+                added += 1
+        return added
+
+    def claim_audit_outbox(
+        self, worker_id: str, limit: int = 100, lease_seconds: int = 30
+    ) -> list[dict[str, Any]]:
+        _validate_identifier(worker_id, "worker_id")
+        if not 1 <= limit <= 1000 or not 1 <= lease_seconds <= 3600:
+            raise ValueError("outbox limit must be 1..1000 and lease_seconds 1..3600")
+        now = datetime.now(timezone.utc)
+        lease_until = now + timedelta(seconds=lease_seconds)
+        with self._connect() as db:
+            rows = db.execute("""
+                SELECT event_id,payload_json,attempts
+                FROM paca_audit_outbox
+                WHERE delivered_at IS NULL AND next_attempt_at <= %s
+                  AND (lease_expires_at IS NULL OR lease_expires_at <= %s)
+                ORDER BY sequence LIMIT %s
+                FOR UPDATE SKIP LOCKED
+            """, (now, now, limit)).fetchall()
+            claimed = []
+            for row in rows:
+                db.execute("""
+                    UPDATE paca_audit_outbox
+                    SET lease_owner=%s,lease_expires_at=%s,attempts=attempts+1
+                    WHERE event_id=%s AND delivered_at IS NULL
+                """, (worker_id, lease_until, row["event_id"]))
+                claimed.append({
+                    "event_id": row["event_id"], "payload_json": row["payload_json"],
+                    "attempts": int(row["attempts"]) + 1,
+                })
+            return claimed
+
+    def mark_audit_delivered(self, event_id: str, worker_id: str) -> None:
+        with self._connect() as db:
+            row = db.execute("""
+                UPDATE paca_audit_outbox
+                SET delivered_at=%s,lease_owner=NULL,lease_expires_at=NULL,last_error_type=NULL
+                WHERE event_id=%s AND lease_owner=%s AND delivered_at IS NULL
+                RETURNING event_id
+            """, (datetime.now(timezone.utc), event_id, worker_id)).fetchone()
+            if row is None:
+                raise HardeningError("audit outbox lease is missing or no longer owned")
+
+    def retry_audit_event(
+        self, event_id: str, worker_id: str, error_type: str,
+        retry_after_seconds: int,
+    ) -> None:
+        _validate_identifier(error_type, "error_type")
+        if not 1 <= retry_after_seconds <= 86400:
+            raise ValueError("retry_after_seconds must be 1..86400")
+        next_attempt = datetime.now(timezone.utc) + timedelta(seconds=retry_after_seconds)
+        with self._connect() as db:
+            row = db.execute("""
+                UPDATE paca_audit_outbox
+                SET next_attempt_at=%s,lease_owner=NULL,lease_expires_at=NULL,last_error_type=%s
+                WHERE event_id=%s AND lease_owner=%s AND delivered_at IS NULL
+                RETURNING event_id
+            """, (next_attempt, error_type[:128], event_id, worker_id)).fetchone()
+            if row is None:
+                raise HardeningError("audit outbox lease is missing or no longer owned")
+
+    def audit_outbox_counts(self) -> dict[str, int]:
+        with self._connect() as db:
+            row = db.execute("""
+                SELECT COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE delivered_at IS NULL) AS pending,
+                       COUNT(*) FILTER (WHERE delivered_at IS NOT NULL) AS delivered
+                FROM paca_audit_outbox
+            """).fetchone()
+        return {key: int(row[key] or 0) for key in ("total", "pending", "delivered")}
 
     def record_event(self, event: str, permit_id: str | None,
                      action: str | None, resource: str | None,
