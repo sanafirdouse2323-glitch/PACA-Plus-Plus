@@ -19,7 +19,7 @@ if DSN:
 @unittest.skipUnless(DSN, "set PACA_TEST_POSTGRES_DSN to run PostgreSQL integration tests")
 class PostgresPermitStoreTests(unittest.TestCase):
     def setUp(self):
-        self.store = PostgresPermitStore(DSN)
+        self.store = PostgresPermitStore(DSN, initialize_schema=False)
         token = uuid.uuid4().hex
         self.action = "resource.write"
         self.resource = "test-resource:" + token
