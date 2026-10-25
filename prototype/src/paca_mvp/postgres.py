@@ -116,8 +116,14 @@ class PostgresPermitStore:
                         event_hash TEXT NOT NULL
                     )
                 """)
-                db.execute("INSERT INTO paca_audit_head(singleton,event_hash) VALUES(1,%s) ON CONFLICT(singleton) DO NOTHING",
-                           ("0" * 64,))
+                db.execute("""
+                    INSERT INTO paca_audit_head(singleton,event_hash)
+                    SELECT 1, COALESCE(
+                        (SELECT event_hash FROM paca_audit ORDER BY sequence DESC LIMIT 1),
+                        %s
+                    )
+                    ON CONFLICT(singleton) DO NOTHING
+                """, ("0" * 64,))
     
     def _connect(self):
         return self._psycopg.connect(
