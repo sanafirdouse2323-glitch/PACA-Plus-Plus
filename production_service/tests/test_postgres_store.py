@@ -96,6 +96,7 @@ class TestPostgresStoreIntegration:
                 SELECT
                     has_table_privilege(current_user, 'protected_resources', 'SELECT') AS can_read_resources,
                     has_table_privilege(current_user, 'protected_resources', 'INSERT') AS can_insert_resources,
+                    has_table_privilege(current_user, 'protected_resources', 'UPDATE') AS can_update_resources,
                     has_table_privilege(current_user, 'audit_events', 'SELECT') AS can_read_audit,
                     has_table_privilege(current_user, 'audit_events', 'UPDATE') AS can_update_audit,
                     has_table_privilege(current_user, 'audit_events', 'DELETE') AS can_delete_audit
@@ -108,6 +109,7 @@ class TestPostgresStoreIntegration:
         assert role["rolbypassrls"] is False
         assert privileges["can_read_resources"] is True
         assert privileges["can_insert_resources"] is False
+        assert privileges["can_update_resources"] is False
         assert privileges["can_read_audit"] is True
         assert privileges["can_update_audit"] is False
         assert privileges["can_delete_audit"] is False
