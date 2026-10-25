@@ -219,6 +219,13 @@ class DurableStoreTests(unittest.TestCase):
             db.execute("UPDATE audit SET details_json='{}' WHERE sequence=1")
         self.assertFalse(self.store.verify_audit_chain())
 
+    def test_audit_hash_chain_detects_deleted_tail_event(self):
+        self.issue()
+        self.assertTrue(self.store.verify_audit_chain())
+        with self.store._connect() as db:
+            db.execute("DELETE FROM audit WHERE sequence=(SELECT MAX(sequence) FROM audit)")
+        self.assertFalse(self.store.verify_audit_chain())
+
     def test_concurrent_attempts_never_call_effect_twice(self):
         permit_id = self.store.issue("file.write", "file:report-1", self.request_hash,
                                      "policy-v1", idempotency_key=None)
