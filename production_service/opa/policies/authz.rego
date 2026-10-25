@@ -2,11 +2,7 @@ package paca.authz
 
 import rego.v1
 
-default decision := {
-  "allow": false,
-  "reason": "default_deny",
-  "policy_revision": data.paca.meta.revision,
-} if true
+default decision := {"allow": false, "reason": "default_deny"}
 
 decision := {
   "allow": true,
