@@ -22,7 +22,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .hardening import (
     AuthenticationFailed, ContextUnavailable, EffectOutcomeUnknown,
-    GuardedGateway, IdempotencyConflict, OPAClient, PermitRejected,
+    GuardedGateway, IdempotencyConflict, IdentityProviderUnavailable, OPAClient, PermitRejected,
     PolicyUnavailable, SQLitePermitStore,
 )
 from .postgres import PostgresPermitStore
@@ -215,6 +215,8 @@ def create_app(
         except AuthenticationFailed as exc:
             raise HTTPException(status_code=401, detail="credential verification failed",
                                 headers={"WWW-Authenticate": "Bearer"}) from exc
+        except IdentityProviderUnavailable as exc:
+            raise HTTPException(status_code=503, detail="identity provider unavailable") from exc
         except ContextUnavailable as exc:
             raise HTTPException(status_code=503, detail="trusted authorization context unavailable") from exc
         except PolicyUnavailable as exc:
