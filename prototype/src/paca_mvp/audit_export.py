@@ -163,6 +163,15 @@ class AuditOutboxWorker:
                 payload = json.loads(row["payload_json"])
                 if not isinstance(payload, dict) or payload.get("event_id") != event_id:
                     raise AuditDeliveryError("outbox event identity does not match its payload")
+                event_hash = payload.get("event_hash")
+                source_hash = row.get("source_event_hash")
+                if (not isinstance(event_hash, str) or not isinstance(source_hash, str)
+                        or event_hash != source_hash):
+                    raise AuditDeliveryError("outbox hash does not match the source audit event")
+                unsigned = dict(payload)
+                unsigned.pop("event_hash", None)
+                if _digest(unsigned) != source_hash:
+                    raise AuditDeliveryError("outbox payload hash verification failed")
                 self.sink.append(payload)
             except Exception as exc:
                 attempts = max(1, int(row.get("attempts", 1)))
