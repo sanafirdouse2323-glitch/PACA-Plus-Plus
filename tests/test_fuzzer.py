@@ -18,7 +18,7 @@ class CompilerSubsetTests(unittest.TestCase):
         source = r'''
         policy RestrictExport {
             target: action == "readFile"
-            condition: user.role != "admin" AND provenance == "trusted"
+            condition: user.role == "admin" AND provenance == "trusted"
             effect: deny
         }
         '''
@@ -26,11 +26,10 @@ class CompilerSubsetTests(unittest.TestCase):
         self.assertEqual(len(ast.conditions), 2)
         self.assertEqual(ast.conditions[0].entity, "user")
         self.assertEqual(ast.conditions[0].attribute, "role")
-        self.assertEqual(ast.conditions[0].operator, "!=")
         self.assertEqual(ast.conditions[1].entity, "provenance")
         cedar = self.compiler.emit_cedar(ast)
         asp = self.compiler.emit_asp(ast)
-        self.assertIn(f"principal.role != {json.dumps('admin')}", cedar)
+        self.assertIn(f"principal.role == {json.dumps('admin')}", cedar)
         self.assertIn(f"context.provenance == {json.dumps('trusted')}", cedar)
         self.assertIn(f"user_role(agent, {json.dumps('admin')})", asp)
         self.assertIn(f"provenance(agent, {json.dumps('trusted')})", asp)
@@ -48,6 +47,19 @@ class CompilerSubsetTests(unittest.TestCase):
         encoded = json.dumps('ops "blue"')
         self.assertIn(f"principal.role == {encoded}", self.compiler.emit_cedar(ast))
         self.assertIn(f"user_role(agent, {encoded})", self.compiler.emit_asp(ast))
+
+    def test_asp_inequality_is_rejected_until_missing_attribute_semantics_are_defined(self):
+        source = r'''
+        policy Inequality {
+            target: action == "readFile"
+            condition: user.role != "admin"
+            effect: deny
+        }
+        '''
+        ast = self.compiler.compile_to_ast(source)
+        self.assertIn("principal.role !=", self.compiler.emit_cedar(ast))
+        with self.assertRaises(NotImplementedError):
+            self.compiler.emit_asp(ast)
 
     def test_obligation_is_preserved_and_emitters_refuse_to_ignore_it(self):
         source = r'''
