@@ -98,6 +98,35 @@ class PostgresPermitStoreTests(unittest.TestCase):
             self.issue()
         self.assertTrue(self.store.verify_audit_chain())
 
+    def test_preprovisioned_schema_can_be_opened_without_ddl_initialization(self):
+        store = PostgresPermitStore(DSN, initialize_schema=False)
+        self.assertGreaterEqual(store.current_state_version(), 0)
+
+    def test_concurrent_first_use_of_idempotency_key_creates_one_permit(self):
+        barrier = threading.Barrier(3)
+        permit_ids = []
+        errors = []
+
+        def issue():
+            try:
+                barrier.wait(timeout=3)
+                permit_ids.append(self.issue())
+            except Exception as exc:
+                errors.append(exc)
+
+        first = threading.Thread(target=issue)
+        second = threading.Thread(target=issue)
+        first.start()
+        second.start()
+        barrier.wait(timeout=3)
+        first.join(6)
+        second.join(6)
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(len(permit_ids), 2)
+        self.assertEqual(permit_ids[0], permit_ids[1])
+
     def test_concurrent_claim_runs_effect_at_most_once(self):
         permit_id = self.issue(key=None)
         entered, finish = threading.Event(), threading.Event()
