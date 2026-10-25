@@ -81,7 +81,7 @@ result = gateway.authorize_and_execute(
 )
 ~~~
 
-For the ticket example, the trusted context service must return an authorization role of support and can_create_tickets=true for an authorized caller; those values must be derived server-side, not from tool arguments. The configured context service and policy must return the fields the Rego policy expects. The route/resource map, OIDC issuer/audience/JWKS URI, database path, OPA endpoint, and service credentials are trusted deployment configuration. Do not expose OPA's unauthenticated admin/decision endpoint to untrusted networks.
+For the ticket example, the trusted context service must return an authorization role of support and can_create_tickets=true for an authorized caller; those values must be derived server-side, not from tool arguments. The OPA client requires a bearer token for non-loopback HTTPS OPA endpoints; loopback HTTP is permitted only for local development. The protected HTTP adapter also requires a configured bearer token. The configured context service and policy must return the fields the Rego policy expects. The route/resource map, OIDC issuer/audience/JWKS URI, database path, OPA endpoint, and service credentials are trusted deployment configuration. Do not expose OPA's unauthenticated admin/decision endpoint to untrusted networks.
 
 ## Guarantees and boundaries
 
