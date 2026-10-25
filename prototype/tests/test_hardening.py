@@ -400,6 +400,7 @@ class AdapterTests(unittest.TestCase):
         request = mocked.call_args.args[0]
         self.assertEqual(request.full_url, "https://api.example/v1/tickets")
         self.assertEqual(request.get_header("Idempotency-key"), "idem-3")
+        self.assertEqual(json.loads(request.data.decode()), {"title": "Hi"})
         with self.assertRaises(ToolInvocationError):
             adapter.invoke("ticket.delete", "ticket:123", {}, "idem-4")
 
