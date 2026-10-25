@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import os
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -69,7 +69,7 @@ class Settings:
     file_root: str | None
 
     @classmethod
-    def from_env(cls, environ: dict[str, str] | None = None) -> "Settings":
+    def from_env(cls, environ: dict[str, str] | None = None) -> Settings:
         env = dict(os.environ if environ is None else environ)
         database_url = _required(env, "PACA_DATABASE_URL")
         if not database_url.startswith(("postgresql://", "postgres://")):
