@@ -2,7 +2,7 @@
 
 ## What this branch adds
 
-The legacy **AuthorizationEngine** remains an in-memory, single-process research MVP. This branch adds a separate integration path intended to close several concrete gaps without silently rewriting the original ALFA/UCON+ compiler work:
+The legacy **AuthorizationEngine** remains an in-memory, single-process research MVP. This branch adds a separate integration path and a runnable ASGI endpoint for a single, allowlisted `ticket.create` action, without silently rewriting the original ALFA/UCON+ compiler work:
 
 - **Policy decision point:** **OPAClient** calls a named Open Policy Agent (OPA) Data API decision. An absent/malformed decision, missing permit version, timeout, HTTP error, or transport failure raises an error; the gateway does not treat that as permission.
 - **Policy version recheck:** an allowed decision carries a version. The gateway asks OPA for the active version immediately before the effect and rejects a mismatch. This narrows, but cannot atomically eliminate, the race with policy reload; coordinate policy deployments with effect commits where that matters.
@@ -16,20 +16,31 @@ The legacy **AuthorizationEngine** remains an in-memory, single-process research
 
 ## Run locally
 
-Requires Python 3.10+ and Docker for the real OPA smoke test.
+Requires Python 3.10+ and Docker for the OPA and PostgreSQL integration services. Install the optional `web` extra to run the ASGI gateway.
 
 ~~~bash
 cd prototype
-python -m pip install -e .
+python -m pip install -e ".[web,test]"
 python -m unittest discover -s tests -v
 python examples/demo.py
 python experiments/run_experiments.py
 docker compose up -d opa
+docker compose --profile integration up -d postgres
 python examples/opa_smoke.py
 docker compose down
 ~~~
 
-The OPA Compose port is bound to loopback. The example Rego policy permits an analyst to read only a resource owned by the verified subject, permits ticket creation only when a trusted context grants the support role and explicit capability, and denies suspended subjects or requests missing the explicit non-suspended claim. It is an illustrative policy, not a universal production policy. Increment **policy_version** whenever authorization semantics change; production bundle deployments should tie this to an immutable, verified bundle revision and coordinate rollout.
+The OPA and PostgreSQL Compose ports are bound to loopback. PostgreSQL is enabled only by the `integration` profile; the example database password is for local tests only. The example Rego policy permits an analyst to read only a resource owned by the verified subject, permits ticket creation only when a trusted context grants the support role and explicit capability, and denies suspended subjects or requests missing the explicit non-suspended claim. It is an illustrative policy, not a universal production policy. Increment **policy_version** whenever authorization semantics change; production bundle deployments should tie this to an immutable, verified bundle revision and coordinate rollout.
+
+## Run the HTTP gateway
+
+1. Configure a real OIDC issuer, audience and JWKS endpoint, a trusted HTTPS context service, OPA, a downstream HTTPS API and its idempotency semantics in `.env` using `.env.example` as a template. Never commit real secrets.
+2. Start local OPA and PostgreSQL: `docker compose up -d opa` and `docker compose --profile integration up -d postgres`.
+3. Load your environment in the shell (for example, `set -a; . ./.env; set +a`) and run `uvicorn paca_mvp.service:create_app --factory --host 127.0.0.1 --port 8080`.
+4. Call `POST /v1/tickets` with a valid `Authorization: Bearer ...`, a stable `Idempotency-Key`, and a JSON body such as `{"title":"Example","description":"Details" }`. The endpoint fixes the action/resource itself; callers cannot choose the adapter, URL or route.
+5. Use `GET /readyz` to check OPA and database readiness. It is not a substitute for downstream/context-service health checks.
+
+The configured downstream endpoint receives the ticket argument object as ordinary JSON and the standard `Idempotency-Key` header. The downstream API must durably implement that key; this gateway cannot impose idempotency semantics on a third-party service.
 
 ## Typical application wiring
 
@@ -77,7 +88,7 @@ For the ticket example, the trusted context service must return an authorization
 - When all relevant effects go through **GuardedGateway** and a supplied adapter, a missing/invalid decision fails closed, the permit is bound to the canonical JSON request fingerprint, and the persistent claim prevents a second local execution claim for the same permit.
 - The gateway cannot force third-party APIs to honor **Idempotency-Key**, cannot atomically commit a remote side effect and a local SQLite transaction, and cannot know whether a timed-out remote effect happened without downstream reconciliation.
 - The sample filesystem adapter applies file effects, but its root directory, resource mapping, process privileges, mount configuration, and threat model still matter. Restrict OS permissions and run it with least privilege.
-- SQLite is for single-host development/deployment. Use a transactional shared database with appropriate isolation/locking for multi-host replicas. A PostgreSQL implementation is not included in this branch.
+- SQLite is for single-host development/deployment. Use a transactional shared database with appropriate isolation/locking for multi-host replicas. The PostgreSQL adapter is included and CI integration-tested, but production deployments still need managed database provisioning, least-privilege roles, TLS/network restrictions, migrations, backups and operational monitoring.
 - OIDC revocation and tenant-specific authorization still depend on the configured issuer and context service. JWT signature validation alone does not establish every application-specific authorization fact.
 - The audit hash chain is not equivalent to an external WORM log, a signature, or a tamper-proof audit guarantee.
 - The sample uses a manually versioned Rego policy marker (`paca-example-v2` in this branch). Production should validate and pin signed bundles, expose immutable bundle revisions, secure the OPA management plane, configure decision logs, and coordinate policy version changes with the protected effect boundary.
@@ -87,7 +98,7 @@ For the ticket example, the trusted context service must return an authorization
 
 1. Deploy an authenticated/TLS-protected OPA instance, verify policy bundles and pin a bundle revision.
 2. Configure a real OIDC issuer/JWKS, claim mapping, token lifetime/revocation policy, and a trusted authorization-context service.
-3. Decide on a supported coordination database for the deployment topology and define retention, encryption, backups, migration, and disaster recovery.
+3. Use PostgresPermitStore for multi-host deployment with a managed PostgreSQL instance, least-privilege role, TLS/network restrictions, schema migrations, backups and disaster recovery; reserve SQLite for single-host use.
 4. Require durable downstream idempotency or reconciliation for each remote effect; exercise timeout-after-commit and process-kill recovery tests against a non-production service.
 5. Send audit events to an independently controlled log, restrict database and secret access, and define incident response.
 6. Run the full CI suite, real OPA integration smoke, concurrency/fault-injection tests, adapter-specific adversarial tests, and a human security review against the deployment threat model.
