@@ -233,12 +233,13 @@ class PostgresPermitStore:
         lease_until = now + timedelta(seconds=lease_seconds)
         with self._connect() as db:
             rows = db.execute("""
-                SELECT event_id,payload_json,attempts
-                FROM paca_audit_outbox
-                WHERE delivered_at IS NULL AND next_attempt_at <= %s
-                  AND (lease_expires_at IS NULL OR lease_expires_at <= %s)
-                ORDER BY sequence LIMIT %s
-                FOR UPDATE SKIP LOCKED
+                SELECT o.event_id,o.payload_json,o.attempts,a.event_hash AS source_event_hash
+                FROM paca_audit_outbox AS o
+                LEFT JOIN paca_audit AS a ON a.event_id=o.event_id
+                WHERE o.delivered_at IS NULL AND o.next_attempt_at <= %s
+                  AND (o.lease_expires_at IS NULL OR o.lease_expires_at <= %s)
+                ORDER BY o.sequence LIMIT %s
+                FOR UPDATE OF o SKIP LOCKED
             """, (now, now, limit)).fetchall()
             claimed = []
             for row in rows:
@@ -250,6 +251,7 @@ class PostgresPermitStore:
                 claimed.append({
                     "event_id": row["event_id"], "payload_json": row["payload_json"],
                     "attempts": int(row["attempts"]) + 1,
+                    "source_event_hash": row["source_event_hash"],
                 })
             return claimed
 
