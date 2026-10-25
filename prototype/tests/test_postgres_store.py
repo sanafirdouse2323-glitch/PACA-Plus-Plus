@@ -71,6 +71,13 @@ class PostgresPermitStoreTests(unittest.TestCase):
                 idempotency_key="bad-hash:" + uuid.uuid4().hex,
             )
 
+    def test_audit_chain_detects_deleted_tail_event(self):
+        self.issue()
+        self.assertTrue(self.store.verify_audit_chain())
+        with self.store._connect() as db:
+            db.execute("DELETE FROM paca_audit WHERE sequence=(SELECT MAX(sequence) FROM paca_audit)")
+        self.assertFalse(self.store.verify_audit_chain())
+
     def test_idempotency_key_cannot_be_rebound(self):
         self.issue()
         with self.assertRaises(IdempotencyConflict):
