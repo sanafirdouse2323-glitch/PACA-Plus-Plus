@@ -43,7 +43,7 @@ The SQLite coordinator is for single-host deployments only; the audit hash chain
 ## Remaining work
 
 1. Integrate and test the original ALFA/UCON+ policy syntax, parser, compiler, and evaluator; the prototype does not currently claim to implement these.
-2. Coordinate policy rollout with protected-effect commits and select a transactional shared database before multi-host deployment.
+2. Coordinate policy rollout with protected-effect commits; provision and operationally secure PostgreSQL (the shared-store adapter is included) before multi-host deployment.
 3. Add a downstream-specific integration environment that can test crash-after-commit, retry, and reconciliation semantics against actual protected services.
 4. Send audit events to an independently controlled append-only sink, and complete deployment-specific security review and operational controls.
 5. Compare with relevant existing systems and prior work before deciding whether any new research contribution is established.
