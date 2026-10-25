@@ -99,8 +99,7 @@ class PostgresStore:
     ) -> PermitRecord:
         permit_id = uuid4()
         expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
-        with self.pool.connection() as conn:
-            with conn.transaction():
+        with self.pool.connection() as conn, conn.transaction():
                 conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (tenant_id,))
                 conn.execute(
                     """
@@ -145,8 +144,7 @@ class PostgresStore:
         self, permit_id: UUID | str, tenant_id: str, principal_id: str, reason: str,
         request_id: str | None,
     ) -> None:
-        with self.pool.connection() as conn:
-            with conn.transaction():
+        with self.pool.connection() as conn, conn.transaction():
                 row = conn.execute(
                     """
                     UPDATE authz_permits SET status = 'revoked', updated_at = now()
@@ -172,8 +170,7 @@ class PostgresStore:
         decision_id: str | None = None, arguments_digest: str | None = None,
         context_digest: str | None = None, details: dict[str, Any] | None = None,
     ) -> None:
-        with self.pool.connection() as conn:
-            with conn.transaction():
+        with self.pool.connection() as conn, conn.transaction():
                 self._audit(
                     conn, event_type=event_type, tenant_id=tenant_id, principal_id=principal_id,
                     request_id=request_id, action=action, resource_id=resource_id,
@@ -198,8 +195,7 @@ class PostgresStore:
             "arguments_digest": arguments_digest, "context_digest": context_digest,
             "policy_revision": policy_revision,
         })
-        with self.pool.connection() as conn:
-            with conn.transaction():
+        with self.pool.connection() as conn, conn.transaction():
                 conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (tenant_id,))
                 existing = conn.execute(
                     """
@@ -352,8 +348,7 @@ class PostgresStore:
         if result is not None:
             json.dumps(result, allow_nan=False)
         execution_uuid = UUID(str(execution_id))
-        with self.pool.connection() as conn:
-            with conn.transaction():
+        with self.pool.connection() as conn, conn.transaction():
                 row = conn.execute(
                     """
                     UPDATE authz_executions
@@ -412,8 +407,7 @@ class PostgresStore:
     def mark_stale_executions_unknown(self, stale_after_seconds: int) -> int:
         """Mark abandoned executions unknown; never automatically replay external effects."""
         count = 0
-        with self.pool.connection() as conn:
-            with conn.transaction():
+        with self.pool.connection() as conn, conn.transaction():
                 rows = conn.execute(
                     """
                     UPDATE authz_executions
