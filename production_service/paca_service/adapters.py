@@ -140,33 +140,46 @@ class HttpAPIAdapter(ExecutionAdapter):
             kwargs["params"] = request.arguments
 
         try:
-            response = self.client.request(route["method"], url, **kwargs)
+            with self.client.stream(route["method"], url, **kwargs) as response:
+                if response.status_code >= 500:
+                    raise EffectOutcomeUnknown("upstream_server_outcome_unknown")
+                if response.status_code >= 400:
+                    # This assumes the upstream's 4xx contract means the operation was not applied.
+                    raise EffectRejected("upstream_rejected", status_code=response.status_code)
+                if not 200 <= response.status_code < 300:
+                    raise EffectOutcomeUnknown("upstream_non_success_response")
+
+                summary: dict[str, Any] = {"status_code": response.status_code}
+                content_type = response.headers.get("content-type", "").lower()
+                chunks: list[bytes] = []
+                total_bytes = 0
+                too_large = False
+                chunk_size = max(1, min(64 * 1024, self.max_response_bytes + 1))
+                for chunk in response.iter_bytes(chunk_size=chunk_size):
+                    if total_bytes + len(chunk) > self.max_response_bytes:
+                        too_large = True
+                        break
+                    chunks.append(chunk)
+                    total_bytes += len(chunk)
+
+                if too_large:
+                    summary["response_body_omitted"] = "size_limit"
+                    return summary
+
+                body = b"".join(chunks)
+                if "application/json" in content_type:
+                    try:
+                        decoded = json.loads(body)
+                    except (ValueError, UnicodeDecodeError):
+                        summary["response_body_omitted"] = "invalid_json"
+                    else:
+                        if isinstance(decoded, (dict, list)):
+                            summary["body"] = decoded
+                        else:
+                            summary["body"] = {"value": decoded}
+                return summary
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise EffectOutcomeUnknown("upstream_transport_outcome_unknown") from exc
-
-        if response.status_code >= 500:
-            raise EffectOutcomeUnknown("upstream_server_outcome_unknown")
-        if response.status_code >= 400:
-            # This assumes the upstream's 4xx contract means the operation was not applied.
-            raise EffectRejected("upstream_rejected", status_code=response.status_code)
-        if not 200 <= response.status_code < 300:
-            raise EffectOutcomeUnknown("upstream_non_success_response")
-
-        summary: dict[str, Any] = {"status_code": response.status_code}
-        content_type = response.headers.get("content-type", "").lower()
-        if len(response.content) > self.max_response_bytes:
-            summary["response_body_omitted"] = "size_limit"
-        elif "application/json" in content_type:
-            try:
-                decoded = response.json()
-            except ValueError:
-                summary["response_body_omitted"] = "invalid_json"
-            else:
-                if isinstance(decoded, (dict, list)):
-                    summary["body"] = decoded
-                else:
-                    summary["body"] = {"value": decoded}
-        return summary
 
     def close(self) -> None:
         self.client.close()

@@ -24,6 +24,8 @@ This directory contains a separate FastAPI authorization gateway that combines R
 
    `/healthz` only indicates that the process is alive. `/readyz` verifies database connectivity and a real OPA deny-by-default decision that must carry the configured policy revision.
 
+The API rejects duplicate `Authorization`, `Idempotency-Key`, `Content-Length`, `Transfer-Encoding`, `Host`, and `Content-Type` headers, rejects conflicting request framing, and limits request bodies to 1 MiB. The downstream HTTP adapter streams response bodies and stops reading after its configured response-size limit. These application checks supplement rather than replace ingress-level body, concurrency, and rate limits.
+
 The API binds to loopback on port 8000. Do not expose it externally before configuring and validating TLS ingress, rate/request limits, secrets management, egress controls, backups/restore, audit retention, monitoring, and incident response.
 
 ## Upgrading an existing volume safely

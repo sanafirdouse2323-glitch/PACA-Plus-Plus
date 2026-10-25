@@ -35,6 +35,7 @@ The gateway verifies RS256 tokens for one configured issuer/audience. In this im
 | SSRF/caller-controlled route | Fixed server-configured base URL/routes, reject redirects, require HTTPS for remote upstreams, and enforce egress allow-lists. |
 | Path traversal/symlink attack | Keep logical-resource mapping server controlled; use confined no-follow operations and run tests on the deployment OS/filesystem. |
 | Audit alteration/deletion | Runtime role has no audit update/delete privilege; export to independently controlled append-only/retention-protected storage. A database administrator can still alter local history. |
+| Ambiguous headers/framing or oversized payloads | Reject duplicate security/framing headers and Content-Length plus Transfer-Encoding; cap request bodies while receiving them and stream/cap downstream response reads. Still configure ingress, concurrency and rate limits. |
 | Secret leakage/DoS | Secrets manager and rotation; ingress/request/concurrency/rate limits, timeouts, observability, backups, restore drills, and incident response. |
 
 ## Current safeguards checked into this repository
