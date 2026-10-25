@@ -176,6 +176,10 @@ def create_context_app(
         redoc_url=None,
         openapi_url=None,
     )
+    # This endpoint also receives a body-size/framing guard; the gateway's
+    # middleware is reused so both internal HTTP trust boundaries behave alike.
+    from .service import RequestSizeLimitMiddleware
+    app.add_middleware(RequestSizeLimitMiddleware, max_bytes=16 * 1024)
     app.state.context_repository = repository
 
     @app.get("/healthz")
