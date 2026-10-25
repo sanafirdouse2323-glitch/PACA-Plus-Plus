@@ -6,7 +6,6 @@ from collections import Counter
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-
 MAX_REQUEST_BYTES = 1_048_576
 _CRITICAL_HEADERS = frozenset({
     b"authorization",
