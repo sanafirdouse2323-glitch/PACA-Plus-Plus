@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from paca_mvp.hardening import (
     AuthenticationFailed, ContextUnavailable, EffectOutcomeUnknown, GuardedGateway,
-    IdempotencyConflict, OPAClient, PermitRejected, PolicyUnavailable,
+    HardeningError, IdempotencyConflict, OPAClient, PermitRejected, PolicyUnavailable,
     SQLitePermitStore, TrustedPrincipal,
 )
 from paca_mvp.providers import (
@@ -256,6 +256,8 @@ class DurableStoreTests(unittest.TestCase):
         with self.store._connect() as db:
             db.execute("DELETE FROM audit WHERE sequence=(SELECT MAX(sequence) FROM audit)")
         self.assertFalse(self.store.verify_audit_chain())
+        with self.assertRaisesRegex(HardeningError, "audit head does not match"):
+            self.store.record_event("should_not_append", None, None, None, {})
 
     def test_concurrent_attempts_never_call_effect_twice(self):
         permit_id = self.store.issue("file.write", "file:report-1", self.request_hash,
