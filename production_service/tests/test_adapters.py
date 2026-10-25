@@ -130,7 +130,7 @@ def test_http_adapter_uses_configured_host_and_stable_downstream_idempotency_key
     )
     outgoing = observed[0]
     assert outgoing.url.host == "internal.example"
-    assert outgoing.url.path == "/v1/documents/doc%2F1"
+    assert outgoing.url.raw_path == b"/v1/documents/doc%2F1?view=summary"
     assert outgoing.headers["Idempotency-Key"] == "00000000-0000-0000-0000-000000000001"
     assert outgoing.headers["Authorization"] == "Bearer service-secret"
     assert outgoing.url.params["view"] == "summary"
