@@ -10,6 +10,7 @@ services:
       - paca-db:/var/lib/postgresql/data
       - ./db-init/000-runtime-role.sh:/docker-entrypoint-initdb.d/000-runtime-role.sh:ro
       - ./paca_service/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+      - ./paca_service/runtime_grants.sql:/docker-entrypoint-initdb.d/002-runtime-grants.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U paca_admin -d paca"]
       interval: 5s
