@@ -99,6 +99,12 @@ class OPAClientTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             OPAClient("https://opa.example", decision_path="/v1/data/team/paca")
 
+    def test_opa_rejects_malformed_remote_bearer_tokens_and_base_paths(self):
+        with self.assertRaises(ValueError):
+            OPAClient("https://opa.example", bearer_token="token with spaces")
+        with self.assertRaises(ValueError):
+            OPAClient("https://opa.example/../other", bearer_token="valid-test-token")
+
     def test_request_size_and_non_json_values_fail_closed(self):
         client = OPAClient("http://127.0.0.1:8181", max_request_bytes=10)
         with self.assertRaises(PolicyUnavailable):
