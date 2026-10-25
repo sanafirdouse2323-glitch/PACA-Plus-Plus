@@ -2,14 +2,14 @@ package paca.authz
 
 import rego.v1
 
-owner_or_admin if {
+owner_or_admin := true if {
   input.principal.id == input.resource.owner_id
-} 
-owner_or_admin if {
+}
+owner_or_admin := true if {
   "admin" in input.principal.roles
 }
 
-default decision := {"allow": false, "reason": "default_deny"}
+default decision := {"allow": false, "reason": "default_deny", "policy_revision": data.paca.meta.revision}
 
 decision := {
   "allow": true,
