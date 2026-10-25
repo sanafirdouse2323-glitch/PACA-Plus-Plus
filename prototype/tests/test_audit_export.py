@@ -148,6 +148,37 @@ class AuditOutboxWorkerTests(unittest.TestCase):
         # Backoff keeps an outage from causing a tight retry loop.
         self.assertEqual(worker.run_once()["claimed"], 0)
 
+    def test_worker_rejects_tampered_outbox_before_calling_sink(self):
+        self.store.record_event("test_event", None, None, None, {"original": True})
+        with self.store._connect() as db:
+            row = db.execute("SELECT event_id,payload_json FROM audit_outbox").fetchone()
+            payload = json.loads(row["payload_json"])
+            payload["details"]["original"] = False
+            db.execute(
+                "UPDATE audit_outbox SET payload_json=? WHERE event_id=?",
+                (json.dumps(payload), row["event_id"]),
+            )
+        sink = FakeSink()
+        worker = AuditOutboxWorker(self.store, sink, worker_id="worker-tampered")
+        result = worker.run_once()
+        self.assertEqual(result["retry_scheduled"], 1)
+        self.assertEqual(sink.events, [])
+        with self.store._connect() as db:
+            row = db.execute("SELECT last_error_type FROM audit_outbox").fetchone()
+        self.assertEqual(row["last_error_type"], "AuditDeliveryError")
+
+    def test_reopening_legacy_sqlite_store_backfills_existing_audit_events(self):
+        path = str(Path(self.temp.name) / "legacy.sqlite3")
+        legacy = SQLitePermitStore(path)
+        legacy.record_event("historical_event", None, None, None, {"historical": True})
+        with legacy._connect() as db:
+            db.execute("DROP TABLE audit_outbox")
+        reopened = SQLitePermitStore(path)
+        self.assertTrue(reopened.verify_audit_chain())
+        self.assertEqual(reopened.audit_outbox_counts(), {
+            "total": 1, "pending": 1, "delivered": 0,
+        })
+
     def test_outbox_lease_prevents_two_workers_claiming_same_event(self):
         self.store.record_event("test_event", None, None, None, {})
         first = self.store.claim_audit_outbox("worker-one", lease_seconds=30)
