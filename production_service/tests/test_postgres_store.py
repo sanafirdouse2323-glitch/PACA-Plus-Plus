@@ -10,7 +10,6 @@ from psycopg.types.json import Jsonb
 from paca_service.security import canonical_digest
 from paca_service.store import PostgresStore
 
-
 DATABASE_URL = os.getenv("PACA_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(
     not DATABASE_URL,

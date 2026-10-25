@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import httpx
 import jwt
-from cryptography.hazmat.primitives.asymmetric import rsa
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.exceptions import PyJWKClientConnectionError
 
 from paca_service.auth import (
@@ -15,7 +15,6 @@ from paca_service.auth import (
     JWTAuthenticator,
 )
 from paca_service.opa import OPAClient, PolicyEngineUnavailable
-
 
 ISSUER = "https://identity.example.org/"
 AUDIENCE = "paca-api"

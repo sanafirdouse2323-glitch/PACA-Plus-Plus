@@ -13,7 +13,6 @@ from psycopg_pool import ConnectionPool
 
 from .security import canonical_digest
 
-
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._~-]{1,128}$")
 
 

@@ -24,7 +24,6 @@ from .context import AuthorizationContextProvider, ResourceNotFound
 from .opa import OPAClient, PolicyEngineUnavailable
 from .security import InvalidCanonicalValue, canonical_digest
 
-
 logger = logging.getLogger("paca_service")
 _ACTION_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
 _IDEMPOTENCY_RE = re.compile(r"^[A-Za-z0-9._~-]{1,128}$")

@@ -16,7 +16,6 @@ from .config import Settings
 from .opa import OPAClient
 from .store import PostgresStore
 
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 settings = Settings.from_env()
