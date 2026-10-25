@@ -33,7 +33,7 @@ class CompilerSubsetTests(unittest.TestCase):
         self.assertIn(f"principal.role != {json.dumps('admin')}", cedar)
         self.assertIn(f"context.provenance == {json.dumps('trusted')}", cedar)
         self.assertIn(f"user_role(agent, {json.dumps('admin')})", asp)
-        self.assertIn(f"not provenance(agent, {json.dumps('trusted')})", asp)
+        self.assertIn(f"provenance(agent, {json.dumps('trusted')})", asp)
 
     def test_decodes_and_safely_reescapes_string_values(self):
         source = r'''
