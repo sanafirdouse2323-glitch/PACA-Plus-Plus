@@ -22,6 +22,7 @@ from paca_mvp.providers import (
     FilesystemToolAdapter, HTTPAuthorizationContextProvider, HTTPJSONToolAdapter,
     HTTPRoute, ToolInvocationError,
 )
+from paca_mvp.postgres import PostgresPermitStore
 
 
 class FakeResponse:
@@ -37,6 +38,17 @@ class FakeResponse:
 
     def __exit__(self, *args):
         return False
+
+
+class PostgresConfigurationTests(unittest.TestCase):
+    def test_remote_postgres_requires_full_certificate_verification(self):
+        with self.assertRaisesRegex(ValueError, "sslmode=verify-full"):
+            PostgresPermitStore("postgresql://user:password@db.example/paca")
+        with self.assertRaisesRegex(ValueError, "sslmode=verify-full"):
+            PostgresPermitStore("postgresql://user:password@db.example/paca?sslmode=require")
+        # A configuration error is raised before a database network connection.
+        with self.assertRaisesRegex(ValueError, "sslmode=verify-full"):
+            PostgresPermitStore("postgresql://user:password@db.example/paca?sslmode=disable")
 
 
 class OPAClientTests(unittest.TestCase):
