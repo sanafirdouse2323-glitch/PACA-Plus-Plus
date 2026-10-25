@@ -9,7 +9,7 @@ owner_or_admin := true if {
   "admin" in input.principal.roles
 }
 
-default decision := {"allow": false, "reason": "default_deny", "policy_revision": data.paca.meta.revision}
+default decision := {"allow": false, "reason": "default_deny"}
 
 decision := {
   "allow": true,
