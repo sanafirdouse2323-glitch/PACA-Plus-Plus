@@ -22,8 +22,8 @@ from .auth import AuthenticationError, IdentityProviderUnavailable, JWTAuthentic
 from .config import Settings
 from .context import AuthorizationContextProvider, ResourceNotFound
 from .opa import OPAClient, PolicyEngineUnavailable
-from .security import InvalidCanonicalValue, canonical_digest
 from .http_boundary import RequestBoundaryMiddleware
+from .security import InvalidCanonicalValue, canonical_digest
 
 logger = logging.getLogger("paca_service")
 _ACTION_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
