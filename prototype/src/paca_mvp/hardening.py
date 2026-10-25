@@ -87,6 +87,13 @@ def _validate_identifier(value: str, label: str) -> str:
     return value
 
 
+def _validate_request_hash(value: str) -> str:
+    if (not isinstance(value, str) or len(value) != 64
+            or any(ch not in "0123456789abcdef" for ch in value)):
+        raise ValueError("request_hash must be a lowercase SHA-256 hex digest")
+    return value
+
+
 @dataclass(frozen=True)
 class TrustedPrincipal:
     """Identity claims created only by a verified authentication/context adapter.
@@ -396,6 +403,7 @@ class SQLitePermitStore:
         _validate_identifier(action, "action")
         _validate_identifier(resource, "resource")
         _validate_identifier(policy_version, "policy_version")
+        _validate_request_hash(request_hash)
         if ttl_seconds <= 0 or ttl_seconds > 3600:
             raise ValueError("ttl_seconds must be in (0, 3600]")
         if idempotency_key is not None:
@@ -461,6 +469,7 @@ class SQLitePermitStore:
         This is single-host SQLite coordination. Remote effects are not atomic with
         SQLite; downstream idempotency/reconciliation remains mandatory.
         """
+        _validate_request_hash(request_hash)
         now = datetime.now(timezone.utc)
         # Phase 1: validate the permit and make the non-replayable claim durable.
         with self._connect() as db:
