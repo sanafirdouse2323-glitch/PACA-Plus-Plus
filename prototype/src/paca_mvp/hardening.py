@@ -377,14 +377,20 @@ class SQLitePermitStore:
             head = db.execute("SELECT event_hash FROM audit_head WHERE singleton=1").fetchone()
         previous_hash = "0" * 64
         for row in rows:
-            content = {
-                "event_id": row["event_id"], "created_at": row["created_at"],
-                "event": row["event"], "permit_id": row["permit_id"],
-                "action": row["action"], "resource": row["resource"],
-                "details": json.loads(row["details_json"]),
-                "previous_hash": row["previous_hash"],
-            }
-            if row["previous_hash"] != previous_hash or _digest(content) != row["event_hash"]:
+            try:
+                content = {
+                    "event_id": row["event_id"], "created_at": row["created_at"],
+                    "event": row["event"], "permit_id": row["permit_id"],
+                    "action": row["action"], "resource": row["resource"],
+                    "details": json.loads(row["details_json"]),
+                    "previous_hash": row["previous_hash"],
+                }
+                calculated_hash = _digest(content)
+            except (TypeError, ValueError):
+                # Corrupt event payloads mean the chain is invalid; verification
+                # should report False rather than raising out of the integrity check.
+                return False
+            if row["previous_hash"] != previous_hash or calculated_hash != row["event_hash"]:
                 return False
             previous_hash = row["event_hash"]
         # The separately stored head detects accidental or malicious deletion of
