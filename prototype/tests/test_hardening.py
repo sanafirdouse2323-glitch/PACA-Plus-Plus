@@ -373,6 +373,43 @@ class ProviderAndGatewayTests(unittest.TestCase):
             gateway.authorize_and_execute("credential", "file.read", "file:report-1",
                                           {}, Adapter(), "idem-1")
 
+    def test_final_opa_version_outage_blocks_effect_and_is_audited(self):
+        principal = self.principal
+        class IdP:
+            def authenticate(self, credential):
+                return principal
+        class Context:
+            def get_context(self, *args):
+                return {"authorization": {"role": "analyst"},
+                        "resource": {"owner": "user-17"}}
+        class OPA:
+            calls = 0
+            def decide(self, request):
+                return {"allowed": True, "policy_version": "v1", "reason": "permitted"}
+            def get_policy_version(self):
+                self.calls += 1
+                if self.calls == 1:
+                    return "v1"
+                raise PolicyUnavailable("outage details must not leak")
+        class Adapter:
+            called = False
+            def invoke(self, *args):
+                self.called = True
+                return {"unsafe": True}
+        opa, adapter = OPA(), Adapter()
+        gateway = GuardedGateway(opa, self.store, IdP(), Context())
+        with self.assertRaises(PolicyUnavailable):
+            gateway.authorize_and_execute(
+                "credential", "file.write", "file:report-1",
+                {"content": "safe"}, adapter, "idem-final-opa-outage",
+            )
+        self.assertFalse(adapter.called)
+        events = self.store.audit_events()
+        self.assertEqual(events[-1]["event"], "permit_rejected")
+        self.assertEqual(events[-1]["details"]["reason"], "pre_effect_check_failed")
+        self.assertNotIn("outage details must not leak", json.dumps(events[-1]))
+        self.assertTrue(self.store.verify_audit_chain())
+
     def test_gateway_composes_verified_identity_opa_durable_permit_and_adapter(self):
         captured = {}
         principal = self.principal
