@@ -62,7 +62,10 @@ CREATE TABLE IF NOT EXISTS paca_audit_head (
 );
 
 INSERT INTO paca_audit_head(singleton, event_hash)
-VALUES (1, repeat('0', 64))
+SELECT 1, COALESCE(
+    (SELECT event_hash FROM paca_audit ORDER BY sequence DESC LIMIT 1),
+    repeat('0', 64)
+)
 ON CONFLICT (singleton) DO NOTHING;
 
 COMMIT;
