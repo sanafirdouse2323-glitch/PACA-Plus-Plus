@@ -249,6 +249,9 @@ class DurableStoreTests(unittest.TestCase):
         with self.store._connect() as db:
             db.execute("UPDATE audit SET details_json='{}' WHERE sequence=1")
         self.assertFalse(self.store.verify_audit_chain())
+        with self.store._connect() as db:
+            db.execute("UPDATE audit SET details_json='not-json' WHERE sequence=1")
+        self.assertFalse(self.store.verify_audit_chain())
 
     def test_audit_hash_chain_detects_deleted_tail_event(self):
         self.issue()
