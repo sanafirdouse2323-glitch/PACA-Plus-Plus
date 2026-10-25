@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 
@@ -15,7 +16,7 @@ from paca_mvp.hardening import (
     IdempotencyConflict, PermitRejected, PolicyUnavailable,
 )
 from paca_mvp.service import (
-    MAX_REQUEST_BYTES, TICKET_ACTION, TICKET_RESOURCE, create_app,
+    MAX_REQUEST_BYTES, TICKET_ACTION, TICKET_RESOURCE, build_gateway_from_environment, create_app,
 )
 
 
@@ -130,6 +131,30 @@ class GatewayAppTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 401)
         self.gateway.authorize_and_execute.assert_not_called()
+
+    def test_postgres_schema_migrations_default_to_disabled(self):
+        env = {
+            "OIDC_ISSUER": "https://issuer.example/",
+            "OIDC_AUDIENCE": "paca-api",
+            "OIDC_JWKS_URL": "https://issuer.example/.well-known/jwks.json",
+            "PACA_CONTEXT_URL": "https://context.example/v1/attributes",
+            "PACA_CONTEXT_SERVICE_TOKEN": "context-secret-" + "x" * 16,
+            "OPA_URL": "https://opa.example",
+            "OPA_BEARER_TOKEN": "opa-secret",
+            "PACA_DATABASE_URL": "postgresql://paca:secret@db.example/paca?sslmode=verify-full",
+            "PACA_PROTECTED_API_BASE_URL": "https://tickets.example",
+            "PACA_PROTECTED_API_TOKEN": "tickets-secret",
+        }
+        with patch.dict(os.environ, env, clear=True), \
+             patch("paca_mvp.service.OIDCJWTIdentityProvider"), \
+             patch("paca_mvp.service.HTTPAuthorizationContextProvider"), \
+             patch("paca_mvp.service.OPAClient"), \
+             patch("paca_mvp.service.HTTPJSONToolAdapter"), \
+             patch("paca_mvp.service.PostgresPermitStore") as store_cls:
+            build_gateway_from_environment()
+        store_cls.assert_called_once_with(
+            env["PACA_DATABASE_URL"], initialize_schema=False
+        )
 
 
 if __name__ == "__main__":
