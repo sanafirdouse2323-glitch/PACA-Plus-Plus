@@ -47,6 +47,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-client
+      - name: Validate local Compose configuration from the example environment
+        run: docker compose --env-file production_service/.env.example -f production_service/compose.yaml config -q
       - name: Initialize schema and least-privilege runtime role
         env:
           PGPASSWORD: postgres
