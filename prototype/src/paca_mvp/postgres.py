@@ -65,6 +65,9 @@ class PostgresPermitStore:
                         updated_at TIMESTAMPTZ NOT NULL
                     )
                 """)
+                db.execute("ALTER TABLE paca_permits ADD COLUMN IF NOT EXISTS actor_json JSONB")
+                db.execute("CREATE INDEX IF NOT EXISTS paca_permits_status_idx ON paca_permits(status)")
+                db.execute("CREATE INDEX IF NOT EXISTS paca_permits_idempotency_idx ON paca_permits(idempotency_key)")
                 db.execute("""
                     CREATE TABLE IF NOT EXISTS paca_idempotency (
                         idempotency_key TEXT PRIMARY KEY,
