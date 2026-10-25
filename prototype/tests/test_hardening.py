@@ -152,6 +152,10 @@ class DurableStoreTests(unittest.TestCase):
         self.assertEqual(completed_event["details"]["actor"], actor)
         self.assertTrue(reopened.verify_audit_chain())
 
+    def test_request_fingerprint_must_be_sha256_hex(self):
+        with self.assertRaisesRegex(ValueError, "SHA-256"):
+            self.store.issue("file.write", "file:report-1", "not-a-digest", "policy-v1")
+
     def test_same_idempotency_key_cannot_be_rebound_to_another_request(self):
         self.issue()
         with self.assertRaises(IdempotencyConflict):
