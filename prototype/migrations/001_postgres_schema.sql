@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS paca_permits (
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
+ALTER TABLE paca_permits ADD COLUMN IF NOT EXISTS actor_json JSONB;
 
 CREATE INDEX IF NOT EXISTS paca_permits_status_idx ON paca_permits(status);
 CREATE INDEX IF NOT EXISTS paca_permits_idempotency_idx ON paca_permits(idempotency_key);
