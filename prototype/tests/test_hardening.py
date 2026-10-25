@@ -14,8 +14,9 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from paca_mvp.hardening import (
-    ContextUnavailable, EffectOutcomeUnknown, GuardedGateway, IdempotencyConflict,
-    OPAClient, PermitRejected, PolicyUnavailable, SQLitePermitStore, TrustedPrincipal,
+    AuthenticationFailed, ContextUnavailable, EffectOutcomeUnknown, GuardedGateway,
+    IdempotencyConflict, OPAClient, PermitRejected, PolicyUnavailable,
+    SQLitePermitStore, TrustedPrincipal,
 )
 from paca_mvp.providers import (
     FilesystemToolAdapter, HTTPAuthorizationContextProvider, HTTPJSONToolAdapter,
@@ -306,6 +307,49 @@ class ProviderAndGatewayTests(unittest.TestCase):
             HTTPAuthorizationContextProvider("http://context.example", "x" * 20)
         with self.assertRaises(ValueError):
             HTTPAuthorizationContextProvider("https://context.example", "short")
+
+    def test_authentication_failure_is_audited_without_credential(self):
+        class IdP:
+            def authenticate(self, credential):
+                raise ValueError("bad credential should not be logged: " + credential)
+        class Context:
+            def get_context(self, *args):
+                raise AssertionError("context must not run after failed authentication")
+        class OPA:
+            def decide(self, request):
+                raise AssertionError("policy must not run after failed authentication")
+        gateway = GuardedGateway(OPA(), self.store, IdP(), Context())
+        with self.assertRaises(AuthenticationFailed):
+            gateway.authorize_and_execute(
+                "sentinel-secret-token", "file.read", "file:report-1", {},
+                object(), "audit-auth-1",
+            )
+        events = self.store.audit_events()
+        self.assertEqual(events[-1]["event"], "authentication_failed")
+        self.assertNotIn("sentinel-secret-token", json.dumps(events[-1]))
+        self.assertNotIn("bad credential should not be logged", json.dumps(events[-1]))
+
+    def test_opa_transport_failure_is_audited_without_request_secrets(self):
+        principal = self.principal
+        class IdP:
+            def authenticate(self, credential):
+                return principal
+        class Context:
+            def get_context(self, *args):
+                return {"authorization": {"role": "analyst"}}
+        class OPA:
+            def decide(self, request):
+                raise PolicyUnavailable("offline with secret token details")
+        gateway = GuardedGateway(OPA(), self.store, IdP(), Context())
+        with self.assertRaises(PolicyUnavailable):
+            gateway.authorize_and_execute(
+                "valid-token-not-to-log", "file.read", "file:report-1", {},
+                object(), "audit-opa-1",
+            )
+        events = self.store.audit_events()
+        self.assertEqual(events[-1]["event"], "policy_decision_failed")
+        self.assertNotIn("valid-token-not-to-log", json.dumps(events[-1]))
+        self.assertNotIn("secret token details", json.dumps(events[-1]))
 
     def test_trusted_context_cannot_override_authenticated_identity(self):
         principal = self.principal
