@@ -63,5 +63,5 @@ jobs:
       - name: Check and test Rego policy
         run: |
           docker run --rm \
-            -v "${{ github.workspace }}/production_service/opa:/opa:ro" \
-            openpolicyagent/opa:1.21.3 test /opa -v
+            -v "${{ github.workspace }}/production_service/opa:/policies:ro" \
+            openpolicyagent/opa:1.21.3 test /policies/policies /policies/tests -v
