@@ -33,7 +33,7 @@ Configure the application using secrets from your secret manager or deployment p
     export PACA_OIDC_JWKS_URL='https://your-identity-provider.example/.well-known/jwks.json'
     # One-time schema/bootstrap step using an administrator or migration connection:
     export PACA_POSTGRES_ADMIN_DSN='postgresql://paca:ADMIN_PASSWORD@127.0.0.1:5432/paca'
-    psql "$PACA_POSTGRES_ADMIN_DSN" -v ON_ERROR_STOP=1 -f migrations/001_runtime_roles_and_schema.sql
+    psql "$PACA_POSTGRES_ADMIN_DSN" -v ON_ERROR_STOP=1 -f deployment/001_runtime_roles_and_schema.sql
     # Configure these separate login credentials out-of-band through your secret manager/IAM.
     export PACA_POSTGRES_DSN='postgresql://paca_runtime:RUNTIME_PASSWORD@127.0.0.1:5432/paca'
     export PACA_OPERATOR_POSTGRES_DSN='postgresql://paca_operator:OPERATOR_PASSWORD@127.0.0.1:5432/paca'
@@ -97,7 +97,7 @@ The downstream service should:
 - expose an authoritative status/log lookup for operator reconciliation.
 
 ## Operator recovery commands
-The gateway uses `PACA_POSTGRES_DSN` with the restricted `paca_runtime` role. The local operator CLI uses `PACA_OPERATOR_POSTGRES_DSN` and a distinct `paca_operator` role. These roles have column-limited UPDATE rights only for mutable operation-state fields; immutable request identity/fingerprint fields cannot be updated. They can append audit events and advance the chain head, but are not granted UPDATE or DELETE on prior audit-event rows. Schema creation is a separate administrator/migration operation through `migrations/001_runtime_roles_and_schema.sql`; do not run the gateway with a database-owner or superuser DSN. The sample SQL assumes the database is named `paca`; adapt it before running against a differently named database.
+The gateway uses `PACA_POSTGRES_DSN` with the restricted `paca_runtime` role. The local operator CLI uses `PACA_OPERATOR_POSTGRES_DSN` and a distinct `paca_operator` role. These roles have column-limited UPDATE rights only for mutable operation-state fields; immutable request identity/fingerprint fields cannot be updated. They can append audit events and advance the chain head, but are not granted UPDATE or DELETE on prior audit-event rows. Schema creation is a separate administrator/migration operation through `deployment/001_runtime_roles_and_schema.sql`; do not run the gateway with a database-owner or superuser DSN. The sample SQL assumes the database is named `paca`; adapt it before running against a differently named database.
 
 
 Install the production package, then configure a restricted operator shell with one backend:
