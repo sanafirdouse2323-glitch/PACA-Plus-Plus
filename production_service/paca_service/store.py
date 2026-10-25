@@ -255,9 +255,7 @@ class PostgresStore:
                     resource = conn.execute(
                         """
                         SELECT tenant_id, resource_id, owner_id, kind, status, attributes
-                        FROM protected_resources
-                        WHERE tenant_id = %s AND resource_id = %s
-                        FOR SHARE
+                        FROM public.paca_lock_resource_for_execution(%s, %s)
                         """,
                         (tenant_id, resource_id),
                     ).fetchone()

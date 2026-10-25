@@ -82,7 +82,12 @@ def main():
               f'effect={item["effect_occurred"]}, decision_ok={item["authorization_correct"]}, '
               f'effect_ok={item["effect_correct"]}')
     out = ROOT / "experiments" / "results.json"
-    out.write_text(json.dumps({"summary": summary, "by_family": dict(by_family), "scenarios": outcomes}, indent=2) + "\n")
+    out.write_text(json.dumps({
+        "summary": summary,
+        "by_family": dict(by_family),
+        "note": "Local deterministic toy-scenario run; not an external benchmark, proof of security, standards compliance, or novelty.",
+        "scenarios": outcomes,
+    }, indent=2) + "\n")
     print("\nSaved:", out.relative_to(ROOT))
 
 

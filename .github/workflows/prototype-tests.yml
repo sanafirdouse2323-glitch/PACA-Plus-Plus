@@ -57,6 +57,8 @@ jobs:
         run: python examples/authorize.py --policy examples/policy.json --context examples/context.json --action file.read --resource file:report-1 --execute
       - name: Run deterministic scenarios
         run: python experiments/run_experiments.py
+      - name: Verify checked-in experiment results are reproducible
+        run: git diff --exit-code -- experiments/results.json
       - name: Validate Rego policy with pinned OPA
         run: docker run --rm -v "$GITHUB_WORKSPACE/prototype/policies:/policies:ro" openpolicyagent/opa@sha256:22a9db16423b94d2acbd4a94da3bebeb79583ed6a52ac15cad459d3de2dbbc4d check --strict /policies/paca.rego
       - name: Start real OPA for decision API integration test
