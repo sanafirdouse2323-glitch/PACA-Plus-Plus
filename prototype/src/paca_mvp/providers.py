@@ -105,8 +105,10 @@ class HTTPAuthorizationContextProvider:
         if (not parsed.hostname or parsed.username or parsed.password
                 or parsed.query or parsed.fragment):
             raise ValueError("context endpoint must not contain credentials, query or fragment")
-        if not service_token or len(service_token) < 16:
-            raise ValueError("context service token must be configured as a secret")
+        if (not service_token or len(service_token) < 16
+                or service_token.strip() != service_token
+                or any(ch.isspace() for ch in service_token)):
+            raise ValueError("context service token must be a non-whitespace secret of at least 16 characters")
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self.endpoint, self.service_token, self.timeout_seconds = endpoint, service_token, timeout_seconds
@@ -166,8 +168,10 @@ class HTTPJSONToolAdapter:
             raise ValueError("API base_url must not contain query or fragment")
         if timeout_seconds <= 0 or max_response_bytes < 1:
             raise ValueError("invalid timeout/response size")
-        if not isinstance(bearer_token, str) or not bearer_token.strip():
-            raise ValueError("protected HTTP API requires a configured bearer token")
+        if (not isinstance(bearer_token, str) or not bearer_token.strip()
+                or bearer_token.strip() != bearer_token
+                or any(ch.isspace() for ch in bearer_token)):
+            raise ValueError("protected HTTP API requires a non-whitespace bearer token")
         checked: dict[tuple[str, str], HTTPRoute] = {}
         for key, route in routes.items():
             if not isinstance(key, tuple) or len(key) != 2:
