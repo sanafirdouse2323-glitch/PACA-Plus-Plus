@@ -6,7 +6,7 @@ default decision := {
   "allow": false,
   "reason": "default_deny",
   "policy_revision": data.paca.meta.revision,
-}
+} if true
 
 decision := {
   "allow": true,
