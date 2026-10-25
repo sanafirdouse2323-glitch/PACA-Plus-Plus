@@ -150,8 +150,16 @@ class OPAClient:
         loopback_http = parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
         if parsed.scheme != "https" and not loopback_http:
             raise ValueError("OPA base_url must use HTTPS (HTTP is allowed only for loopback development)")
-        if not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        if (not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment
+                or any(part in {".", ".."} for part in parsed.path.split("/"))):
             raise ValueError("invalid OPA base_url")
+        if bearer_token is not None and (
+            not isinstance(bearer_token, str) or not bearer_token
+            or bearer_token.strip() != bearer_token or any(ch.isspace() for ch in bearer_token)
+        ):
+            raise ValueError("OPA bearer token must be a non-whitespace string without spaces")
+        if parsed.scheme == "https" and not bearer_token:
+            raise ValueError("remote OPA requires a configured bearer token with this client")
         if (not decision_path.startswith("/v1/data/") or ".." in decision_path
                 or "?" in decision_path or "#" in decision_path):
             raise ValueError("decision_path must be a path under OPA /v1/data/ without query/fragment")
@@ -167,8 +175,6 @@ class OPAClient:
             raise ValueError("timeout_seconds must be positive")
         if max_request_bytes < 1:
             raise ValueError("max_request_bytes must be positive")
-        if parsed.scheme == "https" and (not bearer_token or not bearer_token.strip()):
-            raise ValueError("remote OPA requires a configured bearer token with this client")
         self.base_url = base_url.rstrip("/")
         self.decision_path = decision_path
         self.policy_version_path = policy_version_path
