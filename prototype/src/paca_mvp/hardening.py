@@ -323,12 +323,69 @@ class SQLitePermitStore:
                     result_json TEXT,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS audit_outbox (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id TEXT NOT NULL UNIQUE,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+                    next_attempt_at TEXT NOT NULL,
+                    lease_owner TEXT,
+                    lease_expires_at TEXT,
+                    delivered_at TEXT,
+                    last_error_type TEXT
+                );
+                CREATE INDEX IF NOT EXISTS audit_outbox_pending_idx
+                    ON audit_outbox(delivered_at, next_attempt_at, lease_expires_at, sequence);
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(permits)").fetchall()}
             if "actor_json" not in columns:
                 db.execute("ALTER TABLE permits ADD COLUMN actor_json TEXT")
             db.execute("PRAGMA journal_mode=WAL")
             db.execute(f"PRAGMA busy_timeout={int(self.busy_timeout_ms)}")
+            # Validate the existing audit chain before publishing historical events
+            # to the independent audit sink. Reconstruct the original hash input from
+            # persisted values, preserving the exact SQLite timestamp string.
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                rows = db.execute("SELECT * FROM audit ORDER BY sequence").fetchall()
+                head = db.execute(
+                    "SELECT event_hash FROM audit_head WHERE singleton=1"
+                ).fetchone()
+                previous_hash = "0" * 64
+                for row in rows:
+                    try:
+                        content = {
+                            "event_id": row["event_id"], "created_at": row["created_at"],
+                            "event": row["event"], "permit_id": row["permit_id"],
+                            "action": row["action"], "resource": row["resource"],
+                            "details": json.loads(row["details_json"]),
+                            "previous_hash": row["previous_hash"],
+                        }
+                        valid = (row["previous_hash"] == previous_hash
+                                 and _digest(content) == row["event_hash"])
+                    except (TypeError, ValueError):
+                        valid = False
+                        content = {}
+                    if not valid:
+                        raise HardeningError(
+                            "stored audit chain is invalid; refusing to initialize trusted state"
+                        )
+                    payload_json = _canonical_json({**content, "event_hash": row["event_hash"]})
+                    db.execute("""
+                        INSERT OR IGNORE INTO audit_outbox
+                            (event_id,payload_json,created_at,next_attempt_at)
+                        VALUES(?,?,?,?)
+                    """, (row["event_id"], payload_json, row["created_at"], row["created_at"]))
+                    previous_hash = row["event_hash"]
+                if head is None or head["event_hash"] != previous_hash:
+                    raise HardeningError(
+                        "stored audit head does not match chain; refusing to initialize trusted state"
+                    )
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
         # Permit/audit rows can contain protected result data; keep the local
         # database and any already-created WAL sidecars accessible only to its owner.
         for filename in (self.database_path, self.database_path + "-wal", self.database_path + "-shm"):
@@ -369,6 +426,13 @@ class SQLitePermitStore:
             (event_id, created_at, event, permit_id, action, resource,
              _canonical_json(dict(details)), previous_hash, event_hash))
         db.execute("UPDATE audit_head SET event_hash=? WHERE singleton=1", (event_hash,))
+        # Transactional outbox: the local audit record and export intent commit or
+        # roll back together. Delivery to the independent sink happens separately.
+        db.execute("""
+            INSERT INTO audit_outbox(event_id,payload_json,created_at,next_attempt_at)
+            VALUES(?,?,?,?)
+        """, (event_id, _canonical_json({**content, "event_hash": event_hash}),
+              created_at, created_at))
 
     def verify_audit_chain(self) -> bool:
         with self._connect() as db:
@@ -401,6 +465,99 @@ class SQLitePermitStore:
         with self._connect() as db:
             rows = db.execute("SELECT * FROM audit ORDER BY sequence").fetchall()
         return [{**dict(row), "details": json.loads(row["details_json"])} for row in rows]
+
+    def claim_audit_outbox(
+        self, worker_id: str, limit: int = 100, lease_seconds: int = 30
+    ) -> list[dict[str, Any]]:
+        _validate_identifier(worker_id, "worker_id")
+        if not 1 <= limit <= 1000 or not 1 <= lease_seconds <= 3600:
+            raise ValueError("outbox limit must be 1..1000 and lease_seconds 1..3600")
+        now = datetime.now(timezone.utc)
+        now_text = now.isoformat()
+        lease_until = (now + timedelta(seconds=lease_seconds)).isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                rows = db.execute("""
+                    SELECT event_id,payload_json,attempts
+                    FROM audit_outbox
+                    WHERE delivered_at IS NULL AND next_attempt_at <= ?
+                      AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+                    ORDER BY sequence LIMIT ?
+                """, (now_text, now_text, limit)).fetchall()
+                claimed = []
+                for row in rows:
+                    db.execute("""
+                        UPDATE audit_outbox
+                        SET lease_owner=?,lease_expires_at=?,attempts=attempts+1
+                        WHERE event_id=? AND delivered_at IS NULL
+                    """, (worker_id, lease_until, row["event_id"]))
+                    claimed.append({
+                        "event_id": row["event_id"],
+                        "payload_json": row["payload_json"],
+                        "attempts": int(row["attempts"]) + 1,
+                    })
+                db.commit()
+                return claimed
+            except Exception:
+                db.rollback()
+                raise
+
+    def mark_audit_delivered(self, event_id: str, worker_id: str) -> None:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = db.execute("""
+                    UPDATE audit_outbox
+                    SET delivered_at=?,lease_owner=NULL,lease_expires_at=NULL,last_error_type=NULL
+                    WHERE event_id=? AND lease_owner=? AND delivered_at IS NULL
+                """, (_utcnow(), event_id, worker_id))
+                if cursor.rowcount != 1:
+                    raise HardeningError("audit outbox lease is missing or no longer owned")
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+
+    def retry_audit_event(
+        self, event_id: str, worker_id: str, error_type: str,
+        retry_after_seconds: int,
+    ) -> None:
+        _validate_identifier(error_type, "error_type")
+        if not 1 <= retry_after_seconds <= 86400:
+            raise ValueError("retry_after_seconds must be 1..86400")
+        next_attempt = (
+            datetime.now(timezone.utc) + timedelta(seconds=retry_after_seconds)
+        ).isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = db.execute("""
+                    UPDATE audit_outbox
+                    SET next_attempt_at=?,lease_owner=NULL,lease_expires_at=NULL,
+                        last_error_type=?
+                    WHERE event_id=? AND lease_owner=? AND delivered_at IS NULL
+                """, (next_attempt, error_type[:128], event_id, worker_id))
+                if cursor.rowcount != 1:
+                    raise HardeningError("audit outbox lease is missing or no longer owned")
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+
+    def audit_outbox_counts(self) -> dict[str, int]:
+        with self._connect() as db:
+            row = db.execute("""
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN delivered_at IS NULL THEN 1 ELSE 0 END) AS pending,
+                       SUM(CASE WHEN delivered_at IS NOT NULL THEN 1 ELSE 0 END) AS delivered
+                FROM audit_outbox
+            """).fetchone()
+        return {
+            "total": int(row["total"] or 0),
+            "pending": int(row["pending"] or 0),
+            "delivered": int(row["delivered"] or 0),
+        }
 
     def record_event(self, event: str, permit_id: str | None,
                      action: str | None, resource: str | None,
