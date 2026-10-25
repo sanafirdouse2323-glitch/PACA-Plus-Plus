@@ -7,7 +7,7 @@ This repository is an early research scaffold for exploring authorization correc
 The isolated [prototype](prototype/README.md) contains two paths:
 
 - **Legacy MVP:** a small, in-memory JSON-policy engine with simulated effects, unit tests and deterministic scenarios. It remains useful for testing action-bound permit behavior and is not production authorization.
-- **Hardening integration layer on this branch:** an OPA REST decision client and Rego policy, OIDC/JWKS JWT validation, trusted authorization-context retrieval, protected filesystem/HTTP adapters, file-backed SQLite permit/idempotency state, hash-linked durable audit events, crash reconciliation, and adversarial tests.
+- **Hardening integration layer on this branch:** an OPA REST decision client and Rego policy, OIDC/JWKS JWT validation, trusted authorization-context retrieval, protected filesystem/HTTP adapters, single-host SQLite and multi-host PostgreSQL permit/idempotency state, hash-linked durable audit events, crash reconciliation, a runnable ASGI gateway for a fixed ticket-create route, and adversarial/integration tests.
 
 The hardening code is deliberately separate from the legacy engine and original compiler work. See [the hardening architecture and limits](prototype/docs/SECURITY_HARDENING.md), [threat model](prototype/THREAT_MODEL.md), and [local verification report](prototype/docs/LOCAL_VERIFICATION_REPORT.md).
 
