@@ -65,6 +65,17 @@ class GatewayAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.gateway.authorize_and_execute.assert_not_called()
 
+    def test_malformed_idempotency_keys_are_rejected_as_bad_requests(self):
+        for key in ("   ", "x" * 513):
+            with self.subTest(key_length=len(key)):
+                response = self.client.post(
+                    "/v1/tickets", json={"title": "Incident"},
+                    headers={"Authorization": "Bearer valid-format-token",
+                             "Idempotency-Key": key},
+                )
+                self.assertEqual(response.status_code, 400)
+        self.gateway.authorize_and_execute.assert_not_called()
+
     def test_endpoint_binds_action_resource_adapter_and_request_body(self):
         response = self.client.post(
             "/v1/tickets",
