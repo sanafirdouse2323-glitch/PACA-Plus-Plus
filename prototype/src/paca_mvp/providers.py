@@ -194,10 +194,10 @@ class HTTPJSONToolAdapter:
         if route is None:
             raise ToolInvocationError("no configured route for this action/resource")
         _validate_identifier(idempotency_key, "idempotency_key")
-        body = _canonical_json({
-            "action": action, "resource": resource,
-            "arguments": dict(arguments), "idempotency_key": idempotency_key,
-        }).encode("utf-8")
+        # The route already binds the authorized action/resource pair.
+        # Send the protected API's argument object as its ordinary JSON body;
+        # the idempotency key is carried in the standard header.
+        body = _canonical_json(dict(arguments)).encode("utf-8")
         headers = {
             "Content-Type": "application/json", "Accept": "application/json",
             "Idempotency-Key": idempotency_key,
