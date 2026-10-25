@@ -197,8 +197,13 @@ def create_context_app(
             value for name, value in request.scope.get("headers", [])
             if name.lower() == b"authorization"
         ]
+        if not auth_values:
+            raise HTTPException(
+                status_code=401, detail="service authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         if len(auth_values) != 1:
-            raise HTTPException(status_code=400, detail="exactly one Authorization header is required")
+            raise HTTPException(status_code=400, detail="duplicate Authorization headers")
         try:
             authorization = auth_values[0].decode("ascii")
         except UnicodeDecodeError as exc:
