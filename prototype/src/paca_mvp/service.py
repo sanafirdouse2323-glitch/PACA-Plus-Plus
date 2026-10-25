@@ -5,7 +5,7 @@ arbitrary tool names or URLs from the caller. OIDC, trusted context, OPA,
 database and downstream API endpoints are deployment configuration.
 
 Run with:
-    uvicorn paca_mvp.service:app --host 127.0.0.1 --port 8080
+    uvicorn paca_mvp.service:create_app --factory --host 127.0.0.1 --port 8080
 
 For production, terminate TLS at a trusted proxy/load balancer and protect that
 hop, configure trusted proxy handling explicitly, and run with least privilege.
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Callable
+from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -228,5 +228,3 @@ def create_app(
     return app
 
 
-# Fail fast at process startup if mandatory deployment configuration is incomplete.
-app = create_app()
