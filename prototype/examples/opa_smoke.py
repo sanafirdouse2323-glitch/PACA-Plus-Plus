@@ -8,15 +8,16 @@ from paca_mvp.hardening import OPAClient
 
 client = OPAClient(os.environ.get("OPA_URL", "http://127.0.0.1:8181"))
 version = client.get_policy_version()
-assert version == "paca-example-v3", f"unexpected policy version: {version!r}"
+assert version == "paca-example-v4", f"unexpected policy version: {version!r}"
 
 base = {
     "principal": {"subject": "user-17", "claims": {"suspended": False}},
     "action": "file.read",
     "resource": "file:report-1",
     "context": {
-        "authorization": {"role": "analyst", "suspended": False},
-        "resource": {"owner": "user-17"},
+        "authorization": {"principal_id": "principal-17", "tenant_id": "tenant-1",
+                          "role": "analyst", "suspended": False},
+        "resource": {"owner_principal_id": "principal-17", "tenant_id": "tenant-1"},
     },
 }
 allowed = client.decide(base)
@@ -26,18 +27,47 @@ assert allowed["policy_version"] == version
 not_owner = {
     **base,
     "context": {
-        "authorization": {"role": "analyst", "suspended": False},
-        "resource": {"owner": "another-user"},
+        "authorization": {"principal_id": "principal-17", "tenant_id": "tenant-1",
+                          "role": "analyst", "suspended": False},
+        "resource": {"owner_principal_id": "principal-99", "tenant_id": "tenant-1"},
     },
 }
 denied = client.decide(not_owner)
 assert denied["allowed"] is False, f"expected deny, got {denied!r}"
 
+# A raw OIDC subject is not an internal resource identifier. This prevents a
+# colliding subject from another issuer/tenant matching an owner's internal ID.
+raw_subject_collision = {
+    **base,
+    "principal": {"subject": "principal-17", "claims": {"suspended": False}},
+    "context": {
+        "authorization": {"principal_id": "different-internal-user", "tenant_id": "tenant-1",
+                          "role": "analyst", "suspended": False},
+        "resource": {"owner_principal_id": "principal-17", "tenant_id": "tenant-1"},
+    },
+}
+assert client.decide(raw_subject_collision)["allowed"] is False, (
+    "a raw subject collision must not satisfy internal ownership"
+)
+
+cross_tenant = {
+    **base,
+    "context": {
+        "authorization": {"principal_id": "principal-17", "tenant_id": "tenant-1",
+                          "role": "analyst", "suspended": False},
+        "resource": {"owner_principal_id": "principal-17", "tenant_id": "tenant-2"},
+    },
+}
+assert client.decide(cross_tenant)["allowed"] is False, (
+    "matching owner ID must not override a tenant mismatch"
+)
+
 missing_status = {
     **base,
     "context": {
-        "authorization": {"role": "analyst"},
-        "resource": {"owner": "user-17"},
+        "authorization": {"principal_id": "principal-17", "tenant_id": "tenant-1",
+                          "role": "analyst"},
+        "resource": {"owner_principal_id": "principal-17", "tenant_id": "tenant-1"},
     },
 }
 denied_missing_status = client.decide(missing_status)
@@ -57,8 +87,9 @@ assert denied_suspended["allowed"] is False, f"expected suspended-user deny, got
 currently_suspended = {
     **base,
     "context": {
-        "authorization": {"role": "analyst", "suspended": True},
-        "resource": {"owner": "user-17"},
+        "authorization": {"principal_id": "principal-17", "tenant_id": "tenant-1",
+                          "role": "analyst", "suspended": True},
+        "resource": {"owner_principal_id": "principal-17", "tenant_id": "tenant-1"},
     },
 }
 denied_current_status = client.decide(currently_suspended)
@@ -71,16 +102,24 @@ ticket = {
     "action": "ticket.create",
     "resource": "ticket-collection:default",
     "principal": {"subject": "user-17", "claims": {"suspended": False}},
-    "context": {"authorization": {"role": "support", "can_create_tickets": True, "suspended": False}},
+    "context": {
+        "authorization": {"principal_id": "principal-17", "tenant_id": "tenant-1",
+                          "role": "support", "can_create_tickets": True, "suspended": False},
+        "resource": {"tenant_id": "tenant-1", "owner_principal_id": None},
+    },
 }
 assert client.decide(ticket)["allowed"] is True, "expected support ticket create to be permitted"
 ticket_denied = {
     **ticket,
-    "context": {"authorization": {"role": "support", "can_create_tickets": False, "suspended": False}},
+    "context": {
+        "authorization": {"principal_id": "principal-17", "tenant_id": "tenant-1",
+                          "role": "support", "can_create_tickets": False, "suspended": False},
+        "resource": {"tenant_id": "tenant-1", "owner_principal_id": None},
+    },
 }
 assert client.decide(ticket_denied)["allowed"] is False, "expected ticket create without trusted capability to be denied"
 
 print(
-    f"OPA integration smoke passed: policy={version}, read permit, ownership deny, "
-    "missing-status deny, JWT-suspension deny, current-suspension deny, ticket-create permit/deny verified"
+    f"OPA integration smoke passed: policy={version}, internal-owner permit/deny, raw-subject collision deny, "
+    "cross-tenant deny, missing-status deny, JWT/current-suspension deny, ticket-create permit/deny verified"
 )
