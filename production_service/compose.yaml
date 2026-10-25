@@ -3,13 +3,15 @@ services:
     image: postgres:17-alpine
     environment:
       POSTGRES_DB: paca
-      POSTGRES_USER: paca
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_USER: paca_admin
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?Set POSTGRES_ADMIN_PASSWORD in .env}
+      PACA_RUNTIME_PASSWORD: ${PACA_RUNTIME_PASSWORD:?Set PACA_RUNTIME_PASSWORD in .env}
     volumes:
       - paca-db:/var/lib/postgresql/data
+      - ./db-init/000-runtime-role.sh:/docker-entrypoint-initdb.d/000-runtime-role.sh:ro
       - ./paca_service/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U paca -d paca"]
+      test: ["CMD-SHELL", "pg_isready -U paca_admin -d paca"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -18,7 +20,7 @@ services:
     security_opt: ["no-new-privileges:true"]
 
   opa:
-    image: openpolicyagent/opa:1.21.3
+    image: openpolicyagent/opa:1.21.3@sha256:22a9db16423b94d2acbd4a94da3bebeb79583ed6a52ac15cad459d3de2dbbc4d
     command: ["run", "--server", "--addr=0.0.0.0:8181", "--log-format=json", "/policies"]
     volumes:
       - ./opa/policies:/policies:ro
@@ -28,16 +30,33 @@ services:
     security_opt: ["no-new-privileges:true"]
     read_only: true
     tmpfs: ["/tmp"]
+    healthcheck:
+      test: ["CMD", "/opa", "eval", "--data", "/policies", "data.paca.authz.decision.allow == false"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   api:
     build:
       context: .
       dockerfile: Dockerfile
-    env_file: .env
     environment:
-      PACA_DATABASE_URL: postgresql://paca:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@database:5432/paca
-      PACA_OPA_URL: http://opa:8181
+      PACA_DATABASE_URL: postgresql://paca_runtime:${PACA_RUNTIME_PASSWORD:?Set PACA_RUNTIME_PASSWORD in .env}@database:5432/paca
+      PACA_OPA_URL: ${PACA_OPA_URL:-http://opa:8181}
+      PACA_OPA_DECISION_PATH: ${PACA_OPA_DECISION_PATH:-/v1/data/paca/authz/decision}
+      PACA_EXPECTED_POLICY_REVISION: ${PACA_EXPECTED_POLICY_REVISION:?Set PACA_EXPECTED_POLICY_REVISION in .env}
+      PACA_OPA_TIMEOUT_SECONDS: ${PACA_OPA_TIMEOUT_SECONDS:-2}
+      PACA_JWT_ISSUER: ${PACA_JWT_ISSUER:?Set PACA_JWT_ISSUER in .env}
+      PACA_JWT_AUDIENCE: ${PACA_JWT_AUDIENCE:?Set PACA_JWT_AUDIENCE in .env}
+      PACA_JWT_JWKS_URL: ${PACA_JWT_JWKS_URL:?Set PACA_JWT_JWKS_URL in .env}
+      PACA_JWT_TIMEOUT_SECONDS: ${PACA_JWT_TIMEOUT_SECONDS:-5}
+      PACA_PERMIT_TTL_SECONDS: ${PACA_PERMIT_TTL_SECONDS:-30}
+      PACA_EXECUTION_TIMEOUT_SECONDS: ${PACA_EXECUTION_TIMEOUT_SECONDS:-10}
+      PACA_STALE_EXECUTION_SECONDS: ${PACA_STALE_EXECUTION_SECONDS:-120}
       PACA_FILE_ROOT: /var/lib/paca/files
+      PACA_API_BASE_URL: ${PACA_API_BASE_URL:-}
+      PACA_API_ROUTES_JSON: ${PACA_API_ROUTES_JSON:-'{}'}
+      PACA_API_BEARER_TOKEN: ${PACA_API_BEARER_TOKEN:-}
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -46,7 +65,7 @@ services:
       database:
         condition: service_healthy
       opa:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
     networks: [control-plane, outbound]
     read_only: true
@@ -54,7 +73,7 @@ services:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=2).read()"]
       interval: 10s
       timeout: 3s
       retries: 5
