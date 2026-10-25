@@ -4,6 +4,7 @@ These tests validate parsing and generated-text invariants. They deliberately do
 not claim semantic equivalence between Cedar and ASP; that requires executing
 both backends against a shared, independently specified test corpus.
 """
+import json
 import unittest
 
 from compiler.transpiler import PacaCompiler
@@ -29,23 +30,24 @@ class CompilerSubsetTests(unittest.TestCase):
         self.assertEqual(ast.conditions[1].entity, "provenance")
         cedar = self.compiler.emit_cedar(ast)
         asp = self.compiler.emit_asp(ast)
-        self.assertIn("principal.role !=", cedar)
-        self.assertIn("context.provenance ==", cedar)
-        self.assertIn("user_role(agent, \\"admin\\")", asp)
-        self.assertIn("not provenance(agent, \\"trusted\\")", asp)
+        self.assertIn(f"principal.role != {json.dumps('admin')}", cedar)
+        self.assertIn(f"context.provenance == {json.dumps('trusted')}", cedar)
+        self.assertIn(f"user_role(agent, {json.dumps('admin')})", asp)
+        self.assertIn(f"not provenance(agent, {json.dumps('trusted')})", asp)
 
     def test_decodes_and_safely_reescapes_string_values(self):
         source = r'''
         policy Escaping {
             target: action == "readFile"
-            condition: user.role == "ops \\"blue\\""
+            condition: user.role == "ops \"blue\""
             effect: permit
         }
         '''
         ast = self.compiler.compile_to_ast(source)
         self.assertEqual(ast.conditions[0].value, 'ops "blue"')
-        self.assertIn(r'principal.role == "ops \\"blue\\""', self.compiler.emit_cedar(ast))
-        self.assertIn(r'user_role(agent, "ops \\"blue\\"")', self.compiler.emit_asp(ast))
+        encoded = json.dumps('ops "blue"')
+        self.assertIn(f"principal.role == {encoded}", self.compiler.emit_cedar(ast))
+        self.assertIn(f"user_role(agent, {encoded})", self.compiler.emit_asp(ast))
 
     def test_obligation_is_preserved_and_emitters_refuse_to_ignore_it(self):
         source = r'''
@@ -63,7 +65,7 @@ class CompilerSubsetTests(unittest.TestCase):
         with self.assertRaises(NotImplementedError):
             self.compiler.emit_asp(ast)
 
-    def test_empty_or_unparseable_policy_is_rejected(self):
+    def test_unparseable_policy_is_rejected(self):
         with self.assertRaises(Exception):
             self.compiler.compile_to_ast("not a policy")
 
