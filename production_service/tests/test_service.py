@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -102,7 +102,7 @@ class FakeStore:
             policy_revision=kwargs["policy_revision"],
             decision_id=kwargs["decision_id"],
             status="issued",
-            expires_at=datetime.now(timezone.utc) + timedelta(seconds=kwargs["ttl_seconds"]),
+            expires_at=datetime.now(UTC) + timedelta(seconds=kwargs["ttl_seconds"]),
         )
         self.permits[permit_id] = permit
         self.audits.append({"event_type": "permit_issued", **kwargs})
@@ -156,7 +156,7 @@ class FakeStore:
             if prior:
                 return ClaimResult("in_progress", execution_id=permit.permit_id, status=prior["status"])
             return ClaimResult("rejected", reason="permit_not_issued")
-        if permit.expires_at <= datetime.now(timezone.utc):
+        if permit.expires_at <= datetime.now(UTC):
             return ClaimResult("rejected", reason="permit_expired")
         if (permit.action, permit.resource_id) != (kwargs["action"], kwargs["resource_id"]):
             return ClaimResult("rejected", reason="operation_mismatch")
@@ -201,9 +201,9 @@ class FakeStore:
             "action": item["action"],
             "resource_id": item["resource_id"],
             "policy_revision": "paca-dev-2026-10-23",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "started_at": datetime.now(timezone.utc).isoformat(),
-            "finished_at": datetime.now(timezone.utc).isoformat() if item["status"] != "executing" else None,
+            "created_at": datetime.now(UTC).isoformat(),
+            "started_at": datetime.now(UTC).isoformat(),
+            "finished_at": datetime.now(UTC).isoformat() if item["status"] != "executing" else None,
         }
 
 
