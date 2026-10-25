@@ -64,4 +64,4 @@ jobs:
         run: |
           docker run --rm \
             -v "${{ github.workspace }}/production_service/opa:/policies:ro" \
-            openpolicyagent/opa:1.21.3 test /policies/policies /policies/tests -v
+            openpolicyagent/opa:1.21.3 test --bundle /policies -v
