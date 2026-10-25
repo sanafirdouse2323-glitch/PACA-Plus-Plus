@@ -14,8 +14,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from paca_mvp.hardening import (
-    AuthenticationFailed, ContextUnavailable, GuardedGateway, OPAClient,
-    PermitRejected, SQLitePermitStore, TrustedPrincipal,
+    AuthenticationFailed, ContextUnavailable, GuardedGateway, IdentityProviderUnavailable,
+    OPAClient, PermitRejected, SQLitePermitStore, TrustedPrincipal,
 )
 from paca_mvp.providers import HTTPAuthorizationContextProvider, OIDCJWTIdentityProvider
 
@@ -98,6 +98,15 @@ class OIDCIdentityTests(unittest.TestCase):
             with self.assertRaises(AuthenticationFailed):
                 self.provider.authenticate(bad_algorithm)
 
+    def test_jwks_connection_failure_is_an_identity_provider_outage(self):
+        class UnavailableJWKClient:
+            def get_signing_key_from_jwt(self, token):
+                raise jwt.exceptions.PyJWKClientConnectionError("test network outage")
+
+        with patch("jwt.PyJWKClient", return_value=UnavailableJWKClient()):
+            with self.assertRaises(IdentityProviderUnavailable):
+                self.provider.authenticate(self.token())
+
     def test_non_https_issuer_is_rejected_at_configuration_time(self):
         with self.assertRaisesRegex(ValueError, "HTTPS"):
             OIDCJWTIdentityProvider(
@@ -108,6 +117,26 @@ class OIDCIdentityTests(unittest.TestCase):
     def test_malformed_credential_fails_closed(self):
         with self.assertRaises(AuthenticationFailed):
             self.provider.authenticate("not.a.jwt")
+
+
+class IdentityProviderGatewayTests(unittest.TestCase):
+    def test_jwks_outage_is_audited_and_propagated_without_becoming_401(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = SQLitePermitStore(str(Path(temp) / "paca.sqlite3"))
+
+            class UnavailableIdentityProvider:
+                def authenticate(self, credential):
+                    raise IdentityProviderUnavailable("JWKS service unavailable")
+
+            gateway = GuardedGateway(object(), store, UnavailableIdentityProvider(), object())
+            with self.assertRaises(IdentityProviderUnavailable):
+                gateway.authorize_and_execute(
+                    "bearer", "file.read", "file:report-1", {},
+                    object(), "idempotency-jwks-outage",
+                )
+            events = store.audit_events()
+            self.assertEqual(events[-1]["event"], "identity_provider_unavailable")
+            self.assertNotIn("bearer", json.dumps(events))
 
 
 class TrustedContextTests(unittest.TestCase):
