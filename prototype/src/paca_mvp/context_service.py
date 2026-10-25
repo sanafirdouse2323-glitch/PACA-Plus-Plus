@@ -144,7 +144,7 @@ class PostgresAuthorizationContextRepository:
 class ContextRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     subject: str = Field(min_length=1, max_length=512)
-    issuer: str = Field(min_length=1, max_length=2048)
+    issuer: str = Field(min_length=1, max_length=512)
     audience: str = Field(min_length=1, max_length=512)
     action: str = Field(min_length=1, max_length=512)
     resource: str = Field(min_length=1, max_length=512)
