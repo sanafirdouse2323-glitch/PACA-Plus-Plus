@@ -164,6 +164,157 @@ class TrustedContextTests(unittest.TestCase):
 
 
 class PolicyRolloverTests(unittest.TestCase):
+    def test_current_suspension_change_before_effect_blocks_permit(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = SQLitePermitStore(str(Path(temp) / "paca.sqlite3"))
+            principal = TrustedPrincipal(
+                "user-17", "https://issuer.example", "paca-api",
+                {"sub": "user-17", "suspended": False},
+                "2026-01-01T00:00:00+00:00",
+            )
+
+            class IdP:
+                def authenticate(self, credential):
+                    return principal
+
+            class Context:
+                calls = 0
+                def get_context(self, *args):
+                    self.calls += 1
+                    return {
+                        "authorization": {
+                            "role": "analyst",
+                            "suspended": self.calls > 1,
+                        },
+                        "resource": {"owner": "user-17"},
+                    }
+
+            class OPA:
+                def decide(self, request):
+                    return {
+                        "allowed": True, "policy_version": "v1",
+                        "reason": "test-allow",
+                    }
+                def get_policy_version(self):
+                    return "v1"
+
+            class Adapter:
+                called = False
+                def invoke(self, *args):
+                    self.called = True
+                    return {"unsafe": True}
+
+            context, adapter = Context(), Adapter()
+            gateway = GuardedGateway(OPA(), store, IdP(), context)
+            with self.assertRaisesRegex(PermitRejected, "context changed"):
+                gateway.authorize_and_execute(
+                    "credential", "file.read", "file:report-1", {},
+                    adapter, "idem-suspension-change",
+                )
+            self.assertEqual(context.calls, 2)
+            self.assertFalse(adapter.called)
+            self.assertTrue(store.verify_audit_chain())
+            self.assertEqual(store.audit_events()[-1]["event"], "permit_rejected")
+
+    def test_identity_is_revalidated_before_effect(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = SQLitePermitStore(str(Path(temp) / "paca.sqlite3"))
+            principal = TrustedPrincipal(
+                "user-17", "https://issuer.example", "paca-api",
+                {"sub": "user-17", "suspended": False},
+                "2026-01-01T00:00:00+00:00",
+            )
+
+            class IdP:
+                calls = 0
+                def authenticate(self, credential):
+                    self.calls += 1
+                    if self.calls > 1:
+                        raise AuthenticationFailed("token expired before effect")
+                    return principal
+
+            class Context:
+                def get_context(self, *args):
+                    return {
+                        "authorization": {"role": "analyst", "suspended": False},
+                        "resource": {"owner": "user-17"},
+                    }
+
+            class OPA:
+                def decide(self, request):
+                    return {
+                        "allowed": True, "policy_version": "v1",
+                        "reason": "test-allow",
+                    }
+                def get_policy_version(self):
+                    return "v1"
+
+            class Adapter:
+                called = False
+                def invoke(self, *args):
+                    self.called = True
+                    return {"unsafe": True}
+
+            identity, adapter = IdP(), Adapter()
+            gateway = GuardedGateway(OPA(), store, identity, Context())
+            with self.assertRaisesRegex(AuthenticationFailed, "token expired"):
+                gateway.authorize_and_execute(
+                    "credential", "file.read", "file:report-1", {},
+                    adapter, "idem-expired-before-effect",
+                )
+            self.assertEqual(identity.calls, 2)
+            self.assertFalse(adapter.called)
+            self.assertTrue(store.verify_audit_chain())
+
+    def test_context_service_outage_during_final_check_blocks_effect(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = SQLitePermitStore(str(Path(temp) / "paca.sqlite3"))
+            principal = TrustedPrincipal(
+                "user-17", "https://issuer.example", "paca-api",
+                {"sub": "user-17", "suspended": False},
+                "2026-01-01T00:00:00+00:00",
+            )
+
+            class IdP:
+                def authenticate(self, credential):
+                    return principal
+
+            class Context:
+                calls = 0
+                def get_context(self, *args):
+                    self.calls += 1
+                    if self.calls > 1:
+                        raise ContextUnavailable("temporary outage")
+                    return {
+                        "authorization": {"role": "analyst", "suspended": False},
+                        "resource": {"owner": "user-17"},
+                    }
+
+            class OPA:
+                def decide(self, request):
+                    return {
+                        "allowed": True, "policy_version": "v1",
+                        "reason": "test-allow",
+                    }
+                def get_policy_version(self):
+                    return "v1"
+
+            class Adapter:
+                called = False
+                def invoke(self, *args):
+                    self.called = True
+                    return {"unsafe": True}
+
+            context, adapter = Context(), Adapter()
+            gateway = GuardedGateway(OPA(), store, IdP(), context)
+            with self.assertRaisesRegex(ContextUnavailable, "temporary outage"):
+                gateway.authorize_and_execute(
+                    "credential", "file.read", "file:report-1", {},
+                    adapter, "idem-context-outage",
+                )
+            self.assertFalse(adapter.called)
+            self.assertTrue(store.verify_audit_chain())
+
     def test_active_policy_version_change_blocks_effect(self):
         with tempfile.TemporaryDirectory() as temp:
             store = SQLitePermitStore(str(Path(temp) / "paca.sqlite3"))
