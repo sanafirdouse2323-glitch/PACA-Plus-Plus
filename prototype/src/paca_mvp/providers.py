@@ -166,6 +166,8 @@ class HTTPJSONToolAdapter:
             raise ValueError("API base_url must not contain query or fragment")
         if timeout_seconds <= 0 or max_response_bytes < 1:
             raise ValueError("invalid timeout/response size")
+        if not isinstance(bearer_token, str) or not bearer_token.strip():
+            raise ValueError("protected HTTP API requires a configured bearer token")
         checked: dict[tuple[str, str], HTTPRoute] = {}
         for key, route in routes.items():
             if not isinstance(key, tuple) or len(key) != 2:
