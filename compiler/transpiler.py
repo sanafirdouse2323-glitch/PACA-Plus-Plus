@@ -161,6 +161,10 @@ class PacaCompiler:
                 raise NotImplementedError(
                     f"ASP mapping is not defined for {condition.entity!r}"
                 )
-            atom = f'{predicate}(agent, {value})'
-            atoms.append(f"not {atom}" if condition.operator == "!=" else atom)
+            if condition.operator == "!=":
+                raise NotImplementedError(
+                    "ASP inequality needs an explicit attribute-presence/closed-world "
+                    "semantics and is not emitted by this experimental backend"
+                )
+            atoms.append(f'{predicate}(agent, {value})')
         return f"{ast.effect} :- {', '.join(atoms)}."
