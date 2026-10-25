@@ -65,10 +65,9 @@ jobs:
         run: |
           set -euo pipefail
           docker run -d --name paca-opa-test -p 127.0.0.1:8181:8181 \
-            -v "$GITHUB_WORKSPACE/production_service/opa/policies:/policies:ro" \
-            -v "$GITHUB_WORKSPACE/production_service/opa/data.json:/policies/data.json:ro" \
+            -v "$GITHUB_WORKSPACE/production_service/opa:/bundle:ro" \
             openpolicyagent/opa:1.21.3@sha256:22a9db16423b94d2acbd4a94da3bebeb79583ed6a52ac15cad459d3de2dbbc4d \
-            run --server --addr=0.0.0.0:8181 --log-format=json /policies
+            run --server --addr=0.0.0.0:8181 --log-format=json /bundle
           ready=false
           for attempt in $(seq 1 30); do
             if curl --fail --silent http://127.0.0.1:8181/health >/dev/null; then
