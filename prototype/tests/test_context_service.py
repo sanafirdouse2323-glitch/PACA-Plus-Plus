@@ -146,6 +146,9 @@ class PostgresAuthorizationContextTests(unittest.TestCase):
         tenant = "tenant-" + suffix
         principal_id = "principal-" + suffix
         resource = "file:resource-" + suffix
+        other_tenant = "tenant-other-" + suffix
+        other_subject = "sub-other-tenant-" + suffix
+        other_principal_id = "principal-other-" + suffix
 
         try:
             with repository._psycopg.connect(
@@ -159,6 +162,13 @@ class PostgresAuthorizationContextTests(unittest.TestCase):
                         can_create_tickets, suspended, active)
                        VALUES (%s,%s,%s,%s,%s,'analyst',FALSE,FALSE,TRUE)""",
                     (principal_id, issuer, subject, audience, tenant),
+                )
+                db.execute(
+                    """INSERT INTO paca_context_principals
+                       (principal_id, issuer, subject, audience, tenant_id, role,
+                        can_create_tickets, suspended, active)
+                       VALUES (%s,%s,%s,%s,%s,'analyst',FALSE,FALSE,TRUE)""",
+                    (other_principal_id, issuer, other_subject, audience, other_tenant),
                 )
                 db.execute(
                     """INSERT INTO paca_context_resources
@@ -196,6 +206,15 @@ class PostgresAuthorizationContextTests(unittest.TestCase):
             )
             self.assertIsNone(unknown["authorization"]["principal_id"])
             self.assertTrue(unknown["authorization"]["suspended"])
+
+            # An identity registered only in another tenant must not be
+            # resolved through a resource belonging to this tenant.
+            cross_tenant = repository.get_context(
+                other_subject, issuer, audience, "file.read", resource
+            )
+            self.assertIsNone(cross_tenant["authorization"]["principal_id"])
+            self.assertTrue(cross_tenant["authorization"]["suspended"])
+            self.assertEqual(cross_tenant["resource"]["tenant_id"], tenant)
         finally:
             with repository._psycopg.connect(
                 repository.dsn,
@@ -209,6 +228,11 @@ class PostgresAuthorizationContextTests(unittest.TestCase):
                     """DELETE FROM paca_context_principals
                        WHERE principal_id=%s AND tenant_id=%s""",
                     (principal_id, tenant),
+                )
+                db.execute(
+                    """DELETE FROM paca_context_principals
+                       WHERE principal_id=%s AND tenant_id=%s""",
+                    (other_principal_id, other_tenant),
                 )
 
 
