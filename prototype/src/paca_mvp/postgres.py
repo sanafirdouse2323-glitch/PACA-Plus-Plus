@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping
+from urllib.parse import parse_qs, urlparse
 import json
 import uuid
 
@@ -30,6 +31,16 @@ class PostgresPermitStore:
                  initialize_schema: bool = True):
         if not isinstance(dsn, str) or not dsn.startswith(("postgresql://", "postgres://")):
             raise ValueError("dsn must be a PostgreSQL connection URL")
+        parsed_dsn = urlparse(dsn)
+        if not parsed_dsn.hostname:
+            raise ValueError("PostgreSQL DSN must include a hostname")
+        loopback_hosts = {"localhost", "127.0.0.1", "::1"}
+        if parsed_dsn.hostname not in loopback_hosts:
+            sslmode = parse_qs(parsed_dsn.query).get("sslmode", [""])[-1]
+            if sslmode != "verify-full":
+                raise ValueError(
+                    "non-loopback PostgreSQL DSNs must set sslmode=verify-full"
+                )
         if connect_timeout < 1 or connect_timeout > 120:
             raise ValueError("connect_timeout must be between 1 and 120 seconds")
         if type(initialize_schema) is not bool:
