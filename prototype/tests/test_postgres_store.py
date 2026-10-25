@@ -74,9 +74,26 @@ class PostgresPermitStoreTests(unittest.TestCase):
     def test_audit_chain_detects_deleted_tail_event(self):
         self.issue()
         self.assertTrue(self.store.verify_audit_chain())
+        # This suite shares a test database across methods. Restore the row after
+        # the assertion so later tests see the original chain and stored head.
         with self.store._connect() as db:
-            db.execute("DELETE FROM paca_audit WHERE sequence=(SELECT MAX(sequence) FROM paca_audit)")
+            saved = db.execute("""
+                SELECT sequence,event_id,created_at,event,permit_id,action,resource,
+                       details_json::text AS details_text,previous_hash,event_hash
+                FROM paca_audit WHERE sequence=(SELECT MAX(sequence) FROM paca_audit)
+            """).fetchone()
+            db.execute("DELETE FROM paca_audit WHERE sequence=%s", (saved["sequence"],))
         self.assertFalse(self.store.verify_audit_chain())
+        with self.store._connect() as db:
+            db.execute("""
+                INSERT INTO paca_audit
+                    (sequence,event_id,created_at,event,permit_id,action,resource,
+                     details_json,previous_hash,event_hash)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s)
+            """, (saved["sequence"], saved["event_id"], saved["created_at"], saved["event"],
+                  saved["permit_id"], saved["action"], saved["resource"], saved["details_text"],
+                  saved["previous_hash"], saved["event_hash"]))
+        self.assertTrue(self.store.verify_audit_chain())
 
     def test_idempotency_key_cannot_be_rebound(self):
         self.issue()
