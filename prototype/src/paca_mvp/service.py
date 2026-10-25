@@ -139,9 +139,17 @@ def build_gateway_from_environment():
         audience=_required_env("OIDC_AUDIENCE"),
         jwks_url=_required_env("OIDC_JWKS_URL"),
     )
+    allow_context_http = os.environ.get(
+        "PACA_CONTEXT_ALLOW_INSECURE_LOCALHOST", "false"
+    ).strip().lower()
+    if allow_context_http not in {"true", "false", "1", "0", "yes", "no"}:
+        raise RuntimeError(
+            "PACA_CONTEXT_ALLOW_INSECURE_LOCALHOST must be true/false, 1/0, or yes/no"
+        )
     context = HTTPAuthorizationContextProvider(
         endpoint=_required_env("PACA_CONTEXT_URL"),
         service_token=_required_env("PACA_CONTEXT_SERVICE_TOKEN"),
+        allow_insecure_localhost=allow_context_http in {"true", "1", "yes"},
     )
     opa = OPAClient(
         base_url=_required_env("OPA_URL"),
