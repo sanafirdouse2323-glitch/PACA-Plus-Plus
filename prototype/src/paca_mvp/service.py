@@ -202,6 +202,9 @@ def create_app(
                                 headers={"WWW-Authenticate": "Bearer"})
         if not idempotency_key:
             raise HTTPException(status_code=400, detail="Idempotency-Key header required")
+        if (len(idempotency_key) > 512 or not idempotency_key.strip()
+                or any(ord(ch) < 32 for ch in idempotency_key)):
+            raise HTTPException(status_code=400, detail="invalid Idempotency-Key header")
 
         try:
             return gateway.authorize_and_execute(
