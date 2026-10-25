@@ -85,21 +85,21 @@ class OIDCIdentityTests(unittest.TestCase):
         with patch("jwt.PyJWKClient", return_value=FakeJWKClient()):
             with self.assertRaises(AuthenticationFailed):
                 self.provider.authenticate(self.token(iss="https://attacker.example"))
-            with self.assertRaises(ContextUnavailable):
+            with self.assertRaises(AuthenticationFailed):
                 self.provider.authenticate(self.token(aud="different-api"))
             other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-            with self.assertRaises(ContextUnavailable):
+            with self.assertRaises(AuthenticationFailed):
                 self.provider.authenticate(self.token(key=other_key))
             bad_algorithm = jwt.encode(
                 {"iss": "https://issuer.example", "aud": "paca-api", "sub": "user-17",
                  "iat": self.now, "exp": self.now + 120},
                 "test-only-hmac-key-that-is-long-enough-for-hs256", algorithm="HS256", headers={"kid": "test-key"},
             )
-            with self.assertRaises(ContextUnavailable):
+            with self.assertRaises(AuthenticationFailed):
                 self.provider.authenticate(bad_algorithm)
 
     def test_malformed_credential_fails_closed(self):
-        with self.assertRaises(ContextUnavailable):
+        with self.assertRaises(AuthenticationFailed):
             self.provider.authenticate("not.a.jwt")
 
 
