@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - production/phase-1-security-hardening
+      - integration/phase-1-with-main-hardening
   pull_request:
     branches:
       - main
