@@ -4,28 +4,34 @@ import rego.v1
 
 # Increment this version when the authorization semantics change. For managed
 # bundles, prefer returning the verified bundle revision in this field.
-policy_version := "paca-example-v2"
+policy_version := "paca-example-v3"
 
 default decision := {
     "allow": false,
-    "policy_version": "paca-example-v2",
+    "policy_version": "paca-example-v3",
     "reason": "no_matching_permit",
 }
 
+# The signed claim is a defensive deny signal, but current suspension state
+# must come from the trusted authorization-context service.
 deny if {
     input.principal.claims.suspended == true
 }
 
+deny if {
+    input.context.authorization.suspended == true
+}
+
 permit if {
     input.action == "file.read"
-    input.principal.claims.suspended == false
+    input.context.authorization.suspended == false
     input.context.authorization.role == "analyst"
     input.context.resource.owner == input.principal.subject
 }
 
 permit if {
     input.action == "ticket.create"
-    input.principal.claims.suspended == false
+    input.context.authorization.suspended == false
     input.context.authorization.role == "support"
     input.context.authorization.can_create_tickets == true
     input.resource == "ticket-collection:default"
