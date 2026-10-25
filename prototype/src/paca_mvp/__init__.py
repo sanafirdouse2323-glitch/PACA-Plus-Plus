@@ -11,6 +11,10 @@ from .providers import (
     HTTPJSONToolAdapter, HTTPRoute, FilesystemToolAdapter, ToolInvocationError,
 )
 from .postgres import PostgresPermitStore
+from .context_service import (
+    ContextRepositoryUnavailable, PostgresAuthorizationContextRepository, create_context_app,
+)
+from .audit_export import AuditDeliveryError, AuditOutboxWorker, HTTPSAuditSink
 
 __all__ = [
     "AuthorizationEngine", "Decision", "Policy", "PolicyError", "Rule", "AuthorizationError",
@@ -20,4 +24,6 @@ __all__ = [
     "IdempotencyConflict", "EffectOutcomeUnknown", "OIDCJWTIdentityProvider",
     "HTTPAuthorizationContextProvider", "HTTPJSONToolAdapter", "HTTPRoute",
     "FilesystemToolAdapter", "ToolInvocationError", "PostgresPermitStore",
+    "ContextRepositoryUnavailable", "PostgresAuthorizationContextRepository", "create_context_app",
+    "AuditDeliveryError", "AuditOutboxWorker", "HTTPSAuditSink",
 ]
