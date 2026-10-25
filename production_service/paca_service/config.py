@@ -4,11 +4,14 @@ import json
 import os
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 
 class ConfigurationError(RuntimeError):
     """Raised when security-critical configuration is missing or invalid."""
+
+
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 def _required(env: dict[str, str], name: str) -> str:
@@ -39,13 +42,40 @@ def _positive_int(env: dict[str, str], name: str, default: str, maximum: int) ->
     return value
 
 
-def _validate_service_url(name: str, value: str, allow_http: bool) -> str:
+def _validate_database_url(value: str) -> str:
+    parts = urlsplit(value)
+    if parts.scheme not in {"postgresql", "postgres"} or not parts.hostname:
+        raise ConfigurationError("PACA_DATABASE_URL must be an absolute PostgreSQL URL.")
+    host = parts.hostname.lower().rstrip(".")
+    # The supplied Compose stack intentionally uses private Docker-network traffic.
+    # Any other remote database must authenticate its TLS peer, not merely encrypt.
+    if host not in _LOOPBACK_HOSTS | {"database"}:
+        sslmodes = parse_qs(parts.query, keep_blank_values=True).get("sslmode", [])
+        if sslmodes != ["verify-full"]:
+            raise ConfigurationError(
+                "Remote PACA_DATABASE_URL must set sslmode=verify-full."
+            )
+    return value
+
+
+def _validate_service_url(
+    name: str,
+    value: str,
+    allow_http: bool,
+    http_host_allowlist: frozenset[str] = frozenset(),
+) -> str:
     parts = urlsplit(value)
     allowed_schemes = {"https", "http"} if allow_http else {"https"}
     if parts.scheme not in allowed_schemes or not parts.hostname:
-        raise ConfigurationError(f"{name} must be an absolute {'HTTP(S)' if allow_http else 'HTTPS'} URL.")
+        raise ConfigurationError(
+            f"{name} must be an absolute {'HTTP(S)' if allow_http else 'HTTPS'} URL."
+        )
     if parts.username or parts.password or parts.query or parts.fragment:
         raise ConfigurationError(f"{name} must not contain credentials, query parameters, or fragments.")
+    if parts.scheme == "http":
+        host = parts.hostname.lower().rstrip(".")
+        if host not in _LOOPBACK_HOSTS | http_host_allowlist:
+            raise ConfigurationError(f"{name} must use HTTPS for non-local hosts.")
     return value.rstrip("/")
 
 
@@ -71,18 +101,29 @@ class Settings:
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> Settings:
         env = dict(os.environ if environ is None else environ)
-        database_url = _required(env, "PACA_DATABASE_URL")
-        if not database_url.startswith(("postgresql://", "postgres://")):
-            raise ConfigurationError("PACA_DATABASE_URL must use PostgreSQL.")
+        database_url = _validate_database_url(_required(env, "PACA_DATABASE_URL"))
 
         opa_url = _validate_service_url(
-            "PACA_OPA_URL", _required(env, "PACA_OPA_URL"), allow_http=True
+            "PACA_OPA_URL",
+            _required(env, "PACA_OPA_URL"),
+            allow_http=True,
+            http_host_allowlist=frozenset({"opa"}),
         )
         decision_path = env.get("PACA_OPA_DECISION_PATH", "/v1/data/paca/authz/decision")
         if not decision_path.startswith("/v1/data/") or "?" in decision_path or "#" in decision_path:
             raise ConfigurationError("PACA_OPA_DECISION_PATH must be a fixed OPA Data API path.")
 
         issuer = _required(env, "PACA_JWT_ISSUER")
+        issuer_parts = urlsplit(issuer)
+        if (
+            issuer_parts.scheme != "https"
+            or not issuer_parts.hostname
+            or issuer_parts.username
+            or issuer_parts.password
+            or issuer_parts.query
+            or issuer_parts.fragment
+        ):
+            raise ConfigurationError("PACA_JWT_ISSUER must be an absolute HTTPS URL without credentials/query/fragment.")
         audience = _required(env, "PACA_JWT_AUDIENCE")
         jwks_url = _validate_service_url(
             "PACA_JWT_JWKS_URL", _required(env, "PACA_JWT_JWKS_URL"), allow_http=False

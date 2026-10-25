@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - production/phase-1-security-hardening
+      - audit/paca-consistency-runtime-safety
   pull_request:
     branches:
       - main
@@ -16,7 +16,8 @@ jobs:
   python-and-postgres:
     runs-on: ubuntu-latest
     env:
-      PACA_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/paca_test
+      PACA_TEST_ADMIN_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/paca_test
+      PACA_TEST_DATABASE_URL: postgresql://paca_runtime:paca_test_runtime_password@localhost:5432/paca_test
     services:
       postgres:
         image: postgres:17-alpine
@@ -41,27 +42,103 @@ jobs:
           cache: pip
           cache-dependency-path: production_service/pyproject.toml
       - name: Install service and test dependencies
-        run: python -m pip install -e "production_service[dev]"
+        run: python -m pip install --upgrade pip && python -m pip install -e "production_service[dev]"
       - name: Install PostgreSQL client
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-client
-      - name: Initialize test schema
+      - name: Initialize schema and least-privilege runtime role
         env:
           PGPASSWORD: postgres
-        run: psql -h localhost -U postgres -d paca_test -v ON_ERROR_STOP=1 -f production_service/paca_service/schema.sql
+        run: |
+          set -euo pipefail
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/schema.sql
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE ROLE paca_runtime LOGIN PASSWORD 'paca_test_runtime_password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;"
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/runtime_grants.sql
       - name: Lint service code
         run: ruff check production_service
-      - name: Run service unit and integration tests
+      - name: Run service unit and least-privilege PostgreSQL integration tests
         run: pytest production_service/tests -q
+      - name: Start pinned OPA for real decision-client smoke test
+        run: |
+          set -euo pipefail
+          docker run -d --name paca-opa-test -p 127.0.0.1:8181:8181 \
+            -v "$GITHUB_WORKSPACE/production_service/opa/policies:/policies:ro" \
+            -v "$GITHUB_WORKSPACE/production_service/opa/data.json:/policies/data.json:ro" \
+            openpolicyagent/opa:1.21.3@sha256:22a9db16423b94d2acbd4a94da3bebeb79583ed6a52ac15cad459d3de2dbbc4d \
+            run --server --addr=0.0.0.0:8181 --log-format=json /policies
+          ready=false
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8181/health >/dev/null; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then
+            docker logs paca-opa-test
+            exit 1
+          fi
+      - name: Verify real OPA allow, default-deny revision and readiness probe
+        run: |
+          PYTHONPATH=production_service python - <<'PY'
+          from paca_service.opa import OPAClient
+
+          revision = "paca-dev-2026-10-23"
+          client = OPAClient(
+              "http://127.0.0.1:8181",
+              "/v1/data/paca/authz/decision",
+              revision,
+              timeout_seconds=2,
+          )
+          try:
+              # /readyz uses a deny-by-default decision; a deny must still carry revision.
+              client.health()
+              allowed = client.evaluate({
+                  "principal": {
+                      "id": "alice", "tenant_id": "t1", "roles": [],
+                      "scopes": ["file:read"], "tools": [],
+                  },
+                  "action": "file.read",
+                  "resource": {
+                      "id": "f1", "tenant_id": "t1", "owner_id": "alice",
+                      "kind": "file", "status": "active", "attributes": {},
+                  },
+                  "arguments": {},
+              })
+              assert allowed.allowed is True, allowed
+              assert allowed.policy_revision == revision, allowed
+              denied = client.evaluate({
+                  "principal": {
+                      "id": "alice", "tenant_id": "t1", "roles": [],
+                      "scopes": [], "tools": [],
+                  },
+                  "action": "dangerous.exec",
+                  "resource": {
+                      "id": "f1", "tenant_id": "t1", "owner_id": "alice",
+                      "kind": "file", "status": "active", "attributes": {},
+                  },
+                  "arguments": {},
+              })
+              assert denied.allowed is False, denied
+              assert denied.reason == "default_deny", denied
+              assert denied.policy_revision == revision, denied
+          finally:
+              client.close()
+          print("Real OPA client smoke test passed.")
+          PY
+      - name: Clean up OPA test service
+        if: always()
+        run: docker rm -f paca-opa-test || true
 
   opa-policy:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-      - name: Check and test Rego policy
+      - name: Check and test Rego policy with pinned OPA
         run: |
           docker run --rm \
-            -v "${{ github.workspace }}/production_service/opa:/policies:ro" \
-            openpolicyagent/opa:1.21.3 test --bundle /policies -v
+            -v "$GITHUB_WORKSPACE/production_service/opa:/policies:ro" \
+            openpolicyagent/opa:1.21.3@sha256:22a9db16423b94d2acbd4a94da3bebeb79583ed6a52ac15cad459d3de2dbbc4d \
+            test --bundle /policies -v

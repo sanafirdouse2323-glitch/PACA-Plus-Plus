@@ -3,7 +3,7 @@ package paca.authz_test
 import rego.v1
 import data.paca.authz
 
-test_default_deny_for_unknown_action if {
+test_default_deny_for_unknown_action_includes_revision if {
   result := authz.decision with input as {
     "principal": {"id": "alice", "tenant_id": "t1", "roles": [], "scopes": [], "tools": []},
     "action": "dangerous.exec",
@@ -13,6 +13,7 @@ test_default_deny_for_unknown_action if {
   }
   result.allow == false
   result.reason == "default_deny"
+  result.policy_revision == data.paca.meta.revision
 }
 
 test_owner_can_read_active_document_with_scope if {
@@ -24,9 +25,11 @@ test_owner_can_read_active_document_with_scope if {
     "arguments": {},
   }
   result.allow == true
+  result.reason == "document_read_allowed"
+  result.policy_revision == data.paca.meta.revision
 }
 
-test_cross_tenant_is_denied if {
+test_cross_tenant_is_denied_with_revision if {
   result := authz.decision with input as {
     "principal": {"id": "alice", "tenant_id": "t1", "roles": ["admin"],
                   "scopes": ["document:read"], "tools": []},
@@ -36,6 +39,8 @@ test_cross_tenant_is_denied if {
     "arguments": {},
   }
   result.allow == false
+  result.reason == "default_deny"
+  result.policy_revision == data.paca.meta.revision
 }
 
 test_inactive_document_is_denied if {
@@ -48,6 +53,8 @@ test_inactive_document_is_denied if {
     "arguments": {},
   }
   result.allow == false
+  result.reason == "default_deny"
+  result.policy_revision == data.paca.meta.revision
 }
 
 test_tool_requires_verified_tool_allowlist if {
@@ -68,5 +75,8 @@ test_tool_requires_verified_tool_allowlist if {
     "arguments": {"name": "shell.run", "input": {"cmd": "bad"}},
   }
   allowed.allow == true
+  allowed.policy_revision == data.paca.meta.revision
   denied.allow == false
+  denied.reason == "default_deny"
+  denied.policy_revision == data.paca.meta.revision
 }

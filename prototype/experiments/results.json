@@ -1,71 +1,192 @@
 {
   "summary": {
     "n": 10,
-    "authorization_decision_accuracy": 1,
-    "effect_outcome_accuracy": 1
+    "authorization_decision_accuracy": 1.0,
+    "effect_outcome_accuracy": 1.0
+  },
+  "by_family": {
+    "positive_control": {
+      "n": 1,
+      "authorization_correct": 1,
+      "effect_correct": 1
+    },
+    "default_deny": {
+      "n": 1,
+      "authorization_correct": 1,
+      "effect_correct": 1
+    },
+    "namespace_confusion": {
+      "n": 1,
+      "authorization_correct": 1,
+      "effect_correct": 1
+    },
+    "resource_mismatch": {
+      "n": 1,
+      "authorization_correct": 1,
+      "effect_correct": 1
+    },
+    "action_substitution": {
+      "n": 1,
+      "authorization_correct": 1,
+      "effect_correct": 1
+    },
+    "missing_attribute_ne": {
+      "n": 1,
+      "authorization_correct": 1,
+      "effect_correct": 1
+    },
+    "stale_state": {
+      "n": 1,
+      "authorization_correct": 1,
+      "effect_correct": 1
+    },
+    "stale_policy": {
+      "n": 1,
+      "authorization_correct": 1,
+      "effect_correct": 1
+    },
+    "replay": {
+      "n": 1,
+      "authorization_correct": 1,
+      "effect_correct": 1
+    },
+    "deny_override": {
+      "n": 1,
+      "authorization_correct": 1,
+      "effect_correct": 1
+    }
   },
   "note": "Local deterministic toy-scenario run; not an external benchmark, proof of security, standards compliance, or novelty.",
   "scenarios": [
     {
       "id": "A01",
       "family": "positive_control",
+      "decision_allowed": true,
+      "expected_allowed": true,
+      "effect_occurred": true,
+      "expected_effect": true,
+      "expected_effect_count": null,
+      "observed_effect_count": 1,
       "authorization_correct": true,
-      "effect_correct": true
+      "effect_correct": true,
+      "decision_reason": "permitted"
     },
     {
       "id": "A02",
       "family": "default_deny",
+      "decision_allowed": false,
+      "expected_allowed": false,
+      "effect_occurred": false,
+      "expected_effect": false,
+      "expected_effect_count": null,
+      "observed_effect_count": 0,
       "authorization_correct": true,
-      "effect_correct": true
+      "effect_correct": true,
+      "decision_reason": "deny_override"
     },
     {
       "id": "A03",
       "family": "namespace_confusion",
+      "decision_allowed": false,
+      "expected_allowed": false,
+      "effect_occurred": false,
+      "expected_effect": false,
+      "expected_effect_count": null,
+      "observed_effect_count": 0,
       "authorization_correct": true,
-      "effect_correct": true
+      "effect_correct": true,
+      "decision_reason": "no_matching_permit"
     },
     {
       "id": "A04",
       "family": "resource_mismatch",
+      "decision_allowed": true,
+      "expected_allowed": true,
+      "effect_occurred": false,
+      "expected_effect": false,
+      "expected_effect_count": null,
+      "observed_effect_count": 0,
       "authorization_correct": true,
-      "effect_correct": true
+      "effect_correct": true,
+      "decision_reason": "permitted"
     },
     {
       "id": "A05",
       "family": "action_substitution",
+      "decision_allowed": true,
+      "expected_allowed": true,
+      "effect_occurred": false,
+      "expected_effect": false,
+      "expected_effect_count": null,
+      "observed_effect_count": 0,
       "authorization_correct": true,
-      "effect_correct": true
+      "effect_correct": true,
+      "decision_reason": "permitted"
     },
     {
       "id": "A06",
       "family": "missing_attribute_ne",
+      "decision_allowed": false,
+      "expected_allowed": false,
+      "effect_occurred": false,
+      "expected_effect": false,
+      "expected_effect_count": null,
+      "observed_effect_count": 0,
       "authorization_correct": true,
-      "effect_correct": true
+      "effect_correct": true,
+      "decision_reason": "no_matching_permit"
     },
     {
       "id": "A07",
       "family": "stale_state",
+      "decision_allowed": true,
+      "expected_allowed": true,
+      "effect_occurred": false,
+      "expected_effect": false,
+      "expected_effect_count": null,
+      "observed_effect_count": 0,
       "authorization_correct": true,
-      "effect_correct": true
+      "effect_correct": true,
+      "decision_reason": "permitted"
     },
     {
       "id": "A08",
       "family": "stale_policy",
+      "decision_allowed": true,
+      "expected_allowed": true,
+      "effect_occurred": false,
+      "expected_effect": false,
+      "expected_effect_count": null,
+      "observed_effect_count": 0,
       "authorization_correct": true,
-      "effect_correct": true
+      "effect_correct": true,
+      "decision_reason": "permitted"
     },
     {
       "id": "A09",
       "family": "replay",
+      "decision_allowed": true,
+      "expected_allowed": true,
+      "effect_occurred": true,
+      "expected_effect": true,
+      "expected_effect_count": 1,
+      "observed_effect_count": 1,
       "authorization_correct": true,
       "effect_correct": true,
-      "observed_effect_count": 1
+      "decision_reason": "permitted"
     },
     {
       "id": "A10",
       "family": "deny_override",
+      "decision_allowed": false,
+      "expected_allowed": false,
+      "effect_occurred": false,
+      "expected_effect": false,
+      "expected_effect_count": null,
+      "observed_effect_count": 0,
       "authorization_correct": true,
-      "effect_correct": true
+      "effect_correct": true,
+      "decision_reason": "deny_override"
     }
   ]
 }

@@ -4,16 +4,20 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
-import pytest
+import psycopg
+from psycopg.errors import InsufficientPrivilege
+from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+import pytest
 
 from paca_service.security import canonical_digest
 from paca_service.store import PostgresStore
 
 DATABASE_URL = os.getenv("PACA_TEST_DATABASE_URL")
+ADMIN_DATABASE_URL = os.getenv("PACA_TEST_ADMIN_DATABASE_URL")
 pytestmark = pytest.mark.skipif(
-    not DATABASE_URL,
-    reason="PACA_TEST_DATABASE_URL is required for PostgreSQL concurrency/recovery tests",
+    not DATABASE_URL or not ADMIN_DATABASE_URL,
+    reason="PACA_TEST_DATABASE_URL and PACA_TEST_ADMIN_DATABASE_URL are required",
 )
 
 
@@ -25,8 +29,11 @@ class TestPostgresStoreIntegration:
         self.principal_id = "integration-user"
         self.resource_id = "file-" + uuid4().hex
         self.attributes = {"relative_path": "integration.txt"}
-        with self.store.pool.connection() as conn:
-            conn.execute(
+
+        # Trusted resource metadata is provisioned by an administrator, not
+        # by the restricted API role under test.
+        with psycopg.connect(ADMIN_DATABASE_URL, row_factory=dict_row) as admin:
+            admin.execute(
                 """
                 INSERT INTO protected_resources
                     (tenant_id, resource_id, owner_id, kind, status, attributes)
@@ -34,6 +41,7 @@ class TestPostgresStoreIntegration:
                 """,
                 (self.tenant_id, self.resource_id, self.principal_id, Jsonb(self.attributes)),
             )
+
         self.context = {
             "principal": {
                 "id": self.principal_id, "tenant_id": self.tenant_id,
@@ -75,6 +83,35 @@ class TestPostgresStoreIntegration:
             request_id="test-request",
         )
 
+    def test_database_connection_uses_least_privilege_runtime_role(self):
+        with self.store.pool.connection() as conn:
+            role = conn.execute(
+                """
+                SELECT rolsuper, rolcreatedb, rolcreaterole, rolbypassrls
+                FROM pg_roles WHERE rolname = current_user
+                """
+            ).fetchone()
+            privileges = conn.execute(
+                """
+                SELECT
+                    has_table_privilege(current_user, 'protected_resources', 'SELECT') AS can_read_resources,
+                    has_table_privilege(current_user, 'protected_resources', 'INSERT') AS can_insert_resources,
+                    has_table_privilege(current_user, 'audit_events', 'SELECT') AS can_read_audit,
+                    has_table_privilege(current_user, 'audit_events', 'UPDATE') AS can_update_audit,
+                    has_table_privilege(current_user, 'audit_events', 'DELETE') AS can_delete_audit
+                """
+            ).fetchone()
+        assert role is not None
+        assert role["rolsuper"] is False
+        assert role["rolcreatedb"] is False
+        assert role["rolcreaterole"] is False
+        assert role["rolbypassrls"] is False
+        assert privileges["can_read_resources"] is True
+        assert privileges["can_insert_resources"] is False
+        assert privileges["can_read_audit"] is True
+        assert privileges["can_update_audit"] is False
+        assert privileges["can_delete_audit"] is False
+
     def test_concurrent_claim_consumes_permit_at_most_once_and_replays_durably(self):
         with ThreadPoolExecutor(max_workers=2) as executor:
             results = list(executor.map(lambda _: self.claim("same-key"), range(2)))
@@ -111,9 +148,18 @@ class TestPostgresStoreIntegration:
             event_type="integration-test", tenant_id=self.tenant_id,
             principal_id=self.principal_id, request_id="test-request",
         )
-        with pytest.raises(Exception, match="append-only"), self.store.pool.connection() as conn:
+        with self.store.pool.connection() as conn:
+            row = conn.execute(
+                "SELECT event_id FROM audit_events WHERE event_type = 'integration-test' AND tenant_id = %s LIMIT 1",
+                (self.tenant_id,),
+            ).fetchone()
+        assert row is not None
+        with pytest.raises(InsufficientPrivilege):
+            with self.store.pool.connection() as conn:
                 conn.execute(
-                    "UPDATE audit_events SET event_type = 'tampered' "
-                    "WHERE event_type = 'integration-test' AND tenant_id = %s",
-                    (self.tenant_id,),
+                    "UPDATE audit_events SET event_type = 'tampered' WHERE event_id = %s",
+                    (row["event_id"],),
                 )
+        with pytest.raises(InsufficientPrivilege):
+            with self.store.pool.connection() as conn:
+                conn.execute("DELETE FROM audit_events WHERE event_id = %s", (row["event_id"],))

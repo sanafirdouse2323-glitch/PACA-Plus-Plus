@@ -1,53 +1,49 @@
-# PACA++ — research prototype
+# PACA++ — authorization research prototype
 
-This repository is an early research scaffold for exploring authorization correctness in LLM-agent systems. The repository's original description refers to compiling ALFA/UCON+ policies to ASP and Cedar; that compiler integration is **not implemented by the current Python prototype**.
+PACA++ explores authorization correctness at the protected-effect boundary of LLM-agent systems: whether an authorization decision remains bound to the intended action, resource, policy and context when an effect is attempted.
 
-## Runnable components
+**Important scope boundary:** the repository's original goal mentions compiling ALFA/UCON+ policies to ASP and Cedar. `compiler/transpiler.py` contains an experimental parser/emitter for a small policy subset; it is **not** a complete or standards-compatible ALFA/UCON+ compiler. The current regression tests verify parsing and generated-text invariants, not semantic equivalence between Cedar and ASP.
 
-The isolated [prototype](prototype/README.md) contains two paths:
+## What is in this repository?
 
-- **Legacy MVP:** a small, in-memory JSON-policy engine with simulated effects, unit tests and deterministic scenarios. It remains useful for testing action-bound permit behavior and is not production authorization.
-- **Hardening integration layer on this branch:** an OPA REST decision client and Rego policy, OIDC/JWKS JWT validation, trusted authorization-context retrieval, protected filesystem/HTTP adapters, single-host SQLite and multi-host PostgreSQL permit/idempotency state, hash-linked durable audit events, crash reconciliation, a runnable ASGI gateway for a fixed ticket-create route, and adversarial/integration tests.
+- **`compiler/` and root `tests/`:** an experimental policy-subset parser and text emitters, with regression tests for the supported subset. Unsupported entity mappings and semantics fail explicitly instead of silently generating an output.
+- **`prototype/`:** the legacy in-memory JSON-policy engine and simulated-effect CLI; a separate hardening path adds OPA, OIDC/JWKS verification, trusted authorization context, SQLite/PostgreSQL coordination, execution recovery, adapters, and a transactional audit outbox. The legacy engine and hardening path have different trust and durability properties.
+- **`production_service/`:** a separately packaged FastAPI gateway combining verified JWT authentication, an OPA/Rego decision, resource-context lookup, PostgreSQL permits/execution records, and configured effect adapters. It is not the compiler, and it is not the same implementation as the `prototype/` gateway.
 
-The hardening code is deliberately separate from the legacy engine and original compiler work. See [the hardening architecture and limits](prototype/docs/SECURITY_HARDENING.md), [threat model](prototype/THREAT_MODEL.md), and [local verification report](prototype/docs/LOCAL_VERIFICATION_REPORT.md).
+See each package's README and threat model before selecting the correct path for an experiment.
 
-## Run the existing prototype
+## Run the compiler regression tests
 
-Requires Python 3.10 or newer.
+From the repository root:
 
-~~~bash
-cd prototype
-python -m pip install -e .
+```bash
+python -m pip install lark-parser
+PYTHONPATH=. python -m unittest discover -s tests -p "test_fuzzer.py" -v
+```
+
+These tests do not establish compiler equivalence, language conformance, or correctness for unsupported ALFA/UCON+ syntax.
+
+## Run the research prototype
+
+From `prototype/`:
+
+```bash
+python -m pip install -e ".[web,test]"
 python -m unittest discover -s tests -v
 python examples/demo.py
 python experiments/run_experiments.py
-~~~
+```
 
-## Run the OPA integration path
+The legacy engine and demo use simulated effects. The deterministic scenario file is a small, hand-authored test suite—not an external benchmark. CI checks that the checked-in scenario results are reproducible.
 
-Requires Docker and Python 3.10 or newer. See the complete OIDC/context-service wiring in the hardening guide.
+## Run the production-service scaffold
 
-~~~bash
-cd prototype
-docker compose up -d opa
-python examples/opa_smoke.py
-docker compose down
-~~~
+Start with [the production-service setup guide](production_service/README.md) and [its threat model](production_service/THREAT_MODEL.md). A real configured OIDC issuer/JWKS endpoint and trusted resource data are required. The local Compose stack is for controlled evaluation, not approval to handle sensitive workloads.
 
-## Production-service scaffold
+## What passing tests mean—and do not mean
 
-The separate [production-service package](production_service/README.md) provides a FastAPI gateway, OPA/Rego decisions, verified JWT authentication, PostgreSQL-backed permits/executions, and fixed effect adapters. Its [threat model](production_service/THREAT_MODEL.md) documents trust boundaries and residual risks. It is an engineering scaffold, not production-certified software; use its setup guide and do not deploy sensitive workloads before the listed deployment gates pass.
+CI results show that specified tests passed on a particular commit. They do not establish universal security, exactly-once execution across an arbitrary remote service, formal verification, independent security audit, standards compliance, or research novelty. An audit trigger/hash chain inside a database is not tamper-proof against a database administrator. Remote effects need downstream idempotency and reconciliation; deployment also needs least-privilege credentials, verified TLS where applicable, controlled OPA policy rollout, monitoring, backups, and incident response.
 
-## Evidence and boundaries
+## Research status
 
-Passing hand-authored tests shows only that the tested cases behaved as expected. It is not a formal proof, external-system benchmark, production security validation, standards compliance evidence, or proof of research novelty. The OPA local smoke test exercises a real OPA process when run as documented. CI has a separate step for this test.
-
-The SQLite coordinator is for single-host deployments only; the audit hash chain is not tamper-proof; remote effects cannot be atomically committed with SQLite; and safe recovery depends on downstream idempotency or reconciliation. The sample OIDC and context adapters still require real, securely configured identity and authorization services. Do not expose an unauthenticated OPA endpoint publicly.
-
-## Remaining work
-
-1. Integrate and test the original ALFA/UCON+ policy syntax, parser, compiler, and evaluator; the prototype does not currently claim to implement these.
-2. Coordinate policy rollout with protected-effect commits; provision and operationally secure PostgreSQL (the shared-store adapter is included) before multi-host deployment.
-3. Add a downstream-specific integration environment that can test crash-after-commit, retry, and reconciliation semantics against actual protected services.
-4. Send audit events to an independently controlled append-only sink, and complete deployment-specific security review and operational controls.
-5. Compare with relevant existing systems and prior work before deciding whether any new research contribution is established.
+The current evidence is a research/engineering scaffold. Before claiming a novel contribution, the supported semantics and threat model need a reproducible specification, differential tests against relevant systems, and a literature/artifact comparison. A successful build is useful implementation evidence, not proof of novelty.

@@ -1,70 +1,64 @@
 # PACA++ production-service scaffold
 
-This directory contains a separate FastAPI service that combines JWT verification, trusted context lookup, OPA policy decisions, PostgreSQL operation state, and fixed server-configured effect adapters.
+This directory contains a separate FastAPI authorization gateway that combines RS256 JWT verification, resource-context lookup, OPA/Rego policy decisions, PostgreSQL-backed permits and execution state, and configured file/tool/API adapters.
 
-**Status:** engineering scaffold for controlled evaluation. It is not production-certified, and these instructions do not replace an organization-specific security review.
+**Status:** controlled-evaluation scaffold. It is not production-certified and the setup instructions are not a substitute for a deployment-specific security review.
 
-## Requirements
+## Fresh local setup
 
-- Docker Engine and Docker Compose v2
-- A configured OIDC provider that issues tokens for the configured audience
-- A trusted identity/context and resource model
-- For external API actions, a downstream API that supports durable idempotency and reconciliation
+1. Copy `.env.example` to `.env`. Generate two independent secrets with `openssl rand -hex 32`; put one in `POSTGRES_PASSWORD` and the other in `PACA_RUNTIME_PASSWORD`. PostgreSQL's bootstrap/admin account uses the first; the API uses a restricted `paca_runtime` account.
+2. Set `PACA_JWT_ISSUER`, `PACA_JWT_AUDIENCE`, and `PACA_JWT_JWKS_URL` to your actual test identity provider. The example `identity.example.org` settings are placeholders.
+3. Ensure the policy revision equals `production_service/opa/data.json`. In this service, `protected_resources.owner_id` is compared with the verified OIDC `sub`; provision the owner value accordingly, and only trust role/scope/tool claims from an issuer that controls them.
+4. For a newly initialized local database volume, start the stack:
 
-## Local setup
-
-1. Copy the example environment file and replace the database password with a fresh random value:
-
-   ~~~sh
-   cp .env.example .env
-   openssl rand -hex 32
-   ~~~
-
-   Put the generated value in POSTGRES_PASSWORD. Never commit .env or real secrets.
-
-2. Configure PACA_JWT_ISSUER, PACA_JWT_AUDIENCE, and PACA_JWT_JWKS_URL for a real test identity provider. The example identity.example.org values are placeholders and will not authenticate real users.
-
-3. Review the OPA policy and ensure PACA_EXPECTED_POLICY_REVISION matches production_service/opa/data.json.
-
-4. Start the stack:
-
-   ~~~sh
+   ```sh
    docker compose up --build --wait
-   ~~~
+   ```
 
-5. Check liveness:
+5. Check both endpoints:
 
-   ~~~sh
+   ```sh
    curl --fail http://127.0.0.1:8000/healthz
    curl --fail http://127.0.0.1:8000/readyz
-   ~~~
+   ```
 
-6. Stop the stack:
+   `/healthz` only indicates that the process is alive. `/readyz` verifies database connectivity and a real OPA deny-by-default decision that must carry the configured policy revision.
 
-   ~~~sh
-   docker compose down
-   ~~~
+The API binds to loopback on port 8000. Do not expose it externally before configuring and validating TLS ingress, rate/request limits, secrets management, egress controls, backups/restore, audit retention, monitoring, and incident response.
 
-The API binds to loopback on port 8000 in the supplied Compose file. Do not expose it externally until TLS, ingress authentication/rate limits, secrets, database roles, network rules, backup/restore, retention, monitoring, and incident response have been configured and tested.
+## Upgrading an existing volume safely
 
-## Python tests
+The official PostgreSQL image runs `/docker-entrypoint-initdb.d/` scripts only when initializing an **empty** data directory. Editing `.env` and restarting does not create `paca_runtime` or reapply grants to an existing volume.
+
+Before upgrading, take and verify a database backup. Keep the existing data volume. With the old database administrator still available, update `.env` with a strong `PACA_RUNTIME_PASSWORD`, then run these commands from `production_service/`:
+
+```sh
+docker compose exec database bash -lc 'source /docker-entrypoint-initdb.d/000-runtime-role.sh'
+docker compose exec -T database psql -U paca -d paca -v ON_ERROR_STOP=1 -f /docker-entrypoint-initdb.d/002-runtime-grants.sql
+docker compose up --build -d
+```
+
+The role-creation script is idempotent so it can be rerun for a controlled upgrade. The second command reapplies the grants. If the old database administrator credential is unavailable, stop and recover access before changing roles. **Do not run `docker compose down -v`** to solve a permission error: that deletes persistent volumes.
+
+## Test and lint
 
 From this directory:
 
-~~~sh
+```sh
 python -m pip install -e ".[dev]"
 pytest -q
 ruff check .
-~~~
+```
 
-The PostgreSQL integration tests require a reachable test database and the relevant test environment variable; consult the test module and CI workflow for the exact setup. A test pass covers only the exercised cases.
+PostgreSQL integration tests need both `PACA_TEST_DATABASE_URL` (restricted runtime role) and `PACA_TEST_ADMIN_DATABASE_URL` (fixture/schema administration). If either is missing, those tests are skipped; skipped tests are not passing database tests.
 
-## Important limitations
+## Residual limits
 
-- The example Compose configuration is for local evaluation. Do not reuse its database role/password pattern for a production deployment.
-- The issuer, audience, JWKS endpoint, policy revision, and optional downstream routes must be configured to match the actual deployment.
-- Remote side effects cannot be atomically committed with this service's PostgreSQL transaction. Ambiguous outcomes require downstream idempotency or operator reconciliation; do not blindly retry.
-- The database audit trigger is not immutable against a database administrator or superuser. Export events to independently controlled, retention-protected storage.
-- Passing CI is not a penetration test, formal verification, external audit, or guarantee of safe behavior under all interleavings.
+- Compose is for local evaluation, not a production deployment recipe.
+- Remote PostgreSQL must use `sslmode=verify-full`; remote OPA and downstream HTTP endpoints must use HTTPS.
+- The runtime role cannot provision or alter trusted resource facts. An administrator-controlled process must provision them.
+- PostgreSQL cannot atomically commit an arbitrary external API effect. On ambiguous outcomes, the service records `unknown` and does not blindly retry; downstream idempotency/reconciliation remains required.
+- An in-database append-only trigger is not immutable against an owner or superuser. Export audit events to independently controlled retention-protected storage.
+- Passing CI is not a penetration test, formal proof, independent audit, external benchmark, standards-compliance claim, or proof of research novelty.
 
-See the threat model in THREAT_MODEL.md for trust boundaries and residual risks.
+See [THREAT_MODEL.md](THREAT_MODEL.md) for trust boundaries and deployment gates.

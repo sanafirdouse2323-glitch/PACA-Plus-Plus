@@ -1,51 +1,61 @@
 # Production-service threat model
 
-## Scope
+## Scope and identity convention
 
-This document covers the production_service FastAPI authorization gateway, OPA/Rego policy decision point, JWT authentication, trusted context lookup, PostgreSQL operation state, and configured effect adapters. It is a design-level threat model, not evidence that a deployed system is secure.
+This document covers the separate `production_service/` FastAPI gateway, its Rego policy, OIDC/JWKS validation, PostgreSQL state, and configured execution adapters. It is a design threat model, not evidence that a deployment is secure.
+
+The gateway verifies RS256 tokens for one configured issuer/audience. In this implementation, `principal.id` is the verified token `sub`; `protected_resources.owner_id` must be provisioned to match that subject for the configured issuer. The `roles`, `scopes`, and `tools` attributes are derived from signed token claims. Only use those claims when the configured issuer is trusted to set them correctly. This service does not implement the separate prototype's internal-principal mapping context service.
 
 ## Assets
 
-- Integrity of authorization decisions and policy revision.
-- Caller identity, tenant membership, resource ownership, and current suspension state.
+- Integrity of authorization decisions and expected policy revision.
+- Caller identity, tenant, scopes/roles/tools and resource ownership.
 - Protected resources and downstream effects.
-- Permit/execution idempotency records and recovery state.
-- Audit events and secrets used to authenticate to identity, policy, database, and downstream services.
+- Permit/execution/idempotency state and recovery classification.
+- Audit events and credentials used with identity, OPA, database and downstream services.
 
 ## Trust boundaries
 
-1. **Caller to API:** all request fields are untrusted. The API must validate request shape, authenticate the bearer token, and never accept caller-selected callback code or destination URLs.
-2. **API to identity provider:** trust only the configured issuer, audience, asymmetric signing algorithm, and HTTPS JWKS endpoint. Key rotation, revocation latency, and provider availability remain operational dependencies.
-3. **API to context/database:** authorization attributes must come from trusted server-side state, not caller-supplied role/tenant/ownership claims. Tenant filters and least-privilege database roles are critical.
-4. **API to OPA:** OPA availability, decision schema, and policy revision must be checked. Undefined, malformed, or unavailable decisions must fail closed. Protect the OPA endpoint from untrusted callers.
-5. **Gateway to downstream effect:** the destination and operation must be fixed by server configuration. A local transaction cannot atomically commit an arbitrary remote API side effect.
-6. **Audit database to independent storage:** an in-database hash chain or append-only trigger does not prevent a privileged database administrator from rewriting both events and integrity metadata.
+1. **Caller → API:** request data is untrusted. Validate request shape, authenticate the token, and never accept caller-selected callbacks or destination URLs.
+2. **API → OIDC provider:** trust only the configured issuer, audience, RS256 signing algorithm and HTTPS JWKS endpoint. Key rotation, revocation latency and provider availability remain deployment dependencies.
+3. **API → PostgreSQL:** trusted resource facts must be provisioned by an administrative process. Use a restricted runtime role, tenant-scoped queries/RLS where configured, TLS peer verification for remote databases, and separate migration/admin credentials.
+4. **API → OPA:** require a well-formed decision and the expected policy revision on both allow and deny results. OPA failure/undefined result fails closed. Keep OPA private and coordinate policy rollout with the gateway.
+5. **Gateway → downstream effects:** destination/action are fixed by server configuration; the API cannot force a downstream service to implement idempotency.
+6. **Audit DB → independent storage:** an append-only trigger is defense-in-depth, not tamper-proof storage against an owner or superuser.
 
-## Threats and required controls
+## Threats and controls
 
-| Threat | Required control / residual risk |
+| Threat | Control and residual risk |
 |---|---|
-| Forged, expired, wrong-audience, or wrong-issuer token | Verify signature and required claims against a fixed issuer/audience and trusted HTTPS JWKS. Test key rotation and revocation behavior for the deployment. |
-| Caller forges roles, tenant, ownership, or suspension state | Resolve these attributes from trusted server-side context. Test cross-tenant access and missing/ambiguous context. |
-| OPA outage, undefined result, or stale policy | Fail closed; pin and check expected policy revision; test policy rollover and failure paths. A deployment still needs a safe rollout procedure. |
-| Replay or idempotency-key collision | Bind operation state to principal/tenant/request digest and enforce uniqueness in durable storage. Confirm the downstream service durably honors idempotency keys. |
-| Concurrent execution or process crash | Use transactional claims and explicit unknown/reconciliation states. Exactly-once execution across PostgreSQL and an arbitrary remote API is not guaranteed. |
-| SSRF or caller-controlled route | Use fixed server-configured destinations and routes, reject redirects, validate schemes/hosts, and apply egress network controls. |
-| Path traversal or symlink race in file adapter | Confine access to a configured root, use no-follow path traversal, run with least privilege, and test on the target OS/filesystem. |
-| Audit tampering or deletion | Restrict database permissions and export to independently controlled append-only/WORM storage with durable receiver-side deduplication. Local hashes alone are insufficient. |
-| Secret leakage | Keep secrets out of source control and logs; use a secrets manager and rotate credentials. Example files contain placeholders only. |
-| Denial of service | Apply ingress rate limits, request/body limits, timeouts, concurrency limits, monitoring, and recovery procedures at deployment. |
+| Forged, expired, wrong-issuer/audience token | Verify signature and claims against one configured issuer/audience and HTTPS JWKS. Test rotation/revocation for the real deployment. |
+| Forged tenant, roles/scopes, ownership | Only trust claims set by the configured issuer; provision resource owners under the stated subject convention; enforce tenant equality in the policy and queries. |
+| OPA outage, malformed result, stale policy | Fail closed; require and compare revision; test real OPA allow/deny/readiness and rollout behavior. |
+| Permit replay/idempotency collision | Bind durable execution state to principal/tenant/request digest; enforce uniqueness and test concurrent claims. Downstream idempotency still must be independently verified. |
+| Process crash or uncertain remote outcome | Record an explicit unknown outcome and do not blindly retry. Exercise downstream-specific crash-after-commit and reconciliation paths. |
+| SSRF/caller-controlled route | Fixed server-configured base URL/routes, reject redirects, require HTTPS for remote upstreams, and enforce egress allow-lists. |
+| Path traversal/symlink attack | Keep logical-resource mapping server controlled; use confined no-follow operations and run tests on the deployment OS/filesystem. |
+| Audit alteration/deletion | Runtime role has no audit update/delete privilege; export to independently controlled append-only/retention-protected storage. A database administrator can still alter local history. |
+| Secret leakage/DoS | Secrets manager and rotation; ingress/request/concurrency/rate limits, timeouts, observability, backups, restore drills, and incident response. |
+
+## Current safeguards checked into this repository
+
+- The local Compose API connects through `paca_runtime`, not the bootstrap/admin credential.
+- Runtime grants permit reading trusted resources, narrowly scoped permit/execution writes, and audit select/insert only.
+- Rego decisions carry the policy revision on default-deny and allow paths; CI exercises the actual OPA client readiness and an allow/deny pair.
+- Configuration rejects plaintext HTTP to remote OPA/downstream endpoints and requires `sslmode=verify-full` for remote PostgreSQL URLs.
+- PostgreSQL tests use a separate admin DSN for fixture provisioning and run service operations through the restricted runtime DSN.
+
+These are code-level checks, not independent deployment audit results. Existing database volumes do not rerun initialization scripts automatically; role migration and grants must be applied explicitly after a verified backup.
 
 ## Deployment gates before sensitive workloads
 
-- Independent security review and threat-model review by the system owner.
-- Real OIDC/JWKS configuration and documented key rotation/revocation behavior.
-- Dedicated least-privilege database runtime and migration roles; TLS with certificate verification for remote PostgreSQL.
-- OPA protected from public access; verified policy version and controlled rollout.
-- Downstream-specific tests for duplicate requests, timeouts, crash-after-commit, retry, and reconciliation.
-- TLS ingress, network segmentation/egress allow-list, secrets management, monitoring/alerting, backups and restore drills, audit retention, and incident response.
-- Evidence that all required CI jobs pass on the exact candidate commit and a review of the final diff.
+- Independent security/threat-model review.
+- Real OIDC/JWKS configuration with documented rotation/revocation behavior.
+- Restricted runtime and migration roles, remote PostgreSQL TLS verification, and tested backups/restores.
+- OPA inaccessible to untrusted callers, a verified policy revision and controlled rollout procedure.
+- Downstream-specific tests for duplicate requests, timeouts, crash-after-commit, retry and reconciliation.
+- TLS ingress, network segmentation/egress controls, secrets management, monitoring/alerts, audit retention and incident response.
 
 ## Non-claims
 
-This repository does not claim formal proof, exactly-once remote execution, tamper-proof audit against privileged administrators, complete ALFA/UCON+ compiler semantics, standards certification, or an independent security audit. CI results apply only to the exact commit and tests that ran.
+This repository does not claim formal proof, exactly-once remote execution, tamper-proof auditing against privileged administrators, complete ALFA/UCON+ compiler semantics, standards certification, an independent security audit, production approval or research novelty. CI evidence applies only to the exact revision and tested scenarios.
