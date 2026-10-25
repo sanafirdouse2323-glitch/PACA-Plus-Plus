@@ -14,10 +14,7 @@ decision := {
   input.resource.status == "active"
   input.principal.tenant_id == input.resource.tenant_id
   "document:read" in input.principal.scopes
-  (
-    input.principal.id == input.resource.owner_id
-    or "admin" in input.principal.roles
-  )
+  input.principal.id == input.resource.owner_id or "admin" in input.principal.roles
 }
 
 decision := {
@@ -30,10 +27,7 @@ decision := {
   input.resource.status == "active"
   input.principal.tenant_id == input.resource.tenant_id
   "document:write" in input.principal.scopes
-  (
-    input.principal.id == input.resource.owner_id
-    or "admin" in input.principal.roles
-  )
+  input.principal.id == input.resource.owner_id or "admin" in input.principal.roles
 }
 
 decision := {
@@ -46,10 +40,7 @@ decision := {
   input.resource.tenant_id == input.principal.tenant_id
   input.resource.kind == "file"
   "file:read" in input.principal.scopes
-  (
-    input.principal.id == input.resource.owner_id
-    or "admin" in input.principal.roles
-  )
+  input.principal.id == input.resource.owner_id or "admin" in input.principal.roles
 }
 
 decision := {
@@ -62,10 +53,7 @@ decision := {
   input.resource.tenant_id == input.principal.tenant_id
   input.resource.kind == "file"
   "file:create" in input.principal.scopes
-  (
-    input.principal.id == input.resource.owner_id
-    or "admin" in input.principal.roles
-  )
+  input.principal.id == input.resource.owner_id or "admin" in input.principal.roles
 }
 
 decision := {
