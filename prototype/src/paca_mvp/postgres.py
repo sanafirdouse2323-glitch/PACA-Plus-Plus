@@ -28,7 +28,7 @@ class PostgresPermitStore:
     migration role and grant runtime access separately.
     """
     def __init__(self, dsn: str, connect_timeout: int = 5,
-                 initialize_schema: bool = True):
+                 initialize_schema: bool = False):
         if not isinstance(dsn, str) or not dsn.startswith(("postgresql://", "postgres://")):
             raise ValueError("dsn must be a PostgreSQL connection URL")
         parsed_dsn = urlparse(dsn)
