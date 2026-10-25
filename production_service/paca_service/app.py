@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 import logging
 import re
+from contextlib import asynccontextmanager
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -418,7 +418,7 @@ def create_app(
                     execution_id=claim.execution_id, outcome="failed",
                     result={"status": "failed"}, error_code=exc.code, request_id=rid,
                 )
-            except Exception as persist_exc:
+            except Exception:
                 logger.exception("failed effect outcome could not be persisted")
                 return JSONResponse(
                     status_code=202,
