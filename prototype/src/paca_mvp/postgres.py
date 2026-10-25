@@ -14,7 +14,7 @@ import uuid
 
 from .hardening import (
     EffectOutcomeUnknown, IdempotencyConflict, PermitRejected, PolicyUnavailable,
-    _canonical_json, _digest, _validate_identifier,
+    _canonical_json, _digest, _validate_identifier, _validate_request_hash,
 )
 
 
@@ -183,6 +183,7 @@ class PostgresPermitStore:
         _validate_identifier(action, "action")
         _validate_identifier(resource, "resource")
         _validate_identifier(policy_version, "policy_version")
+        _validate_request_hash(request_hash)
         if ttl_seconds <= 0 or ttl_seconds > 3600:
             raise ValueError("ttl_seconds must be in (0, 3600]")
         if idempotency_key is not None:
@@ -246,6 +247,7 @@ class PostgresPermitStore:
                 current_policy_version: str, effect: Callable[[], Any],
                 idempotency_key: str | None = None,
                 pre_effect_check: Callable[[], None] | None = None) -> Any:
+        _validate_request_hash(request_hash)
         now = datetime.now(timezone.utc)
         # Phase 1 durably claims the permit. If phase 2 crashes, this claim survives.
         with self._connect() as db:
