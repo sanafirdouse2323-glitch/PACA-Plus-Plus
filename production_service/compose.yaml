@@ -56,7 +56,7 @@ services:
       PACA_STALE_EXECUTION_SECONDS: ${PACA_STALE_EXECUTION_SECONDS:-120}
       PACA_FILE_ROOT: /var/lib/paca/files
       PACA_API_BASE_URL: ${PACA_API_BASE_URL:-}
-      PACA_API_ROUTES_JSON: ${PACA_API_ROUTES_JSON:?Set PACA_API_ROUTES_JSON to {} or a JSON route map in .env}
+      PACA_API_ROUTES_JSON: ${PACA_API_ROUTES_JSON:?Set PACA_API_ROUTES_JSON in .env to an empty JSON object or a route map}
       PACA_API_BEARER_TOKEN: ${PACA_API_BEARER_TOKEN:-}
     ports:
       - "127.0.0.1:8000:8000"
