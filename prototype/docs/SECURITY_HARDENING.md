@@ -30,7 +30,7 @@ python examples/opa_smoke.py
 docker compose down
 ~~~
 
-The OPA and PostgreSQL Compose ports are bound to loopback. PostgreSQL is enabled only by the `integration` profile; the example database password is for local tests only. The example Rego policy permits an analyst to read only a resource owned by the verified subject, permits ticket creation only when a trusted context grants the support role and explicit capability, and denies suspended subjects or requests missing the explicit non-suspended claim. It is an illustrative policy, not a universal production policy. Increment **policy_version** whenever authorization semantics change; production bundle deployments should tie this to an immutable, verified bundle revision and coordinate rollout.
+The OPA and PostgreSQL Compose ports are bound to loopback. PostgreSQL is enabled only by the `integration` profile; the example database password is for local tests only. The example Rego policy permits an analyst to read only a resource owned by the verified subject, permits ticket creation only when a trusted context grants the support role and explicit capability, and requires the trusted context service to explicitly report `suspended=false` for permits. A signed JWT claim that explicitly says suspended still triggers a deny, but the current suspension decision comes from trusted context so a stale token claim cannot override it. The policy is illustrative, not universal production policy. Increment **policy_version** whenever authorization semantics change; production bundle deployments should tie this to an immutable, verified bundle revision and coordinate rollout.
 
 ## Run the HTTP gateway
 
@@ -81,7 +81,7 @@ result = gateway.authorize_and_execute(
 )
 ~~~
 
-For the ticket example, the trusted context service must return an authorization role of support and can_create_tickets=true for an authorized caller; those values must be derived server-side, not from tool arguments. The OPA client requires a bearer token for non-loopback HTTPS OPA endpoints; loopback HTTP is permitted only for local development. The protected HTTP adapter also requires a configured bearer token. The configured context service and policy must return the fields the Rego policy expects. The route/resource map, OIDC issuer/audience/JWKS URI, database path, OPA endpoint, and service credentials are trusted deployment configuration. Do not expose OPA's unauthenticated admin/decision endpoint to untrusted networks.
+For the ticket example, the trusted context service must return an authorization role of support, `can_create_tickets=true`, and `suspended=false` for an authorized caller; those values must be derived server-side, not from tool arguments. The OPA client requires a bearer token for non-loopback HTTPS OPA endpoints; loopback HTTP is permitted only for local development. The protected HTTP adapter also requires a configured bearer token. The configured context service and policy must return the fields the Rego policy expects. The route/resource map, OIDC issuer/audience/JWKS URI, database path, OPA endpoint, and service credentials are trusted deployment configuration. Do not expose OPA's unauthenticated admin/decision endpoint to untrusted networks.
 
 ## Guarantees and boundaries
 
