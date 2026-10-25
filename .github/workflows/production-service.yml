@@ -131,6 +131,15 @@ jobs:
       - name: Clean up OPA test service
         if: always()
         run: docker rm -f paca-opa-test || true
+      - name: Start and verify the full local Compose stack
+        run: |
+          set -euo pipefail
+          docker compose --env-file production_service/.env.example -f production_service/compose.yaml up --build --wait
+          curl --fail --retry 10 --retry-connrefused --retry-delay 2 http://127.0.0.1:8000/healthz
+          curl --fail --retry 10 --retry-connrefused --retry-delay 2 http://127.0.0.1:8000/readyz
+      - name: Tear down local Compose stack without deleting persistent volumes
+        if: always()
+        run: docker compose --env-file production_service/.env.example -f production_service/compose.yaml down
 
   opa-policy:
     runs-on: ubuntu-latest
