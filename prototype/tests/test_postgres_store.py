@@ -83,6 +83,21 @@ class PostgresPermitStoreTests(unittest.TestCase):
         self.assertIsNone(outbox["delivered_at"])
         self.assertTrue(self.store.verify_audit_chain())
 
+        # Simulate a previously retained audit event whose delivery intent was
+        # absent when the outbox was introduced. Backfill must validate the chain
+        # and recreate the missing durable export intent without duplicating it.
+        with self.store._connect() as db:
+            db.execute("DELETE FROM paca_audit_outbox WHERE event_id=%s",
+                       (event["event_id"],))
+        self.assertEqual(self.store.backfill_audit_outbox(), 1)
+        with self.store._connect() as db:
+            restored = db.execute(
+                "SELECT event_id,payload_json FROM paca_audit_outbox WHERE event_id=%s",
+                (event["event_id"],),
+            ).fetchone()
+        self.assertIsNotNone(restored)
+        self.assertEqual(json.loads(restored["payload_json"])["event_hash"], event["event_hash"])
+
     def test_audit_and_outbox_rollback_together(self):
         original = self.store._audit
 
