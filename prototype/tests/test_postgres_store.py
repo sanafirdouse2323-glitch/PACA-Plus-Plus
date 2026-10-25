@@ -13,7 +13,9 @@ if DSN:
     from pathlib import Path
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
     from paca_mvp.postgres import PostgresPermitStore
-    from paca_mvp.hardening import EffectOutcomeUnknown, PermitRejected, IdempotencyConflict
+    from paca_mvp.hardening import (
+        EffectOutcomeUnknown, HardeningError, PermitRejected, IdempotencyConflict,
+    )
 
 
 @unittest.skipUnless(DSN, "set PACA_TEST_POSTGRES_DSN to run PostgreSQL integration tests")
@@ -37,6 +39,25 @@ class PostgresPermitStoreTests(unittest.TestCase):
             self.action, self.resource, self.request_hash, self.policy_version,
             idempotency_key=idempotency_key, actor=self.actor,
         )
+
+    def test_schema_initialization_reseeds_missing_audit_head_from_existing_history(self):
+        self.store.record_event("pre_migration_event", None, None, None, {"marker": "existing"})
+        self.assertTrue(self.store.verify_audit_chain())
+        with self.store._connect() as db:
+            original_head = db.execute(
+                "SELECT event_hash FROM paca_audit_head WHERE singleton=1"
+            ).fetchone()["event_hash"]
+            db.execute("DELETE FROM paca_audit_head WHERE singleton=1")
+        try:
+            initialized = PostgresPermitStore(DSN, initialize_schema=True)
+            self.assertTrue(initialized.verify_audit_chain())
+        finally:
+            # Keep the shared CI database usable even if the regression fails.
+            with self.store._connect() as db:
+                db.execute("""
+                    INSERT INTO paca_audit_head(singleton,event_hash) VALUES(1,%s)
+                    ON CONFLICT(singleton) DO UPDATE SET event_hash=EXCLUDED.event_hash
+                """, (original_head,))
 
     def test_durable_result_and_idempotency_survive_new_store_instance(self):
         permit_id = self.issue()
@@ -84,6 +105,8 @@ class PostgresPermitStoreTests(unittest.TestCase):
             """).fetchone()
             db.execute("DELETE FROM paca_audit WHERE sequence=%s", (saved["sequence"],))
         self.assertFalse(self.store.verify_audit_chain())
+        with self.assertRaisesRegex(HardeningError, "audit head does not match"):
+            self.store.record_event("should_not_append", None, None, None, {})
         with self.store._connect() as db:
             db.execute("""
                 INSERT INTO paca_audit
