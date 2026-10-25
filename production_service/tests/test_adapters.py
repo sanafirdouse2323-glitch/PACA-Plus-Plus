@@ -182,3 +182,38 @@ def test_http_adapter_rejects_unsafe_route_configuration():
             {"document.update": {"method": "PATCH", "path": "/v1/documents/{resource_id}", "args_mode": "query"}},
             timeout_seconds=1,
         )
+
+
+def test_http_adapter_stops_reading_when_upstream_response_exceeds_size_limit():
+    class TrackingStream(httpx.SyncByteStream):
+        def __init__(self):
+            self.chunks_yielded = 0
+
+        def __iter__(self):
+            for _ in range(100):
+                self.chunks_yielded += 1
+                yield b"x" * 8
+
+    stream = TrackingStream()
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda req: httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                stream=stream,
+            )
+        )
+    )
+    adapter = HttpAPIAdapter(
+        "https://internal.example",
+        {"document.read": {"method": "GET", "path": "/v1/documents/{resource_id}", "args_mode": "query"}},
+        timeout_seconds=1,
+        client=client,
+        max_response_bytes=16,
+    )
+    result = adapter.execute(
+        request("document.read", "doc-1", {}, {"resource": {"kind": "document"}})
+    )
+    assert result == {"status_code": 200, "response_body_omitted": "size_limit"}
+    assert stream.chunks_yielded < 100
+    adapter.close()
