@@ -22,7 +22,8 @@ alfa_grammar = r"""
     obligation: "obligation:" "verify_state" "(" ESCAPED_STRING ")"
     effect: "effect:" EFFECT_TYPE
 
-    PROVENANCE: "provenance"\n    OPERATOR: "==" | "!="
+    PROVENANCE: "provenance"
+    OPERATOR: "==" | "!="
     EFFECT_TYPE: "permit" | "deny"
 
     %import common.CNAME
