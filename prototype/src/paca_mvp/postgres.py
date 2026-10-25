@@ -14,7 +14,7 @@ import json
 import uuid
 
 from .hardening import (
-    EffectOutcomeUnknown, IdempotencyConflict, PermitRejected, PolicyUnavailable,
+    EffectOutcomeUnknown, HardeningError, IdempotencyConflict, PermitRejected, PolicyUnavailable,
     _canonical_json, _digest, _validate_identifier, _validate_request_hash,
 )
 
@@ -136,6 +136,14 @@ class PostgresPermitStore:
         head = db.execute(
             "SELECT event_hash FROM paca_audit_head WHERE singleton=1 FOR UPDATE"
         ).fetchone()
+        if head is None:
+            raise HardeningError("audit head is missing; refusing to append an unanchored event")
+        tail = db.execute(
+            "SELECT event_hash FROM paca_audit ORDER BY sequence DESC LIMIT 1"
+        ).fetchone()
+        actual_tail_hash = tail["event_hash"] if tail else "0" * 64
+        if actual_tail_hash != head["event_hash"]:
+            raise HardeningError("audit head does not match stored audit chain; refusing to append")
         previous_hash = head["event_hash"]
         event_id = uuid.uuid4().hex
         created_at = datetime.now(timezone.utc)
