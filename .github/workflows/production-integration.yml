@@ -93,11 +93,10 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Run simulated demo
         run: python examples/demo.py
-      - name: Exercise operation-bound CLI
+      - name: Exercise legacy JSON-policy CLI
         run: >-
           python examples/authorize.py --policy examples/policy.json
           --context examples/context.json --action file.read
-          --resource file:report-1 --principal-id demo-user
-          --arguments-json '{"path":"report-1","mode":"read"}' --execute
+          --resource file:report-1 --execute
       - name: Run deterministic authorization scenarios
         run: python experiments/run_experiments.py
