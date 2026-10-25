@@ -51,7 +51,7 @@ jobs:
           "$RUNNER_TEMP/paca-audit/bin/python" -m pip install -e ".[production]" pip-audit==2.10.1
           "$RUNNER_TEMP/paca-audit/bin/pip-audit" --local
       - name: Install production dependencies
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[production]"
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[production,web,test]"
       - name: Install pinned OPA binary and verify checksum
         shell: bash
         run: |
