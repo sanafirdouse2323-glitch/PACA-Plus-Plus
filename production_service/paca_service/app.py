@@ -23,6 +23,7 @@ from .config import Settings
 from .context import AuthorizationContextProvider, ResourceNotFound
 from .opa import OPAClient, PolicyEngineUnavailable
 from .security import InvalidCanonicalValue, canonical_digest
+from .http_boundary import RequestBoundaryMiddleware
 
 logger = logging.getLogger("paca_service")
 _ACTION_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
@@ -102,6 +103,7 @@ def create_app(
         ),
         lifespan=lifespan,
     )
+    app.add_middleware(RequestBoundaryMiddleware)
     bearer = HTTPBearer(auto_error=False)
 
     @app.middleware("http")
