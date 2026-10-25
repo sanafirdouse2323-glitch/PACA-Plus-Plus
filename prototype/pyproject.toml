@@ -7,10 +7,17 @@ name = "paca-mvp"
 version = "0.1.0"
 description = "Research MVP for testing action-bound authorization and guarded effects"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["PyJWT[crypto]>=2.10,<3", "psycopg[binary]>=3.2,<4"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[project.scripts]
+paca-audit-export = "paca_mvp.audit_export:main"
+
+[project.optional-dependencies]
+web = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1"]
+test = ["httpx>=0.27,<1"]

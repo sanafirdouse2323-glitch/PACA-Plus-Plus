@@ -1,0 +1,1093 @@
+"""Hardening primitives for PACA++.
+
+This module is a research integration layer, not a turnkey production service.
+It provides an OPA REST decision client, explicit trusted-context interfaces,
+SQLite-coordinated permit/idempotency/audit state, and fail-closed effect
+execution. Real remote effects cannot be made atomic with SQLite: adapters
+must use downstream idempotency or transactional APIs for recovery.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from hashlib import sha256
+from typing import Any, Callable, Mapping, Protocol
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
+from urllib.parse import urlparse
+import json
+import os
+import sqlite3
+import uuid
+
+
+class HardeningError(RuntimeError):
+    """Base error for hardening integration failures."""
+
+
+class PolicyUnavailable(HardeningError):
+    """Policy decision point failed or returned an invalid decision."""
+
+
+class AuthenticationFailed(HardeningError):
+    """A credential failed authentication or required claim validation."""
+
+
+class IdentityProviderUnavailable(HardeningError):
+    """The identity provider/JWKS service is unavailable; authentication cannot be decided."""
+
+
+class ContextUnavailable(HardeningError):
+    """Trusted authorization context could not be established."""
+
+
+class PermitRejected(HardeningError):
+    """A durable execution permit is absent, stale, consumed, or invalid."""
+
+
+class IdempotencyConflict(HardeningError):
+    """An idempotency key was reused for a different operation."""
+
+
+class EffectOutcomeUnknown(HardeningError):
+    """A prior remote operation was claimed but its result cannot be recovered."""
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _urlopen_no_redirect(request: Request, timeout: float):
+    """Do not forward credentials or protected payloads across HTTP redirects."""
+    return build_opener(_NoRedirectHandler()).open(request, timeout=timeout)
+
+
+class _ClosingConnection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
+def _utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+
+
+def _digest(value: Any) -> str:
+    return sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _validate_identifier(value: str, label: str) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > 512:
+        raise ValueError(f"{label} must be a non-empty string of at most 512 characters")
+    if any(ord(ch) < 32 for ch in value):
+        raise ValueError(f"{label} must not contain control characters")
+    return value
+
+
+def _validate_request_hash(value: str) -> str:
+    if (not isinstance(value, str) or len(value) != 64
+            or any(ch not in "0123456789abcdef" for ch in value)):
+        raise ValueError("request_hash must be a lowercase SHA-256 hex digest")
+    return value
+
+
+@dataclass(frozen=True)
+class TrustedPrincipal:
+    """Identity claims created only by a verified authentication/context adapter.
+
+    Callers must not build this from untrusted request JSON. Production adapters
+    should verify issuer, audience, signature, expiry, tenant and revocation, or
+    fetch context from a trusted source. This dataclass itself is not proof of
+    identity.
+    """
+    subject: str
+    issuer: str
+    audience: str
+    claims: Mapping[str, Any]
+    authenticated_at: str
+
+    def to_context(self) -> dict[str, Any]:
+        for value, label in ((self.subject, "subject"), (self.issuer, "issuer"),
+                             (self.audience, "audience")):
+            _validate_identifier(value, label)
+        return {
+            "identity": {
+                "subject": self.subject,
+                "issuer": self.issuer,
+                "audience": self.audience,
+                "authenticated_at": self.authenticated_at,
+                "claims": dict(self.claims),
+            }
+        }
+
+
+class IdentityProvider(Protocol):
+    def authenticate(self, credential: str) -> TrustedPrincipal:
+        """Validate a credential and return verified claims; never trust decoded-only JWTs."""
+
+
+class AuthorizationContextProvider(Protocol):
+    def get_context(self, principal: TrustedPrincipal,
+                    action: str, resource: str) -> Mapping[str, Any]:
+        """Fetch resource/tenant/session/risk attributes from trusted sources."""
+
+
+class OPAClient:
+    """Fail-closed client for a named OPA Data API decision.
+
+    Expected Rego decision shape: {"allow": true|false, "policy_version": "...",
+    "reason": "..."}; missing allow, malformed JSON, 404, timeout, non-2xx or
+    connection errors raise PolicyUnavailable and must never turn into a permit.
+    """
+    def __init__(self, base_url: str, decision_path: str = "/v1/data/paca/authz/decision",
+                 bearer_token: str | None = None, timeout_seconds: float = 2.0,
+                 max_request_bytes: int = 1_048_576,
+                 policy_version_path: str | None = None):
+        parsed = urlparse(base_url)
+        loopback_http = parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+        if parsed.scheme != "https" and not loopback_http:
+            raise ValueError("OPA base_url must use HTTPS (HTTP is allowed only for loopback development)")
+        if (not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment
+                or any(part in {".", ".."} for part in parsed.path.split("/"))):
+            raise ValueError("invalid OPA base_url")
+        if bearer_token is not None and (
+            not isinstance(bearer_token, str) or not bearer_token
+            or bearer_token.strip() != bearer_token or any(ch.isspace() for ch in bearer_token)
+        ):
+            raise ValueError("OPA bearer token must be a non-whitespace string without spaces")
+        if parsed.scheme == "https" and not bearer_token:
+            raise ValueError("remote OPA requires a configured bearer token with this client")
+        if (not decision_path.startswith("/v1/data/") or ".." in decision_path
+                or "?" in decision_path or "#" in decision_path):
+            raise ValueError("decision_path must be a path under OPA /v1/data/ without query/fragment")
+        if policy_version_path is None:
+            if decision_path.rsplit("/", 1)[-1] != "decision":
+                raise ValueError("custom decision paths must specify policy_version_path explicitly")
+            parent = decision_path.rsplit("/", 1)[0]
+            policy_version_path = parent + "/policy_version"
+        if (not policy_version_path.startswith("/v1/data/") or ".." in policy_version_path
+                or "?" in policy_version_path or "#" in policy_version_path):
+            raise ValueError("policy_version_path must be a path under OPA /v1/data/ without query/fragment")
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if max_request_bytes < 1:
+            raise ValueError("max_request_bytes must be positive")
+        self.base_url = base_url.rstrip("/")
+        self.decision_path = decision_path
+        self.policy_version_path = policy_version_path
+        self.bearer_token = bearer_token
+        self.timeout_seconds = timeout_seconds
+        self.max_request_bytes = max_request_bytes
+
+    def get_policy_version(self) -> str:
+        """Fetch the active version marker from OPA immediately before effect commit."""
+        req = Request(self.base_url + self.policy_version_path,
+                      headers={"Accept": "application/json"}, method="GET")
+        if self.bearer_token:
+            req.add_header("Authorization", "Bearer " + self.bearer_token)
+        try:
+            with _urlopen_no_redirect(req, timeout=self.timeout_seconds) as response:
+                if response.status != 200:
+                    raise PolicyUnavailable(f"OPA version query returned HTTP {response.status}")
+                raw = response.read(65537)
+                if len(raw) > 65536:
+                    raise PolicyUnavailable("OPA version response exceeded 64 KiB")
+            payload = json.loads(raw.decode("utf-8"))
+            version = payload["result"]
+            if not isinstance(version, str) or not version.strip():
+                raise ValueError("policy version must be a non-empty string")
+            return version
+        except (HTTPError, URLError, TimeoutError, OSError, UnicodeDecodeError,
+                json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise PolicyUnavailable("could not retrieve active OPA policy version") from exc
+
+    def decide(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        try:
+            body = _canonical_json({"input": dict(request)}).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise PolicyUnavailable("OPA input is not valid canonical JSON") from exc
+        if len(body) > self.max_request_bytes:
+            raise PolicyUnavailable("OPA input exceeded configured request limit")
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if self.bearer_token:
+            headers["Authorization"] = "Bearer " + self.bearer_token
+        req = Request(self.base_url + self.decision_path, data=body,
+                      headers=headers, method="POST")
+        try:
+            with _urlopen_no_redirect(req, timeout=self.timeout_seconds) as response:
+                if response.status != 200:
+                    raise PolicyUnavailable(f"OPA returned HTTP {response.status}")
+                raw = response.read(1_048_577)
+                if len(raw) > 1_048_576:
+                    raise PolicyUnavailable("OPA response exceeded 1 MiB")
+        except (HTTPError, URLError, TimeoutError, OSError) as exc:
+            raise PolicyUnavailable("OPA decision request failed") from exc
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+            result = payload["result"]
+            allow = result["allow"]
+            if type(allow) is not bool:
+                raise ValueError("allow is not a boolean")
+            if allow:
+                version = result.get("policy_version")
+                if not isinstance(version, str) or not version.strip():
+                    raise ValueError("permit decision is missing policy_version")
+            return {"allowed": allow, "reason": str(result.get("reason", "opa_decision")),
+                    "policy_version": result.get("policy_version"),
+                    "decision_id": payload.get("decision_id")}
+        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise PolicyUnavailable("OPA response is missing a valid decision") from exc
+
+
+class SQLitePermitStore:
+    """Durable local permit, audit, and idempotency coordinator.
+
+    SQLite coordinates processes sharing the same database file on a single
+    machine/filesystem. It is not a distributed database and should not be placed
+    on an arbitrary network filesystem. Use PostgreSQL or another transactional
+    store for multi-host deployments.
+    """
+    def __init__(self, database_path: str, busy_timeout_ms: int = 5000):
+        if database_path == ":memory:":
+            raise ValueError("SQLitePermitStore requires a file-backed database for durable state")
+        if busy_timeout_ms < 1 or busy_timeout_ms > 120000:
+            raise ValueError("busy_timeout_ms must be between 1 and 120000")
+        os.makedirs(os.path.dirname(os.path.abspath(database_path)), exist_ok=True)
+        # Create the database with private permissions from the first byte, rather
+        # than relying only on a chmod after SQLite has opened it.
+        try:
+            fd = os.open(database_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+            os.close(fd)
+        except FileExistsError:
+            os.chmod(database_path, 0o600)
+        self.database_path = database_path
+        self.busy_timeout_ms = busy_timeout_ms
+        with self._connect() as db:
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS permits (
+                    permit_id TEXT PRIMARY KEY,
+                    action TEXT NOT NULL,
+                    resource TEXT NOT NULL,
+                    request_hash TEXT NOT NULL,
+                    actor_json TEXT,
+                    policy_version TEXT NOT NULL,
+                    state_version INTEGER NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN
+                        ('issued','executing','completed','failed','unknown','rejected')),
+                    idempotency_key TEXT,
+                    result_json TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS permits_idempotency_key
+                    ON permits(idempotency_key);
+                CREATE TABLE IF NOT EXISTS state (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                    state_version INTEGER NOT NULL
+                );
+                INSERT OR IGNORE INTO state(singleton, state_version) VALUES(1, 0);
+                CREATE TABLE IF NOT EXISTS audit (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    event TEXT NOT NULL,
+                    permit_id TEXT,
+                    action TEXT,
+                    resource TEXT,
+                    details_json TEXT NOT NULL,
+                    previous_hash TEXT NOT NULL,
+                    event_hash TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS audit_head (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                    event_hash TEXT NOT NULL
+                );
+                INSERT OR IGNORE INTO audit_head(singleton, event_hash)
+                SELECT 1, COALESCE(
+                    (SELECT event_hash FROM audit ORDER BY sequence DESC LIMIT 1),
+                    '0000000000000000000000000000000000000000000000000000000000000000'
+                );
+                CREATE TABLE IF NOT EXISTS idempotency (
+                    idempotency_key TEXT PRIMARY KEY,
+                    request_hash TEXT NOT NULL,
+                    permit_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    result_json TEXT,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS audit_outbox (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id TEXT NOT NULL UNIQUE,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+                    next_attempt_at TEXT NOT NULL,
+                    lease_owner TEXT,
+                    lease_expires_at TEXT,
+                    delivered_at TEXT,
+                    last_error_type TEXT
+                );
+                CREATE INDEX IF NOT EXISTS audit_outbox_pending_idx
+                    ON audit_outbox(delivered_at, next_attempt_at, lease_expires_at, sequence);
+            """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(permits)").fetchall()}
+            if "actor_json" not in columns:
+                db.execute("ALTER TABLE permits ADD COLUMN actor_json TEXT")
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute(f"PRAGMA busy_timeout={int(self.busy_timeout_ms)}")
+            # Validate the existing audit chain before publishing historical events
+            # to the independent audit sink. Reconstruct the original hash input from
+            # persisted values, preserving the exact SQLite timestamp string.
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                rows = db.execute("SELECT * FROM audit ORDER BY sequence").fetchall()
+                head = db.execute(
+                    "SELECT event_hash FROM audit_head WHERE singleton=1"
+                ).fetchone()
+                previous_hash = "0" * 64
+                for row in rows:
+                    try:
+                        content = {
+                            "event_id": row["event_id"], "created_at": row["created_at"],
+                            "event": row["event"], "permit_id": row["permit_id"],
+                            "action": row["action"], "resource": row["resource"],
+                            "details": json.loads(row["details_json"]),
+                            "previous_hash": row["previous_hash"],
+                        }
+                        valid = (row["previous_hash"] == previous_hash
+                                 and _digest(content) == row["event_hash"])
+                    except (TypeError, ValueError):
+                        valid = False
+                        content = {}
+                    if not valid:
+                        raise HardeningError(
+                            "stored audit chain is invalid; refusing to initialize trusted state"
+                        )
+                    payload_json = _canonical_json({**content, "event_hash": row["event_hash"]})
+                    db.execute("""
+                        INSERT OR IGNORE INTO audit_outbox
+                            (event_id,payload_json,created_at,next_attempt_at)
+                        VALUES(?,?,?,?)
+                    """, (row["event_id"], payload_json, row["created_at"], row["created_at"]))
+                    previous_hash = row["event_hash"]
+                if head is None or head["event_hash"] != previous_hash:
+                    raise HardeningError(
+                        "stored audit head does not match chain; refusing to initialize trusted state"
+                    )
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+        # Permit/audit rows can contain protected result data; keep the local
+        # database and any already-created WAL sidecars accessible only to its owner.
+        for filename in (self.database_path, self.database_path + "-wal", self.database_path + "-shm"):
+            if os.path.exists(filename):
+                os.chmod(filename, 0o600)
+
+    def _connect(self) -> sqlite3.Connection:
+        db = sqlite3.connect(self.database_path, timeout=self.busy_timeout_ms / 1000,
+                             isolation_level=None, factory=_ClosingConnection)
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA foreign_keys=ON")
+        db.execute(f"PRAGMA busy_timeout={int(self.busy_timeout_ms)}")
+        for filename in (self.database_path, self.database_path + "-wal", self.database_path + "-shm"):
+            if os.path.exists(filename):
+                os.chmod(filename, 0o600)
+        return db
+
+    def _audit(self, db: sqlite3.Connection, event: str, permit_id: str | None,
+               action: str | None, resource: str | None, details: Mapping[str, Any]) -> None:
+        head = db.execute("SELECT event_hash FROM audit_head WHERE singleton=1").fetchone()
+        if head is None:
+            raise HardeningError("audit head is missing; refusing to append an unanchored event")
+        tail = db.execute("SELECT event_hash FROM audit ORDER BY sequence DESC LIMIT 1").fetchone()
+        actual_tail_hash = tail["event_hash"] if tail else "0" * 64
+        if actual_tail_hash != head["event_hash"]:
+            raise HardeningError("audit head does not match stored audit chain; refusing to append")
+        previous_hash = head["event_hash"]
+        event_id, created_at = uuid.uuid4().hex, _utcnow()
+        content = {
+            "event_id": event_id, "created_at": created_at, "event": event,
+            "permit_id": permit_id, "action": action, "resource": resource,
+            "details": dict(details), "previous_hash": previous_hash,
+        }
+        event_hash = _digest(content)
+        db.execute("""INSERT INTO audit
+            (event_id,created_at,event,permit_id,action,resource,details_json,previous_hash,event_hash)
+            VALUES(?,?,?,?,?,?,?,?,?)""",
+            (event_id, created_at, event, permit_id, action, resource,
+             _canonical_json(dict(details)), previous_hash, event_hash))
+        db.execute("UPDATE audit_head SET event_hash=? WHERE singleton=1", (event_hash,))
+        # Transactional outbox: the local audit record and export intent commit or
+        # roll back together. Delivery to the independent sink happens separately.
+        db.execute("""
+            INSERT INTO audit_outbox(event_id,payload_json,created_at,next_attempt_at)
+            VALUES(?,?,?,?)
+        """, (event_id, _canonical_json({**content, "event_hash": event_hash}),
+              created_at, created_at))
+
+    def verify_audit_chain(self) -> bool:
+        with self._connect() as db:
+            db.execute("BEGIN")
+            rows = db.execute("SELECT * FROM audit ORDER BY sequence").fetchall()
+            head = db.execute("SELECT event_hash FROM audit_head WHERE singleton=1").fetchone()
+        previous_hash = "0" * 64
+        for row in rows:
+            try:
+                content = {
+                    "event_id": row["event_id"], "created_at": row["created_at"],
+                    "event": row["event"], "permit_id": row["permit_id"],
+                    "action": row["action"], "resource": row["resource"],
+                    "details": json.loads(row["details_json"]),
+                    "previous_hash": row["previous_hash"],
+                }
+                calculated_hash = _digest(content)
+            except (TypeError, ValueError):
+                # Corrupt event payloads mean the chain is invalid; verification
+                # should report False rather than raising out of the integrity check.
+                return False
+            if row["previous_hash"] != previous_hash or calculated_hash != row["event_hash"]:
+                return False
+            previous_hash = row["event_hash"]
+        # The separately stored head detects accidental or malicious deletion of
+        # a suffix of the audit table, unless an attacker also rewrites the head.
+        return head is not None and head["event_hash"] == previous_hash
+
+    def audit_events(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM audit ORDER BY sequence").fetchall()
+        return [{**dict(row), "details": json.loads(row["details_json"])} for row in rows]
+
+    def claim_audit_outbox(
+        self, worker_id: str, limit: int = 100, lease_seconds: int = 30
+    ) -> list[dict[str, Any]]:
+        _validate_identifier(worker_id, "worker_id")
+        if not 1 <= limit <= 1000 or not 1 <= lease_seconds <= 3600:
+            raise ValueError("outbox limit must be 1..1000 and lease_seconds 1..3600")
+        now = datetime.now(timezone.utc)
+        now_text = now.isoformat()
+        lease_until = (now + timedelta(seconds=lease_seconds)).isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                rows = db.execute("""
+                    SELECT o.event_id,o.payload_json,o.attempts,a.event_hash AS source_event_hash
+                    FROM audit_outbox AS o
+                    LEFT JOIN audit AS a ON a.event_id=o.event_id
+                    WHERE o.delivered_at IS NULL AND o.next_attempt_at <= ?
+                      AND (o.lease_expires_at IS NULL OR o.lease_expires_at <= ?)
+                    ORDER BY o.sequence LIMIT ?
+                """, (now_text, now_text, limit)).fetchall()
+                claimed = []
+                for row in rows:
+                    db.execute("""
+                        UPDATE audit_outbox
+                        SET lease_owner=?,lease_expires_at=?,attempts=attempts+1
+                        WHERE event_id=? AND delivered_at IS NULL
+                    """, (worker_id, lease_until, row["event_id"]))
+                    claimed.append({
+                        "event_id": row["event_id"],
+                        "payload_json": row["payload_json"],
+                        "attempts": int(row["attempts"]) + 1,
+                        "source_event_hash": row["source_event_hash"],
+                    })
+                db.commit()
+                return claimed
+            except Exception:
+                db.rollback()
+                raise
+
+    def mark_audit_delivered(self, event_id: str, worker_id: str) -> None:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = db.execute("""
+                    UPDATE audit_outbox
+                    SET delivered_at=?,lease_owner=NULL,lease_expires_at=NULL,last_error_type=NULL
+                    WHERE event_id=? AND lease_owner=? AND delivered_at IS NULL
+                """, (_utcnow(), event_id, worker_id))
+                if cursor.rowcount != 1:
+                    raise HardeningError("audit outbox lease is missing or no longer owned")
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+
+    def retry_audit_event(
+        self, event_id: str, worker_id: str, error_type: str,
+        retry_after_seconds: int,
+    ) -> None:
+        _validate_identifier(error_type, "error_type")
+        if not 1 <= retry_after_seconds <= 86400:
+            raise ValueError("retry_after_seconds must be 1..86400")
+        next_attempt = (
+            datetime.now(timezone.utc) + timedelta(seconds=retry_after_seconds)
+        ).isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = db.execute("""
+                    UPDATE audit_outbox
+                    SET next_attempt_at=?,lease_owner=NULL,lease_expires_at=NULL,
+                        last_error_type=?
+                    WHERE event_id=? AND lease_owner=? AND delivered_at IS NULL
+                """, (next_attempt, error_type[:128], event_id, worker_id))
+                if cursor.rowcount != 1:
+                    raise HardeningError("audit outbox lease is missing or no longer owned")
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+
+    def audit_outbox_counts(self) -> dict[str, int]:
+        with self._connect() as db:
+            row = db.execute("""
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN delivered_at IS NULL THEN 1 ELSE 0 END) AS pending,
+                       SUM(CASE WHEN delivered_at IS NOT NULL THEN 1 ELSE 0 END) AS delivered
+                FROM audit_outbox
+            """).fetchone()
+        return {
+            "total": int(row["total"] or 0),
+            "pending": int(row["pending"] or 0),
+            "delivered": int(row["delivered"] or 0),
+        }
+
+    def record_event(self, event: str, permit_id: str | None,
+                     action: str | None, resource: str | None,
+                     details: Mapping[str, Any]) -> None:
+        """Append a durable audit event using the same transaction/chain lock."""
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                self._audit(db, event, permit_id, action, resource, details)
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+
+    def current_state_version(self) -> int:
+        with self._connect() as db:
+            return int(db.execute("SELECT state_version FROM state WHERE singleton=1").fetchone()[0])
+
+    def advance_state(self) -> int:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                db.execute("UPDATE state SET state_version=state_version+1 WHERE singleton=1")
+                version = int(db.execute(
+                    "SELECT state_version FROM state WHERE singleton=1").fetchone()[0])
+                self._audit(db, "state_advanced", None, None, None, {"state_version": version})
+                db.commit()
+                return version
+            except Exception:
+                db.rollback()
+                raise
+
+    def issue(self, action: str, resource: str, request_hash: str, policy_version: str,
+              ttl_seconds: float = 30.0, idempotency_key: str | None = None,
+              actor: Mapping[str, Any] | None = None) -> str:
+        _validate_identifier(action, "action")
+        _validate_identifier(resource, "resource")
+        _validate_identifier(policy_version, "policy_version")
+        _validate_request_hash(request_hash)
+        if ttl_seconds <= 0 or ttl_seconds > 3600:
+            raise ValueError("ttl_seconds must be in (0, 3600]")
+        if idempotency_key is not None:
+            _validate_identifier(idempotency_key, "idempotency_key")
+        actor_json = _canonical_json(dict(actor)) if actor is not None else None
+        permit_id = uuid.uuid4().hex
+        now = datetime.now(timezone.utc)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                state_version = int(db.execute(
+                    "SELECT state_version FROM state WHERE singleton=1").fetchone()[0])
+                if idempotency_key:
+                    prior = db.execute("SELECT * FROM idempotency WHERE idempotency_key=?",
+                                       (idempotency_key,)).fetchone()
+                    if prior:
+                        if prior["request_hash"] != request_hash:
+                            raise IdempotencyConflict("idempotency key reused for a different request")
+                        if prior["status"] in {"issued", "completed"}:
+                            db.commit()
+                            return prior["permit_id"]
+                        if prior["status"] in {"executing", "unknown"}:
+                            raise EffectOutcomeUnknown("previous operation may have reached the downstream system")
+                        # failed/rejected operations are not silently retried under the same key
+                        raise PermitRejected("idempotency key refers to a terminal failed operation")
+                db.execute("""INSERT INTO permits
+                    (permit_id,action,resource,request_hash,actor_json,policy_version,state_version,expires_at,
+                     status,idempotency_key,created_at,updated_at)
+                    VALUES(?,?,?,?,?,?,?,?,'issued',?,?,?)""",
+                    (permit_id, action, resource, request_hash, actor_json, policy_version, state_version,
+                     (now + timedelta(seconds=ttl_seconds)).isoformat(), idempotency_key,
+                     now.isoformat(), now.isoformat()))
+                if idempotency_key:
+                    db.execute("""INSERT INTO idempotency
+                        (idempotency_key,request_hash,permit_id,status,updated_at)
+                        VALUES(?,?,?,'issued',?)""",
+                        (idempotency_key, request_hash, permit_id, now.isoformat()))
+                self._audit(db, "permit_issued", permit_id, action, resource, {
+                    "request_hash": request_hash, "actor": dict(actor) if actor is not None else None,
+                    "policy_version": policy_version,
+                    "state_version": state_version, "expires_at": (now + timedelta(seconds=ttl_seconds)).isoformat(),
+                    "idempotency_key_hash": _digest(idempotency_key) if idempotency_key else None,
+                })
+                db.commit()
+                return permit_id
+            except Exception:
+                db.rollback()
+                raise
+
+    def execute(self, permit_id: str, action: str, resource: str, request_hash: str,
+                current_policy_version: str, effect: Callable[[], Any],
+                idempotency_key: str | None = None,
+                pre_effect_check: Callable[[], None] | None = None) -> Any:
+        """Durably claim, revalidate, and execute while serializing local state writes.
+
+        Phase 1 commits an 'executing' claim so a crash cannot make a protected
+        effect automatically replayable. Phase 2 reopens a write transaction,
+        rechecks state/policy/expiry, and keeps the database write lock across the
+        callback and completion record. If the process crashes during the callback,
+        phase 2 rolls back but the phase-1 claim survives as 'executing', which must
+        be reconciled rather than blindly replayed.
+
+        This is single-host SQLite coordination. Remote effects are not atomic with
+        SQLite; downstream idempotency/reconciliation remains mandatory.
+        """
+        _validate_request_hash(request_hash)
+        now = datetime.now(timezone.utc)
+        # Phase 1: validate the permit and make the non-replayable claim durable.
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                row = db.execute("SELECT * FROM permits WHERE permit_id=?", (permit_id,)).fetchone()
+                if row is None:
+                    raise PermitRejected("unknown permit")
+                actor = json.loads(row["actor_json"]) if row["actor_json"] else None
+                if row["action"] != action or row["resource"] != resource:
+                    self._audit(db, "permit_rejected", permit_id, action, resource,
+                                {"reason": "action_or_resource_mismatch", "actor": actor})
+                    db.commit()
+                    raise PermitRejected("action or resource mismatch")
+                if row["request_hash"] != request_hash:
+                    raise PermitRejected("request payload mismatch")
+                if row["idempotency_key"] != idempotency_key:
+                    raise PermitRejected("idempotency key mismatch")
+                if row["status"] == "completed":
+                    if row["result_json"] is None:
+                        raise EffectOutcomeUnknown("completed result unavailable")
+                    return json.loads(row["result_json"])
+                if row["status"] in {"executing", "unknown"}:
+                    raise EffectOutcomeUnknown("operation was claimed earlier; reconcile downstream state")
+                if row["status"] != "issued":
+                    raise PermitRejected("permit is not executable")
+                if now >= datetime.fromisoformat(row["expires_at"]):
+                    db.execute("UPDATE permits SET status='rejected',updated_at=? WHERE permit_id=?",
+                               (now.isoformat(), permit_id))
+                    if idempotency_key:
+                        db.execute("UPDATE idempotency SET status='rejected',updated_at=? WHERE idempotency_key=?",
+                                   (now.isoformat(), idempotency_key))
+                    self._audit(db, "permit_rejected", permit_id, action, resource,
+                                {"reason": "expired", "actor": actor})
+                    db.commit()
+                    raise PermitRejected("permit expired")
+                state_version = int(db.execute(
+                    "SELECT state_version FROM state WHERE singleton=1").fetchone()[0])
+                if row["state_version"] != state_version:
+                    db.execute("UPDATE permits SET status='rejected',updated_at=? WHERE permit_id=?",
+                               (now.isoformat(), permit_id))
+                    if idempotency_key:
+                        db.execute("UPDATE idempotency SET status='rejected',updated_at=? WHERE idempotency_key=?",
+                                   (now.isoformat(), idempotency_key))
+                    self._audit(db, "permit_rejected", permit_id, action, resource,
+                                {"reason": "stale_state", "actor": actor,
+                                 "issued_state_version": row["state_version"],
+                                 "current_state_version": state_version})
+                    db.commit()
+                    raise PermitRejected("stale state")
+                if row["policy_version"] != current_policy_version:
+                    db.execute("UPDATE permits SET status='rejected',updated_at=? WHERE permit_id=?",
+                               (now.isoformat(), permit_id))
+                    if idempotency_key:
+                        db.execute("UPDATE idempotency SET status='rejected',updated_at=? WHERE idempotency_key=?",
+                                   (now.isoformat(), idempotency_key))
+                    self._audit(db, "permit_rejected", permit_id, action, resource,
+                                {"reason": "stale_policy", "actor": actor,
+                                 "issued_policy_version": row["policy_version"],
+                                 "current_policy_version": current_policy_version})
+                    db.commit()
+                    raise PermitRejected("stale policy")
+                db.execute("UPDATE permits SET status='executing',updated_at=? WHERE permit_id=?",
+                           (now.isoformat(), permit_id))
+                if idempotency_key:
+                    db.execute("UPDATE idempotency SET status='executing',updated_at=? WHERE idempotency_key=?",
+                               (now.isoformat(), idempotency_key))
+                self._audit(db, "effect_claimed", permit_id, action, resource, {
+                    "actor": actor, "state_version": state_version,
+                    "policy_version": current_policy_version,
+                })
+                db.commit()
+            except Exception:
+                if db.in_transaction:
+                    db.rollback()
+                raise
+
+        # Phase 2: retain the write lock while revalidating and invoking the effect.
+        # State advances and other permit claims wait until the effect outcome is
+        # durably recorded, closing the local check/effect race.
+        effect_started = False
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                row = db.execute("SELECT * FROM permits WHERE permit_id=?", (permit_id,)).fetchone()
+                if row is None:
+                    raise PermitRejected("permit disappeared after claim")
+                actor = json.loads(row["actor_json"]) if row["actor_json"] else None
+                if row["status"] == "completed":
+                    if row["result_json"] is None:
+                        raise EffectOutcomeUnknown("completed result unavailable")
+                    return json.loads(row["result_json"])
+                if row["status"] != "executing":
+                    raise EffectOutcomeUnknown("execution claim is no longer active")
+                if row["action"] != action or row["resource"] != resource:
+                    raise PermitRejected("action or resource mismatch after claim")
+                if row["request_hash"] != request_hash or row["idempotency_key"] != idempotency_key:
+                    raise PermitRejected("request or idempotency key mismatch after claim")
+                now = datetime.now(timezone.utc)
+                state_version = int(db.execute(
+                    "SELECT state_version FROM state WHERE singleton=1").fetchone()[0])
+                rejection = None
+                if now >= datetime.fromisoformat(row["expires_at"]):
+                    rejection = "expired"
+                elif row["state_version"] != state_version:
+                    rejection = "stale_state"
+                elif row["policy_version"] != current_policy_version:
+                    rejection = "stale_policy"
+                if rejection:
+                    db.execute("UPDATE permits SET status='rejected',updated_at=? WHERE permit_id=?",
+                               (now.isoformat(), permit_id))
+                    if idempotency_key:
+                        db.execute("UPDATE idempotency SET status='rejected',updated_at=? WHERE idempotency_key=?",
+                                   (now.isoformat(), idempotency_key))
+                    details = {"reason": rejection, "actor": actor,
+                               "issued_state_version": row["state_version"],
+                               "current_state_version": state_version,
+                               "issued_policy_version": row["policy_version"],
+                               "current_policy_version": current_policy_version}
+                    self._audit(db, "permit_rejected", permit_id, action, resource, details)
+                    db.commit()
+                    raise PermitRejected(rejection.replace("_", " "))
+
+                # Run volatile preconditions (for example, a second OPA
+                # policy-version lookup) after the state lock is held and
+                # immediately before the protected adapter.
+                if pre_effect_check is not None:
+                    try:
+                        pre_effect_check()
+                    except Exception as exc:
+                        db.execute("UPDATE permits SET status='rejected',updated_at=? WHERE permit_id=?",
+                                   (_utcnow(), permit_id))
+                        if idempotency_key:
+                            db.execute("UPDATE idempotency SET status='rejected',updated_at=? WHERE idempotency_key=?",
+                                       (_utcnow(), idempotency_key))
+                        self._audit(db, "permit_rejected", permit_id, action, resource,
+                                    {"actor": actor, "reason": "pre_effect_check_failed",
+                                     "exception_type": type(exc).__name__})
+                        db.commit()
+                        if isinstance(exc, (
+                            PermitRejected, PolicyUnavailable, ContextUnavailable,
+                            AuthenticationFailed, IdentityProviderUnavailable,
+                        )):
+                            raise
+                        raise PermitRejected("pre-effect validation failed; no effect was invoked") from exc
+
+                # From this point onward an external side effect may have
+                # happened. Any failure while persisting its completion must be
+                # reported as unknown and must not make the claim replayable.
+                effect_started = True
+                try:
+                    result = effect()
+                    serialized = _canonical_json(result)
+                except Exception as exc:
+                    db.execute("UPDATE permits SET status='unknown',updated_at=? WHERE permit_id=?",
+                               (_utcnow(), permit_id))
+                    if idempotency_key:
+                        db.execute("UPDATE idempotency SET status='unknown',updated_at=? WHERE idempotency_key=?",
+                                   (_utcnow(), idempotency_key))
+                    self._audit(db, "effect_outcome_unknown", permit_id, action, resource,
+                                {"actor": actor, "exception_type": type(exc).__name__})
+                    db.commit()
+                    raise EffectOutcomeUnknown(
+                        "effect raised or result was not serializable; downstream state must be reconciled"
+                    ) from exc
+
+                db.execute("UPDATE permits SET status='completed',result_json=?,updated_at=? WHERE permit_id=?",
+                           (serialized, _utcnow(), permit_id))
+                if idempotency_key:
+                    db.execute("""UPDATE idempotency SET status='completed',result_json=?,updated_at=?
+                                  WHERE idempotency_key=?""",
+                               (serialized, _utcnow(), idempotency_key))
+                self._audit(db, "effect_completed", permit_id, action, resource,
+                            {"actor": actor, "result_hash": _digest(result)})
+                db.commit()
+                return result
+            except EffectOutcomeUnknown:
+                if db.in_transaction:
+                    db.rollback()
+                raise
+            except Exception as exc:
+                if db.in_transaction:
+                    db.rollback()
+                if effect_started:
+                    raise EffectOutcomeUnknown(
+                        "effect may have succeeded but durable completion could not be confirmed"
+                    ) from exc
+                raise
+
+    def mark_unknown_operations_for_reconciliation(self) -> int:
+        """Mark durable 'executing' records left by a crash as unknown; never replay automatically."""
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                rows = db.execute("SELECT permit_id,action,resource,idempotency_key,actor_json FROM permits WHERE status='executing'").fetchall()
+                for row in rows:
+                    db.execute("UPDATE permits SET status='unknown',updated_at=? WHERE permit_id=?",
+                               (_utcnow(), row["permit_id"]))
+                    if row["idempotency_key"]:
+                        db.execute("UPDATE idempotency SET status='unknown',updated_at=? WHERE idempotency_key=?",
+                                   (_utcnow(), row["idempotency_key"]))
+                    self._audit(db, "crash_recovery_unknown", row["permit_id"], row["action"],
+                                row["resource"], {"actor": json.loads(row["actor_json"]) if row["actor_json"] else None,
+                                                  "note": "reconcile downstream before retry"})
+                db.commit()
+                return len(rows)
+            except Exception:
+                db.rollback()
+                raise
+
+
+class ProtectedToolAdapter(Protocol):
+    """Tool-specific boundary; implementations must validate/canonicalize arguments."""
+    def invoke(self, action: str, resource: str, arguments: Mapping[str, Any],
+               idempotency_key: str) -> Any:
+        """Call the protected tool/API with downstream idempotency if supported."""
+
+
+class DurablePermitStore(Protocol):
+    """Store interface shared by single-host SQLite and multi-host PostgreSQL."""
+
+    def record_event(self, event: str, permit_id: str | None,
+                     action: str | None, resource: str | None,
+                     details: Mapping[str, Any]) -> None: ...
+    def issue(self, action: str, resource: str, request_hash: str, policy_version: str,
+              ttl_seconds: float = 30.0, idempotency_key: str | None = None,
+              actor: Mapping[str, Any] | None = None) -> str: ...
+    def execute(self, permit_id: str, action: str, resource: str, request_hash: str,
+                current_policy_version: str, effect: Callable[[], Any],
+                idempotency_key: str | None = None,
+                pre_effect_check: Callable[[], None] | None = None) -> Any: ...
+
+
+class GuardedGateway:
+    """Composes trusted context, OPA decisions, durable permits, and adapters."""
+    def __init__(self, opa: OPAClient, store: DurablePermitStore,
+                 identity_provider: IdentityProvider,
+                 context_provider: AuthorizationContextProvider):
+        self.opa, self.store = opa, store
+        self.identity_provider, self.context_provider = identity_provider, context_provider
+
+    def authorize_and_execute(self, credential: str, action: str, resource: str,
+                              arguments: Mapping[str, Any], adapter: ProtectedToolAdapter,
+                              idempotency_key: str) -> Any:
+        _validate_identifier(action, "action")
+        _validate_identifier(resource, "resource")
+        _validate_identifier(idempotency_key, "idempotency_key")
+        if not isinstance(arguments, Mapping):
+            raise ValueError("arguments must be a mapping")
+        # Authentication and context failures are separated so an API boundary
+        # can return the right status and the audit trail never stores credentials.
+        try:
+            principal = self.identity_provider.authenticate(credential)
+            identity_context = principal.to_context()
+        except IdentityProviderUnavailable:
+            self.store.record_event(
+                "identity_provider_unavailable", None, action, resource,
+                {"reason": "identity_provider_or_jwks_unavailable"},
+            )
+            raise
+        except Exception as exc:
+            self.store.record_event(
+                "authentication_failed", None, action, resource,
+                {"reason": "credential_verification_failed"},
+            )
+            raise AuthenticationFailed("credential verification failed") from exc
+        try:
+            trusted_context = dict(self.context_provider.get_context(principal, action, resource))
+            if "identity" in trusted_context:
+                raise ContextUnavailable("trusted context service must not override verified identity")
+            _canonical_json(trusted_context)
+        except Exception as exc:
+            self.store.record_event(
+                "authorization_context_unavailable", None, action, resource,
+                {"actor": {"subject": principal.subject, "issuer": principal.issuer,
+                           "audience": principal.audience},
+                 "reason": "trusted_context_retrieval_failed"},
+            )
+            raise ContextUnavailable("trusted authorization-context retrieval failed") from exc
+        context = {**trusted_context, **identity_context}
+        request = {"principal": identity_context["identity"], "action": action,
+                   "resource": resource, "arguments": dict(arguments), "context": context}
+        try:
+            decision = self.opa.decide(request)
+        except PolicyUnavailable:
+            self.store.record_event(
+                "policy_decision_failed", None, action, resource,
+                {"actor": {"subject": principal.subject, "issuer": principal.issuer,
+                           "audience": principal.audience},
+                 "reason": "policy_decision_unavailable"},
+            )
+            raise
+        # Exclude volatile JWT timestamps and authentication-observation time from
+        # the idempotency fingerprint, while retaining identity and authorization
+        # claims that can change the policy outcome.
+        stable_identity = dict(identity_context["identity"])
+        stable_identity.pop("authenticated_at", None)
+        stable_claims = dict(stable_identity.get("claims", {}))
+        for temporal_claim in ("exp", "iat", "nbf", "jti"):
+            stable_claims.pop(temporal_claim, None)
+        stable_identity["claims"] = stable_claims
+        stable_request = dict(request)
+        stable_request["principal"] = stable_identity
+        stable_context = dict(context)
+        stable_context["identity"] = stable_identity
+        stable_request["context"] = stable_context
+        request_hash = _digest(stable_request)
+        if not decision["allowed"]:
+            self.store.record_event(
+                "authorization_denied", None, action, resource,
+                {"actor": {"subject": principal.subject, "issuer": principal.issuer,
+                           "audience": principal.audience},
+                 "reason": decision["reason"], "request_hash": request_hash,
+                 "decision_id": decision.get("decision_id")},
+            )
+            raise PermitRejected("OPA denied the operation")
+        actor = {"subject": principal.subject, "issuer": principal.issuer,
+                 "audience": principal.audience}
+        # Do not issue/return even an idempotent result if the policy changed
+        # between the decision call and this point.
+        try:
+            active_version = self.opa.get_policy_version()
+        except PolicyUnavailable:
+            self.store.record_event(
+                "authorization_aborted", None, action, resource,
+                {"actor": actor, "reason": "policy_version_unavailable",
+                 "decision_policy_version": decision["policy_version"]},
+            )
+            raise
+        if active_version != decision["policy_version"]:
+            self.store.record_event(
+                "authorization_aborted", None, action, resource,
+                {"actor": actor, "reason": "policy_version_changed",
+                 "decision_policy_version": decision["policy_version"],
+                 "active_policy_version": active_version},
+            )
+            raise PermitRejected("stale policy: active OPA policy version changed after authorization")
+        permit_id = self.store.issue(action, resource, request_hash,
+                                     decision["policy_version"], idempotency_key=idempotency_key,
+                                     actor=actor)
+        # Adapter must make this downstream key durable/idempotent or provide a
+        # reconciliation API. Local authorization cannot make arbitrary APIs atomic.
+        # Re-read the live marker inside the durable store's final pre-effect
+        # section. This narrows the OPA bundle-reload race; it cannot make a policy
+        # reload and arbitrary remote side effect an atomic transaction. Production
+        # rollouts must coordinate policy revisions with protected effects.
+        def verify_active_policy() -> None:
+            # Re-authenticate the exact credential immediately before the protected
+            # effect. This rechecks token expiry/signature under the configured IdP.
+            try:
+                current_principal = self.identity_provider.authenticate(credential)
+            except (AuthenticationFailed, IdentityProviderUnavailable):
+                raise
+            except Exception as exc:
+                raise AuthenticationFailed("credential could not be revalidated before effect") from exc
+
+            current_identity_context = current_principal.to_context()
+            current_identity = dict(current_identity_context["identity"])
+            current_identity.pop("authenticated_at", None)
+            current_claims = dict(current_identity.get("claims", {}))
+            for temporal_claim in ("exp", "iat", "nbf", "jti"):
+                current_claims.pop(temporal_claim, None)
+            current_identity["claims"] = current_claims
+            if _canonical_json(current_identity) != _canonical_json(stable_identity):
+                raise PermitRejected("authenticated identity or stable claims changed before effect")
+
+            # Roles, owner mapping, capabilities, tenant association and current
+            # suspension are volatile authorization inputs. Query them again;
+            # any change causes this permit to be rejected and a new request is
+            # required so authorization and request fingerprints cannot be mixed.
+            try:
+                current_trusted_context = dict(
+                    self.context_provider.get_context(current_principal, action, resource)
+                )
+                if "identity" in current_trusted_context:
+                    raise ContextUnavailable(
+                        "trusted context service must not override verified identity"
+                    )
+                _canonical_json(current_trusted_context)
+            except ContextUnavailable:
+                raise
+            except Exception as exc:
+                raise ContextUnavailable(
+                    "trusted authorization context could not be revalidated before effect"
+                ) from exc
+            if _canonical_json(current_trusted_context) != _canonical_json(trusted_context):
+                raise PermitRejected(
+                    "trusted authorization context changed before effect; submit a new request"
+                )
+
+            # Re-run the policy decision on the refreshed authenticated identity
+            # and trusted context. This is a final authorization check, not an
+            # atomic transaction with OPA: deployment must still coordinate policy
+            # and context changes with effects.
+            current_context = {**current_trusted_context, **current_identity_context}
+            current_request = {
+                "principal": current_identity_context["identity"],
+                "action": action,
+                "resource": resource,
+                "arguments": dict(arguments),
+                "context": current_context,
+            }
+            current_stable_request = dict(current_request)
+            current_stable_request["principal"] = current_identity
+            current_stable_context = dict(current_context)
+            current_stable_context["identity"] = current_identity
+            current_stable_request["context"] = current_stable_context
+            if _digest(current_stable_request) != request_hash:
+                raise PermitRejected("authorization inputs changed before effect")
+
+            current_decision = self.opa.decide(current_request)
+            if not current_decision["allowed"]:
+                raise PermitRejected("current authorization policy denied the operation")
+            active_version = self.opa.get_policy_version()
+            if (active_version != decision["policy_version"]
+                    or current_decision["policy_version"] != decision["policy_version"]):
+                raise PermitRejected(
+                    "stale policy: active OPA policy version changed after authorization"
+                )
+
+        return self.store.execute(
+            permit_id, action, resource, request_hash, decision["policy_version"],
+            lambda: adapter.invoke(action, resource, arguments, idempotency_key),
+            idempotency_key=idempotency_key,
+            pre_effect_check=verify_active_policy,
+        )

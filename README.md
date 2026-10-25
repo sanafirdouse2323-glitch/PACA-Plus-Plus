@@ -1,45 +1,49 @@
 # PACA++ — research prototype
 
-This repository is an early research scaffold for exploring authorization correctness in LLM-agent systems. The existing root-level description refers to compiling ALFA/UCON+ policies to ASP and Cedar; that compiler integration is **not implemented by the new prototype yet**.
+This repository is an early research scaffold for exploring authorization correctness in LLM-agent systems. The repository's original description refers to compiling ALFA/UCON+ policies to ASP and Cedar; that compiler integration is **not implemented by the current Python prototype**.
 
-## Current runnable component
+## Runnable components
 
-The isolated [prototype](prototype/README.md) directory contains a Python research MVP for testing the authorization-to-effect boundary:
+The isolated [prototype](prototype/README.md) contains two paths:
 
-- default-deny decisions and deny-overrides;
-- fail-closed handling of missing attributes;
-- permits bound to an exact action, resource, policy version, and state version;
-- short-lived, one-use permits and replay rejection;
-- a simulated protected effect, audit events, unit tests, deterministic scenarios, and a command-line interface.
+- **Legacy MVP:** a small, in-memory JSON-policy engine with simulated effects, unit tests and deterministic scenarios. It remains useful for testing action-bound permit behavior and is not production authorization.
+- **Hardening integration layer on this branch:** an OPA REST decision client and Rego policy, OIDC/JWKS JWT validation, trusted authorization-context retrieval, protected filesystem/HTTP adapters, single-host SQLite and multi-host PostgreSQL permit/idempotency state, hash-linked durable audit events, crash reconciliation, a runnable ASGI gateway for a fixed ticket-create route, and adversarial/integration tests.
 
-The prototype is intentionally separate so it does not silently replace or misrepresent the original ALFA/UCON+ compiler work.
+The hardening code is deliberately separate from the legacy engine and original compiler work. See [the hardening architecture and limits](prototype/docs/SECURITY_HARDENING.md), [threat model](prototype/THREAT_MODEL.md), and [local verification report](prototype/docs/LOCAL_VERIFICATION_REPORT.md).
 
-## Run it
+## Run the existing prototype
 
-Requires Python 3.10 or newer. No third-party runtime dependencies are required.
+Requires Python 3.10 or newer.
 
-From a clone of this repository:
-
-```bash
+~~~bash
 cd prototype
+python -m pip install -e .
 python -m unittest discover -s tests -v
 python examples/demo.py
 python experiments/run_experiments.py
-python examples/authorize.py --policy examples/policy.json --context examples/context.json --action file.read --resource file:report-1 --execute
-```
+~~~
 
-GitHub Actions runs these checks for pushes to the prototype branch and pull requests targeting `main`.
+## Run the OPA integration path
 
-## What the results mean
+Requires Docker and Python 3.10 or newer. See the complete OIDC/context-service wiring in the hardening guide.
 
-The included scenario suite is a small, hand-authored test set. Passing it only shows that the current implementation behaves as expected for those cases; it is not a formal proof, an external-system benchmark, production-security validation, standards compliance, or proof of research novelty.
+~~~bash
+cd prototype
+docker compose up -d opa
+python examples/opa_smoke.py
+docker compose down
+~~~
 
-## Important remaining work
+## Evidence and boundaries
 
-1. Integrate and test the original ALFA/UCON+ policy syntax, parser, compiler, and evaluator (rather than claiming the MVP already does this).
-2. Add differential tests for parser/compiler/evaluator semantic consistency.
-3. Add independently reviewed adversarial cases and compare supported features against relevant existing systems.
-4. Define tool-specific canonicalization, trusted identity/context, durable audit, and deployment assumptions before considering real side effects.
-5. Decide the final research contribution only after the baseline and literature comparisons.
+Passing hand-authored tests shows only that the tested cases behaved as expected. It is not a formal proof, external-system benchmark, production security validation, standards compliance evidence, or proof of research novelty. The OPA local smoke test exercises a real OPA process when run as documented. CI has a separate step for this test.
 
-See [the design specification](prototype/docs/PACA_Prototype_Full_Design.md), [threat model](prototype/THREAT_MODEL.md), and [local verification report](prototype/docs/LOCAL_VERIFICATION_REPORT.md).
+The SQLite coordinator is for single-host deployments only; the audit hash chain is not tamper-proof; remote effects cannot be atomically committed with SQLite; and safe recovery depends on downstream idempotency or reconciliation. The sample OIDC and context adapters still require real, securely configured identity and authorization services. Do not expose an unauthenticated OPA endpoint publicly.
+
+## Remaining work
+
+1. Integrate and test the original ALFA/UCON+ policy syntax, parser, compiler, and evaluator; the prototype does not currently claim to implement these.
+2. Coordinate policy rollout with protected-effect commits; provision and operationally secure PostgreSQL (the shared-store adapter is included) before multi-host deployment.
+3. Add a downstream-specific integration environment that can test crash-after-commit, retry, and reconciliation semantics against actual protected services.
+4. Send audit events to an independently controlled append-only sink, and complete deployment-specific security review and operational controls.
+5. Compare with relevant existing systems and prior work before deciding whether any new research contribution is established.
