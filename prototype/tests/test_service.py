@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+import json
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import Mock
+
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from paca_mvp.hardening import (
+    AuthenticationFailed, ContextUnavailable, EffectOutcomeUnknown,
+    IdempotencyConflict, PermitRejected, PolicyUnavailable,
+)
+from paca_mvp.service import (
+    MAX_REQUEST_BYTES, TICKET_ACTION, TICKET_RESOURCE, create_app,
+)
+
+
+class GatewayAppTests(unittest.TestCase):
+    def setUp(self):
+        self.gateway = Mock()
+        self.gateway.authorize_and_execute.return_value = {
+            "ticket_id": "ticket-123", "status": "created",
+        }
+        self.store = Mock()
+        self.store.current_state_version.return_value = 7
+        self.opa = Mock()
+        self.opa.get_policy_version.return_value = "policy-test-v1"
+        self.adapter = object()
+        self.app = create_app(
+            gateway=self.gateway, ticket_adapter=self.adapter,
+            store=self.store, opa=self.opa,
+        )
+        self.client = TestClient(self.app)
+
+    def test_health_and_readiness_expose_only_dependency_status(self):
+        health = self.client.get("/healthz")
+        self.assertEqual(health.status_code, 200)
+        self.assertEqual(health.json(), {"status": "ok"})
+        ready = self.client.get("/readyz")
+        self.assertEqual(ready.status_code, 200)
+        self.assertEqual(ready.json(), {
+            "status": "ready", "policy_version": "policy-test-v1", "state_version": 7,
+        })
+
+    def test_missing_bearer_token_is_rejected_without_gateway_call(self):
+        response = self.client.post(
+            "/v1/tickets", json={"title": "Incident"},
+            headers={"Idempotency-Key": "op-1"},
+        )
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.headers["www-authenticate"], "Bearer")
+        self.gateway.authorize_and_execute.assert_not_called()
+
+    def test_missing_idempotency_key_is_rejected(self):
+        response = self.client.post(
+            "/v1/tickets",
+            json={"title": "Incident"},
+            headers={"Authorization": "Bearer valid-format-token"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.gateway.authorize_and_execute.assert_not_called()
+
+    def test_endpoint_binds_action_resource_adapter_and_request_body(self):
+        response = self.client.post(
+            "/v1/tickets",
+            json={"title": " Incident ", "description": "Service interruption"},
+            headers={"Authorization": "Bearer valid-format-token",
+                     "Idempotency-Key": "op-123"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ticket_id": "ticket-123", "status": "created"})
+        kwargs = self.gateway.authorize_and_execute.call_args.kwargs
+        self.assertEqual(kwargs["credential"], "valid-format-token")
+        self.assertEqual(kwargs["action"], TICKET_ACTION)
+        self.assertEqual(kwargs["resource"], TICKET_RESOURCE)
+        self.assertEqual(kwargs["arguments"], {
+            "title": "Incident", "description": "Service interruption",
+        })
+        self.assertIs(kwargs["adapter"], self.adapter)
+        self.assertEqual(kwargs["idempotency_key"], "op-123")
+
+    def test_extra_fields_and_oversized_body_are_rejected(self):
+        extra = self.client.post(
+            "/v1/tickets",
+            json={"title": "Incident", "admin": True},
+            headers={"Authorization": "Bearer valid-format-token",
+                     "Idempotency-Key": "op-123"},
+        )
+        self.assertEqual(extra.status_code, 422)
+        oversized_body = json.dumps({"title": "x" * (MAX_REQUEST_BYTES + 10)}).encode()
+        oversized = self.client.post(
+            "/v1/tickets", content=oversized_body,
+            headers={"Authorization": "Bearer valid-format-token",
+                     "Idempotency-Key": "op-124",
+                     "Content-Type": "application/json"},
+        )
+        self.assertEqual(oversized.status_code, 413)
+        self.gateway.authorize_and_execute.assert_not_called()
+
+    def test_dependency_and_policy_errors_map_to_safe_http_statuses(self):
+        mappings = [
+            (AuthenticationFailed("internal details"), 401),
+            (ContextUnavailable("internal details"), 503),
+            (PolicyUnavailable("internal details"), 503),
+            (IdempotencyConflict("internal details"), 409),
+            (EffectOutcomeUnknown("internal details"), 409),
+            (PermitRejected("internal details"), 403),
+        ]
+        for error, status in mappings:
+            with self.subTest(error=type(error).__name__):
+                self.gateway.authorize_and_execute.side_effect = error
+                response = self.client.post(
+                    "/v1/tickets", json={"title": "Incident"},
+                    headers={"Authorization": "Bearer valid-format-token",
+                             "Idempotency-Key": "op-error"},
+                )
+                self.assertEqual(response.status_code, status)
+                self.assertNotIn("internal details", response.text)
+        self.gateway.authorize_and_execute.side_effect = None
+
+    def test_bad_bearer_scheme_is_rejected(self):
+        response = self.client.post(
+            "/v1/tickets", json={"title": "Incident"},
+            headers={"Authorization": "Basic not-a-bearer",
+                     "Idempotency-Key": "op-1"},
+        )
+        self.assertEqual(response.status_code, 401)
+        self.gateway.authorize_and_execute.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()
