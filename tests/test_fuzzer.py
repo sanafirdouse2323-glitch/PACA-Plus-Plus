@@ -1,73 +1,86 @@
-import random
-import clingo
-from cedarpy import is_authorized, Decision
+"""Regression tests for the supported PACA policy-subset compiler.
+
+These tests validate parsing and generated-text invariants. They deliberately do
+not claim semantic equivalence between Cedar and ASP; that requires executing
+both backends against a shared, independently specified test corpus.
+"""
+import unittest
+
 from compiler.transpiler import PacaCompiler
 
-# --- 3. THE DIFFERENTIAL FUZZER ---
-class EquivalenceFuzzer:
-    def __init__(self, compiler):
-        self.compiler = compiler
 
-    def generate_state(self):
-        return {
-            "action": random.choice(["readFile", "executeDB"]),
-            "role": random.choice(["admin", "guest", "malicious_agent"])
+class CompilerSubsetTests(unittest.TestCase):
+    def setUp(self):
+        self.compiler = PacaCompiler()
+
+    def test_preserves_all_and_conditions_in_ast_and_both_emitters(self):
+        source = r'''
+        policy RestrictExport {
+            target: action == "readFile"
+            condition: user.role != "admin" AND provenance == "trusted"
+            effect: deny
         }
+        '''
+        ast = self.compiler.compile_to_ast(source)
+        self.assertEqual(len(ast.conditions), 2)
+        self.assertEqual(ast.conditions[0].entity, "user")
+        self.assertEqual(ast.conditions[0].attribute, "role")
+        self.assertEqual(ast.conditions[0].operator, "!=")
+        self.assertEqual(ast.conditions[1].entity, "provenance")
+        cedar = self.compiler.emit_cedar(ast)
+        asp = self.compiler.emit_asp(ast)
+        self.assertIn("principal.role !=", cedar)
+        self.assertIn("context.provenance ==", cedar)
+        self.assertIn("user_role(agent, \\"admin\\")", asp)
+        self.assertIn("not provenance(agent, \\"trusted\\")", asp)
 
-    def eval_cedar(self, rule, state):
-        request = {
-            "principal": f'User::"{state["role"]}"',
-            "action": f'Action::"{state["action"]}"',
-            "resource": 'Resource::"data"',
-            "context": {}
+    def test_decodes_and_safely_reescapes_string_values(self):
+        source = r'''
+        policy Escaping {
+            target: action == "readFile"
+            condition: user.role == "ops \\"blue\\""
+            effect: permit
         }
-        entities = [{"uid": {"__entity": {"type": "User", "id": state["role"]}}, "attrs": {"role": state["role"]}, "parents": []}]
-        try:
-            return "permit" if is_authorized(request, rule, entities).decision == Decision.Allow else "deny"
-        except Exception as e:
-            return "deny"
+        '''
+        ast = self.compiler.compile_to_ast(source)
+        self.assertEqual(ast.conditions[0].value, 'ops "blue"')
+        self.assertIn(r'principal.role == "ops \\"blue\\""', self.compiler.emit_cedar(ast))
+        self.assertIn(r'user_role(agent, "ops \\"blue\\"")', self.compiler.emit_asp(ast))
 
-    def eval_asp(self, rule, state):
-        ctl = clingo.Control()
-        ctl.add("base", [], rule)
-        ctl.add("base", [], f'action_{state["action"]}. user_role(agent, "{state["role"]}").')
-        ctl.ground([("base", [])])
-        
-        decision = "permit"
-        with ctl.solve(yield_=True) as handle:
-            for model in handle:
-                if "deny" in [str(sym) for sym in model.symbols(atoms=True)]:
-                    decision = "deny"
-        return decision
+    def test_obligation_is_preserved_and_emitters_refuse_to_ignore_it(self):
+        source = r'''
+        policy WithObligation {
+            target: action == "readFile"
+            condition: user.role == "admin"
+            obligation: verify_state("file_system_unchanged")
+            effect: permit
+        }
+        '''
+        ast = self.compiler.compile_to_ast(source)
+        self.assertEqual(ast.obligation, "file_system_unchanged")
+        with self.assertRaises(NotImplementedError):
+            self.compiler.emit_cedar(ast)
+        with self.assertRaises(NotImplementedError):
+            self.compiler.emit_asp(ast)
 
-    def run(self, policy_text, iterations=100):
-        ast = self.compiler.compile_to_ast(policy_text)
-        cedar_rule = self.compiler.emit_cedar(ast)
-        asp_rule = self.compiler.emit_asp(ast)
-        
-        print(f"\n[+] Compiling Policy: {ast.name}")
-        print(f"    -> Cedar: {cedar_rule}")
-        print(f"    -> ASP:   {asp_rule}\n")
-        
-        mismatches = 0
-        for _ in range(iterations):
-            state = self.generate_state()
-            if self.eval_cedar(cedar_rule, state) != self.eval_asp(asp_rule, state):
-                mismatches += 1
-                
-        print(f"[+] Differential Fuzzing Complete: {iterations} states tested.")
-        print(f"[!] Semantic Equivalence: {'CONFIRMED (100% Match)' if mismatches == 0 else 'FAILED'}\n")
+    def test_empty_or_unparseable_policy_is_rejected(self):
+        with self.assertRaises(Exception):
+            self.compiler.compile_to_ast("not a policy")
 
-# --- 4. EXECUTION ---
+    def test_unsupported_entity_mapping_is_not_silently_emitted(self):
+        source = r'''
+        policy ResourceCondition {
+            target: action == "readFile"
+            condition: resource.owner == "sana"
+            effect: permit
+        }
+        '''
+        ast = self.compiler.compile_to_ast(source)
+        with self.assertRaises(NotImplementedError):
+            self.compiler.emit_cedar(ast)
+        with self.assertRaises(NotImplementedError):
+            self.compiler.emit_asp(ast)
+
+
 if __name__ == "__main__":
-    sample_policy = """
-    policy PreventDataLeak {
-        target: action == "readFile"
-        condition: user.role != "admin"
-        obligation: verify_state("file_system_unchanged")
-        effect: deny
-    }
-    """
-    compiler = PacaCompiler()
-    fuzzer = EquivalenceFuzzer(compiler)
-    fuzzer.run(sample_policy, iterations=100)
+    unittest.main()
