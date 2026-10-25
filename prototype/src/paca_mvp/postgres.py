@@ -13,7 +13,7 @@ import json
 import uuid
 
 from .hardening import (
-    EffectOutcomeUnknown, IdempotencyConflict, PermitRejected,
+    EffectOutcomeUnknown, IdempotencyConflict, PermitRejected, PolicyUnavailable,
     _canonical_json, _digest, _validate_identifier,
 )
 
@@ -351,7 +351,7 @@ class PostgresPermitStore:
                                     {"reason": "pre_effect_check_failed", "actor": actor,
                                      "exception_type": type(exc).__name__})
                         db.commit()
-                        if isinstance(exc, PermitRejected):
+                        if isinstance(exc, (PermitRejected, PolicyUnavailable)):
                             raise
                         raise PermitRejected("pre-effect validation failed; no effect was invoked") from exc
 
