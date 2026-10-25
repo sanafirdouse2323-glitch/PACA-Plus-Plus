@@ -18,11 +18,11 @@ alfa_grammar = r"""
     policy: "policy" CNAME "{" target condition obligation? effect "}"
     target: "target:" "action" "==" ESCAPED_STRING
     condition: "condition:" expression ("AND" expression)*
-    expression: (CNAME "." CNAME | "provenance") OPERATOR ESCAPED_STRING
+    expression: CNAME "." CNAME OPERATOR ESCAPED_STRING | PROVENANCE OPERATOR ESCAPED_STRING
     obligation: "obligation:" "verify_state" "(" ESCAPED_STRING ")"
     effect: "effect:" EFFECT_TYPE
 
-    OPERATOR: "==" | "!="
+    PROVENANCE: "provenance"\n    OPERATOR: "==" | "!="
     EFFECT_TYPE: "permit" | "deny"
 
     %import common.CNAME
