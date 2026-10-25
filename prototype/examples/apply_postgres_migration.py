@@ -73,8 +73,12 @@ def main() -> None:
             )
         applied.append(version)
 
+    # Verify the local chain and enqueue pre-outbox audit history after all
+    # migration tables exist. The exporter subsequently delivers at least once.
+    queued = store.backfill_audit_outbox()
     print(f"Applied migrations: {', '.join(applied) if applied else 'none'}")
     print(f"Already applied: {', '.join(skipped) if skipped else 'none'}")
+    print(f"Queued retained audit events for independent delivery: {queued}")
 
 
 if __name__ == "__main__":
