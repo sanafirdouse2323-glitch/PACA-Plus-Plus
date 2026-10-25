@@ -31,7 +31,7 @@ services:
     read_only: true
     tmpfs: ["/tmp"]
     healthcheck:
-      test: ["CMD", "/opa", "eval", "--data", "/policies", "data.paca.authz.decision.allow == false"]
+      test: ["CMD", "/opa", "eval", "--data", "/bundle", "data.paca.authz.decision.allow == false"]
       interval: 10s
       timeout: 3s
       retries: 5
