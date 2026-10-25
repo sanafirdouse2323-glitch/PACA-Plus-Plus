@@ -26,11 +26,14 @@ class PostgresPermitStore:
     for a locked-down deployment, provision the documented schema with a
     migration role and grant runtime access separately.
     """
-    def __init__(self, dsn: str, connect_timeout: int = 5):
+    def __init__(self, dsn: str, connect_timeout: int = 5,
+                 initialize_schema: bool = True):
         if not isinstance(dsn, str) or not dsn.startswith(("postgresql://", "postgres://")):
             raise ValueError("dsn must be a PostgreSQL connection URL")
         if connect_timeout < 1 or connect_timeout > 120:
             raise ValueError("connect_timeout must be between 1 and 120 seconds")
+        if type(initialize_schema) is not bool:
+            raise ValueError("initialize_schema must be a boolean")
         try:
             import psycopg
             from psycopg.rows import dict_row
@@ -42,65 +45,66 @@ class PostgresPermitStore:
         self.connect_timeout = connect_timeout
         self._psycopg = psycopg
         self._dict_row = dict_row
-        with self._connect() as db:
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS paca_permits (
-                    permit_id TEXT PRIMARY KEY,
-                    action TEXT NOT NULL,
-                    resource TEXT NOT NULL,
-                    request_hash TEXT NOT NULL,
-                    actor_json JSONB,
-                    policy_version TEXT NOT NULL,
-                    state_version BIGINT NOT NULL,
-                    expires_at TIMESTAMPTZ NOT NULL,
-                    status TEXT NOT NULL CHECK(status IN
-                        ('issued','executing','completed','failed','unknown','rejected')),
-                    idempotency_key TEXT,
-                    result_json JSONB,
-                    created_at TIMESTAMPTZ NOT NULL,
-                    updated_at TIMESTAMPTZ NOT NULL
-                )
-            """)
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS paca_idempotency (
-                    idempotency_key TEXT PRIMARY KEY,
-                    request_hash TEXT NOT NULL,
-                    permit_id TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    result_json JSONB,
-                    updated_at TIMESTAMPTZ NOT NULL
-                )
-            """)
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS paca_state (
-                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-                    state_version BIGINT NOT NULL
-                )
-            """)
-            db.execute("INSERT INTO paca_state(singleton,state_version) VALUES(1,0) ON CONFLICT(singleton) DO NOTHING")
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS paca_audit (
-                    sequence BIGSERIAL PRIMARY KEY,
-                    event_id TEXT NOT NULL UNIQUE,
-                    created_at TIMESTAMPTZ NOT NULL,
-                    event TEXT NOT NULL,
-                    permit_id TEXT,
-                    action TEXT,
-                    resource TEXT,
-                    details_json JSONB NOT NULL,
-                    previous_hash TEXT NOT NULL,
-                    event_hash TEXT NOT NULL
-                )
-            """)
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS paca_audit_head (
-                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-                    event_hash TEXT NOT NULL
-                )
-            """)
-            db.execute("INSERT INTO paca_audit_head(singleton,event_hash) VALUES(1,%s) ON CONFLICT(singleton) DO NOTHING",
-                       ("0" * 64,))
-
+        if initialize_schema:
+            with self._connect() as db:
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS paca_permits (
+                        permit_id TEXT PRIMARY KEY,
+                        action TEXT NOT NULL,
+                        resource TEXT NOT NULL,
+                        request_hash TEXT NOT NULL,
+                        actor_json JSONB,
+                        policy_version TEXT NOT NULL,
+                        state_version BIGINT NOT NULL,
+                        expires_at TIMESTAMPTZ NOT NULL,
+                        status TEXT NOT NULL CHECK(status IN
+                            ('issued','executing','completed','failed','unknown','rejected')),
+                        idempotency_key TEXT,
+                        result_json JSONB,
+                        created_at TIMESTAMPTZ NOT NULL,
+                        updated_at TIMESTAMPTZ NOT NULL
+                    )
+                """)
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS paca_idempotency (
+                        idempotency_key TEXT PRIMARY KEY,
+                        request_hash TEXT NOT NULL,
+                        permit_id TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        result_json JSONB,
+                        updated_at TIMESTAMPTZ NOT NULL
+                    )
+                """)
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS paca_state (
+                        singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                        state_version BIGINT NOT NULL
+                    )
+                """)
+                db.execute("INSERT INTO paca_state(singleton,state_version) VALUES(1,0) ON CONFLICT(singleton) DO NOTHING")
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS paca_audit (
+                        sequence BIGSERIAL PRIMARY KEY,
+                        event_id TEXT NOT NULL UNIQUE,
+                        created_at TIMESTAMPTZ NOT NULL,
+                        event TEXT NOT NULL,
+                        permit_id TEXT,
+                        action TEXT,
+                        resource TEXT,
+                        details_json JSONB NOT NULL,
+                        previous_hash TEXT NOT NULL,
+                        event_hash TEXT NOT NULL
+                    )
+                """)
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS paca_audit_head (
+                        singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                        event_hash TEXT NOT NULL
+                    )
+                """)
+                db.execute("INSERT INTO paca_audit_head(singleton,event_hash) VALUES(1,%s) ON CONFLICT(singleton) DO NOTHING",
+                           ("0" * 64,))
+    
     def _connect(self):
         return self._psycopg.connect(
             self.dsn, connect_timeout=self.connect_timeout, row_factory=self._dict_row
