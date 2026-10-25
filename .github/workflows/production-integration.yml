@@ -65,13 +65,13 @@ jobs:
           opa version
       - name: Validate and test Rego policies
         run: |
-          opa check --strict policies/authz.rego
-          opa test policies -v
+          opa check --strict policies/phase1/authz.rego
+          opa test policies/phase1 -v
       - name: Start OPA with the project policy
         shell: bash
         run: |
           set -euo pipefail
-          opa run --server --addr=127.0.0.1:8181 policies/authz.rego > "$RUNNER_TEMP/opa.log" 2>&1 &
+          opa run --server --addr=127.0.0.1:8181 policies/phase1/authz.rego > "$RUNNER_TEMP/opa.log" 2>&1 &
           for attempt in $(seq 1 30); do
             if curl --fail --silent http://127.0.0.1:8181/health >/dev/null; then
               exit 0
