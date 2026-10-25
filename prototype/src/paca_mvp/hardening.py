@@ -302,6 +302,15 @@ class SQLitePermitStore:
                     previous_hash TEXT NOT NULL,
                     event_hash TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS audit_head (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                    event_hash TEXT NOT NULL
+                );
+                INSERT OR IGNORE INTO audit_head(singleton, event_hash)
+                SELECT 1, COALESCE(
+                    (SELECT event_hash FROM audit ORDER BY sequence DESC LIMIT 1),
+                    '0000000000000000000000000000000000000000000000000000000000000000'
+                );
                 CREATE TABLE IF NOT EXISTS idempotency (
                     idempotency_key TEXT PRIMARY KEY,
                     request_hash TEXT NOT NULL,
@@ -335,8 +344,10 @@ class SQLitePermitStore:
 
     def _audit(self, db: sqlite3.Connection, event: str, permit_id: str | None,
                action: str | None, resource: str | None, details: Mapping[str, Any]) -> None:
-        previous = db.execute("SELECT event_hash FROM audit ORDER BY sequence DESC LIMIT 1").fetchone()
-        previous_hash = previous["event_hash"] if previous else "0" * 64
+        head = db.execute("SELECT event_hash FROM audit_head WHERE singleton=1").fetchone()
+        if head is None:
+            raise HardeningError("audit head is missing; refusing to append an unanchored event")
+        previous_hash = head["event_hash"]
         event_id, created_at = uuid.uuid4().hex, _utcnow()
         content = {
             "event_id": event_id, "created_at": created_at, "event": event,
@@ -349,10 +360,13 @@ class SQLitePermitStore:
             VALUES(?,?,?,?,?,?,?,?,?)""",
             (event_id, created_at, event, permit_id, action, resource,
              _canonical_json(dict(details)), previous_hash, event_hash))
+        db.execute("UPDATE audit_head SET event_hash=? WHERE singleton=1", (event_hash,))
 
     def verify_audit_chain(self) -> bool:
         with self._connect() as db:
+            db.execute("BEGIN")
             rows = db.execute("SELECT * FROM audit ORDER BY sequence").fetchall()
+            head = db.execute("SELECT event_hash FROM audit_head WHERE singleton=1").fetchone()
         previous_hash = "0" * 64
         for row in rows:
             content = {
@@ -365,7 +379,9 @@ class SQLitePermitStore:
             if row["previous_hash"] != previous_hash or _digest(content) != row["event_hash"]:
                 return False
             previous_hash = row["event_hash"]
-        return True
+        # The separately stored head detects accidental or malicious deletion of
+        # a suffix of the audit table, unless an attacker also rewrites the head.
+        return head is not None and head["event_hash"] == previous_hash
 
     def audit_events(self) -> list[dict[str, Any]]:
         with self._connect() as db:
