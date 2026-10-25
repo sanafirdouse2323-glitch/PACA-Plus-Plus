@@ -57,7 +57,7 @@ class OPAClientTests(unittest.TestCase):
         for payload in ({"result": {}}, {"result": {"allow": True}},
                         {"result": {"allow": "true", "policy_version": "v1"}}):
             with self.subTest(payload=payload), patch(
-                "paca_mvp.hardening.urlopen", return_value=FakeResponse(payload)
+                "paca_mvp.hardening._urlopen_no_redirect", return_value=FakeResponse(payload)
             ):
                 with self.assertRaises(PolicyUnavailable):
                     client.decide({"action": "file.read"})
