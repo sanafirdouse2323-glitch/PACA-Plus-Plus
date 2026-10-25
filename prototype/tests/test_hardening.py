@@ -73,9 +73,12 @@ class OPAClientTests(unittest.TestCase):
             with self.assertRaises(PolicyUnavailable):
                 client.get_policy_version()
 
-    def test_custom_decision_path_uses_matching_version_path(self):
+    def test_remote_opa_requires_authentication_and_custom_path_pairs_version_path(self):
+        with self.assertRaisesRegex(ValueError, "bearer token"):
+            OPAClient("https://opa.example")
         client = OPAClient(
-            "https://opa.example", decision_path="/v1/data/team/paca/decision"
+            "https://opa.example", decision_path="/v1/data/team/paca/decision",
+            bearer_token="test-opa-service-token",
         )
         with patch("paca_mvp.hardening._urlopen_no_redirect",
                    return_value=FakeResponse({"result": "v3"})) as mocked:
@@ -447,6 +450,11 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(json.loads(request.data.decode()), {"title": "Hi"})
         with self.assertRaises(ToolInvocationError):
             adapter.invoke("ticket.delete", "ticket:123", {}, "idem-4")
+        with self.assertRaisesRegex(ValueError, "bearer token"):
+            HTTPJSONToolAdapter(
+                "https://api.example",
+                {("ticket.create", "ticket:123"): HTTPRoute("POST", "/v1/tickets")},
+            )
 
 
 if __name__ == "__main__":
