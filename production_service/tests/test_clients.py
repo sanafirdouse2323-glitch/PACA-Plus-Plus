@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import httpx
 import jwt
-import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
+import pytest
 from jwt.exceptions import PyJWKClientConnectionError
 
 from paca_service.auth import (
