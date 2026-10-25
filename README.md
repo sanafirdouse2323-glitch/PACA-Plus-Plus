@@ -34,6 +34,10 @@ python examples/opa_smoke.py
 docker compose down
 ~~~
 
+## Production-service scaffold
+
+The separate [production-service package](production_service/README.md) provides a FastAPI gateway, OPA/Rego decisions, verified JWT authentication, PostgreSQL-backed permits/executions, and fixed effect adapters. Its [threat model](production_service/THREAT_MODEL.md) documents trust boundaries and residual risks. It is an engineering scaffold, not production-certified software; use its setup guide and do not deploy sensitive workloads before the listed deployment gates pass.
+
 ## Evidence and boundaries
 
 Passing hand-authored tests shows only that the tested cases behaved as expected. It is not a formal proof, external-system benchmark, production security validation, standards compliance evidence, or proof of research novelty. The OPA local smoke test exercises a real OPA process when run as documented. CI has a separate step for this test.
