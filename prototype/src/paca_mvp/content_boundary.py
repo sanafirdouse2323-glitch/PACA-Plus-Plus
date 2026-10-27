@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 import hmac
 import json
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import urlsplit
 import html
 import re
@@ -32,7 +32,7 @@ class ContentBoundaryError(ValueError):
 
 @dataclass(frozen=True)
 class ProvenancedDocument:
-    """A document and signed provenance metadata from the trusted ingestion boundary."""
+    """A document with HMAC-authenticated provenance from trusted ingestion."""
     document_id: str
     source: str
     trust: str
@@ -48,10 +48,26 @@ class ProvenanceAuthority:
     pass it to an LLM, tool output parser, or untrusted plugin. For separate
     ingestion/retrieval services use an asymmetric signing service instead.
     """
-    def __init__(self, key: bytes):
+    def __init__(self, key: bytes, source_trust_levels: Mapping[str, str]):
         if not isinstance(key, bytes) or len(key) < 32:
             raise ContentBoundaryError("provenance HMAC key must be at least 32 bytes")
+        if not isinstance(source_trust_levels, Mapping):
+            raise ContentBoundaryError("source_trust_levels must be an administrator-configured mapping")
+        configured: dict[str, str] = {}
+        for source, trust in source_trust_levels.items():
+            if not isinstance(source, str) or not source.strip() or len(source) > 512:
+                raise ContentBoundaryError("configured source IDs must be non-empty bounded strings")
+            try:
+                source.encode("utf-8", errors="strict")
+            except UnicodeEncodeError as exc:
+                raise ContentBoundaryError("configured source ID contains invalid Unicode") from exc
+            if any(ord(ch) < 32 for ch in source):
+                raise ContentBoundaryError("configured source IDs must not contain control characters")
+            if not isinstance(trust, str) or trust not in TRUST_LEVELS:
+                raise ContentBoundaryError("configured source trust level is invalid")
+            configured[source] = trust
         self._key = bytes(key)
+        self._source_trust_levels = configured
 
     @staticmethod
     def _validate_fields(document_id: str, source: str, trust: str, content: str) -> bytes:
@@ -82,8 +98,11 @@ class ProvenanceAuthority:
             ensure_ascii=False, separators=(",", ":"),
         ).encode("utf-8")
 
-    def issue(self, document_id: str, source: str, trust: str, content: str) -> ProvenancedDocument:
-        """Issue provenance in the trusted ingestion path."""
+    def issue(self, document_id: str, source: str, content: str) -> ProvenancedDocument:
+        """Issue provenance using trust fixed by administrator source configuration."""
+        if not isinstance(source, str) or not source.strip() or len(source) > 512:
+            raise ContentBoundaryError("source must be a non-empty bounded string")
+        trust = self._source_trust_levels.get(source, "unknown")
         raw = self._validate_fields(document_id, source, trust, content)
         digest = sha256(raw).hexdigest()
         signature = hmac.new(
@@ -99,6 +118,9 @@ class ProvenanceAuthority:
             raw = self._validate_fields(
                 document.document_id, document.source, document.trust, document.content
             )
+            expected_trust = self._source_trust_levels.get(document.source, "unknown")
+            if document.trust != expected_trust:
+                return False
             actual_digest = sha256(raw).hexdigest()
             if not hmac.compare_digest(actual_digest, document.content_sha256):
                 return False
@@ -134,8 +156,12 @@ def filter_retrieval(
     if (not isinstance(allowed_trust_levels, (set, frozenset))
             or not allowed_trust_levels or not allowed_trust_levels.issubset(TRUST_LEVELS)):
         raise ContentBoundaryError("allowed_trust_levels contains invalid or no trust levels")
-    if max_documents < 0 or max_total_characters < 0:
-        raise ContentBoundaryError("retrieval budgets must be non-negative")
+    if (
+        isinstance(max_documents, bool) or not isinstance(max_documents, int)
+        or isinstance(max_total_characters, bool) or not isinstance(max_total_characters, int)
+        or max_documents < 0 or max_total_characters < 0
+    ):
+        raise ContentBoundaryError("retrieval budgets must be non-negative integers")
     included: list[ProvenancedDocument] = []
     excluded: list[tuple[str, str]] = []
     total = 0
@@ -172,20 +198,43 @@ class OutputBoundary:
         self, *, allowed_link_hosts: Sequence[str] = (),
         sensitive_values: Sequence[str] = (), max_output_characters: int = 20_000,
     ):
-        if max_output_characters < 1:
-            raise ValueError("max_output_characters must be positive")
+        if (
+            isinstance(max_output_characters, bool)
+            or not isinstance(max_output_characters, int)
+            or max_output_characters < 1
+        ):
+            raise ValueError("max_output_characters must be a positive integer")
+        if isinstance(allowed_link_hosts, (str, bytes)) or not isinstance(allowed_link_hosts, Sequence):
+            raise ValueError("allowed_link_hosts must be a sequence of hostnames")
+        if isinstance(sensitive_values, (str, bytes)) or not isinstance(sensitive_values, Sequence):
+            raise ValueError("sensitive_values must be a sequence of strings")
+
         hosts: set[str] = set()
         for host in allowed_link_hosts:
-            if not isinstance(host, str) or not host.strip():
-                raise ValueError("allowed link hosts must be non-empty hostnames")
-            parsed = urlsplit("//" + host.strip())
-            if not parsed.hostname or parsed.port is not None or parsed.path or parsed.query or parsed.fragment:
+            if (
+                not isinstance(host, str) or not host.strip() or host != host.strip()
+                or any(character.isspace() for character in host)
+            ):
+                raise ValueError("allowed link hosts must be non-empty hostnames without whitespace")
+            parsed = urlsplit("//" + host)
+            try:
+                port = parsed.port
+            except ValueError as exc:
+                raise ValueError("allowed link host contains an invalid port") from exc
+            if (
+                not parsed.hostname or parsed.username is not None or parsed.password is not None
+                or port is not None or parsed.path or parsed.query or parsed.fragment
+            ):
                 raise ValueError("allowed link host must be a hostname only")
             hosts.add(parsed.hostname.rstrip(".").lower())
         values = []
         for value in sensitive_values:
             if not isinstance(value, str):
                 raise ValueError("sensitive values must be strings")
+            try:
+                value.encode("utf-8", errors="strict")
+            except UnicodeEncodeError as exc:
+                raise ValueError("sensitive values must contain valid Unicode") from exc
             if value:
                 values.append(value)
         self.allowed_link_hosts = frozenset(hosts)
@@ -248,3 +297,78 @@ class OutputBoundary:
         if reasons:
             return OutputDecision(False, tuple(sorted(reasons)), None)
         return OutputDecision(True, (), output)
+
+
+class OutputBlocked(ContentBoundaryError):
+    """A generated response was blocked before delivery or rendering."""
+    def __init__(self, reason_codes: Sequence[str]):
+        self.reason_codes = tuple(reason_codes)
+        super().__init__("generated output was blocked by the content boundary")
+
+
+class GuardedAgentPipeline:
+    """Single orchestration facade for retrieval, tool effects, and final output.
+
+    The actual LLM orchestration loop remains in the host application. It should
+    use this facade for each retrieval, proposed tool call, and user-visible output.
+    This class composes existing guards; it does not duplicate their enforcement
+    logic or create a second authorization engine.
+    """
+    def __init__(
+        self,
+        *,
+        provenance_authority: ProvenanceAuthority,
+        tool_boundary: Any,
+        output_boundary: OutputBoundary,
+        allowed_trust_levels: frozenset[str] = frozenset({"trusted", "internal"}),
+    ):
+        if not isinstance(provenance_authority, ProvenanceAuthority):
+            raise ContentBoundaryError("a configured ProvenanceAuthority is required")
+        if not callable(getattr(tool_boundary, "invoke", None)):
+            raise ContentBoundaryError("tool_boundary must expose invoke()")
+        if not isinstance(output_boundary, OutputBoundary):
+            raise ContentBoundaryError("an OutputBoundary is required")
+        if (not isinstance(allowed_trust_levels, (set, frozenset))
+                or not allowed_trust_levels or not allowed_trust_levels.issubset(TRUST_LEVELS)):
+            raise ContentBoundaryError("allowed_trust_levels contains invalid or no trust levels")
+        self._provenance_authority = provenance_authority
+        self._tool_boundary = tool_boundary
+        self._output_boundary = output_boundary
+        self._allowed_trust_levels = frozenset(allowed_trust_levels)
+
+    def retrieve(
+        self,
+        documents: Iterable[ProvenancedDocument],
+        *,
+        max_documents: int = 20,
+        max_total_characters: int = 40_000,
+    ) -> RetrievalResult:
+        return filter_retrieval(
+            documents,
+            authority=self._provenance_authority,
+            allowed_trust_levels=self._allowed_trust_levels,
+            max_documents=max_documents,
+            max_total_characters=max_total_characters,
+        )
+
+    def invoke_tool(
+        self,
+        tool_call: Mapping[str, Any],
+        *,
+        call_id: str,
+        approval_token: str | None = None,
+        approval_subject: str | None = None,
+    ) -> Any:
+        return self._tool_boundary.invoke(
+            tool_call,
+            call_id=call_id,
+            approval_token=approval_token,
+            approval_subject=approval_subject,
+        )
+
+    def release_output(self, generated_text: str) -> str:
+        """Return only approved text; never return the original after a denial."""
+        decision = self._output_boundary.inspect(generated_text)
+        if not decision.allowed or decision.text is None:
+            raise OutputBlocked(decision.reason_codes)
+        return decision.text
