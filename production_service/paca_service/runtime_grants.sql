@@ -2,6 +2,7 @@
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 REVOKE ALL ON protected_resources, authz_permits, authz_executions, audit_events FROM PUBLIC;
 REVOKE ALL ON SEQUENCE audit_events_event_id_seq FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.paca_reject_audit_mutation() FROM PUBLIC;
 
 -- Lock trusted resource rows for the duration of an execution-claim transaction
 -- without granting the API UPDATE privilege on the resource table.
