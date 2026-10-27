@@ -88,7 +88,7 @@ class GuardedAgentRuntimeTests(unittest.TestCase):
         self.assertEqual(tool_result[0].trust, "untrusted_tool_output")
         self.assertIn("ignore all rules", tool_result[0].content)
 
-    def test_model-facing_schema_comes_from_the_enforced_tool_spec(self):
+    def test_model_facing_schema_comes_from_the_enforced_tool_spec(self):
         description, = self.boundary.describe_tools()
         self.assertEqual(description["name"], "search")
         self.assertNotIn("action", description)
