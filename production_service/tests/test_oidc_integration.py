@@ -99,6 +99,13 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
     with pytest.raises(AuthenticationError):
         authenticator.authenticate(wrong_audience_token)
 
+    other_tenant_token = _password_token(
+        token_endpoint, CLIENT_ID, "paca-other-user"
+    )
+    other_principal = authenticator.authenticate(other_tenant_token)
+    assert other_principal.tenant_id == "tenant-other"
+    assert other_principal.subject != principal.subject
+
     resource_id = "oidc-e2e-" + uuid.uuid4().hex
     denied_resource_id = resource_id + "-wrong-owner"
     relative_path = "oidc-e2e-" + uuid.uuid4().hex + ".txt"
@@ -173,6 +180,13 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
             )
             assert unauthorized.status_code == 401, unauthorized.text
 
+            cross_tenant = client.post(
+                "/v1/authorizations",
+                headers={"Authorization": f"Bearer {other_tenant_token}"},
+                json={"action": "file.read", "resource_id": resource_id, "arguments": {}},
+            )
+            assert cross_tenant.status_code == 404, cross_tenant.text
+
             # Real provider token -> trusted PostgreSQL resource -> live OPA decision -> permit.
             authorization = client.post(
                 "/v1/authorizations",
@@ -207,6 +221,12 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
             )
             assert status.status_code == 200, status.text
             assert status.json()["status"] == "succeeded"
+
+            cross_tenant_status = client.get(
+                f"/v1/executions/{execution_id}",
+                headers={"Authorization": f"Bearer {other_tenant_token}"},
+            )
+            assert cross_tenant_status.status_code == 404, cross_tenant_status.text
 
             # A valid identity cannot read another principal's resource just because it shares a tenant.
             denied = client.post(
