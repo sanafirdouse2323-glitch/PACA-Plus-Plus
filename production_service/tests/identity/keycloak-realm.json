@@ -36,9 +36,9 @@
           "protocolMapper": "oidc-hardcoded-claim-mapper",
           "consentRequired": false,
           "config": {
-            "claim.name": "scope",
-            "claim.value": "file:read file:create",
-            "jsonType.label": "String",
+            "claim.name": "scopes",
+            "claim.value": "[\"file:read\",\"file:create\"]",
+            "jsonType.label": "JSON",
             "id.token.claim": "false",
             "access.token.claim": "true",
             "userinfo.token.claim": "false"
@@ -76,7 +76,26 @@
       "enabled": true,
       "emailVerified": true,
       "attributes": {
-        "tenant_id": ["tenant-e2e"]
+        "tenant_id": [
+          "tenant-e2e"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "paca-e2e-only-password",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "paca-other-user",
+      "enabled": true,
+      "emailVerified": true,
+      "attributes": {
+        "tenant_id": [
+          "tenant-other"
+        ]
       },
       "credentials": [
         {
