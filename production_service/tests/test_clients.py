@@ -29,7 +29,7 @@ class FakeJWKS:
         return SimpleNamespace(key=self.key)
 
 
-def signed_token(private_key, kid: str = "test-key", **overrides):
+def signed_token(private_key, kid: str = "test-key", omit_claim: str | None = None, **overrides):
     now = datetime.now(UTC)
     payload = {
         "iss": ISSUER,
@@ -44,10 +44,12 @@ def signed_token(private_key, kid: str = "test-key", **overrides):
         "jti": "jwt-123",
     }
     payload.update(overrides)
+    if omit_claim is not None:
+        payload.pop(omit_claim, None)
     return jwt.encode(payload, private_key, algorithm="RS256", headers={"kid": kid})
 
 
-def public_jwk(public_key, kid: str) -> dict[str, str]:
+def public_jwk(public_key, kid: str) -> dict[str, object]:
     jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(public_key))
     jwk.update({"kid": kid, "use": "sig", "alg": "RS256"})
     return jwk
@@ -76,6 +78,19 @@ def test_authenticator_verifies_signature_issuer_audience_and_required_claims(rs
         auth.authenticate(signed_token(private, aud="another-api"))
     with pytest.raises(AuthenticationError):
         auth.authenticate(signed_token(private, tenant_id=""))
+
+
+@pytest.mark.parametrize("missing_claim", ["sub", "exp", "iat", "iss", "aud", "tenant_id"])
+def test_authenticator_requires_identity_claims(rsa_keys, missing_claim):
+    private, public = rsa_keys
+    auth = JWTAuthenticator(
+        ISSUER,
+        AUDIENCE,
+        "https://identity.example.org/jwks",
+        jwks_client=FakeJWKS(public),
+    )
+    with pytest.raises(AuthenticationError):
+        auth.authenticate(signed_token(private, omit_claim=missing_claim))
 
 
 @pytest.mark.parametrize(
