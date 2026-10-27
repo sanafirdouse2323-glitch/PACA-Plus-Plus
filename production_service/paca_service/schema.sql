@@ -74,6 +74,18 @@ BEGIN
             ADD CONSTRAINT authz_permits_tenant_principal_unique
             UNIQUE (permit_id, tenant_id, principal_id);
     END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.authz_executions'::regclass
+          AND conname = 'authz_executions_permit_identity_fkey'
+    ) THEN
+        -- Add the stronger relationship before dropping the legacy FK. If legacy
+        -- data is inconsistent, this fails without removing the existing guard.
+        ALTER TABLE public.authz_executions
+            ADD CONSTRAINT authz_executions_permit_identity_fkey
+            FOREIGN KEY (permit_id, tenant_id, principal_id)
+            REFERENCES public.authz_permits (permit_id, tenant_id, principal_id);
+    END IF;
     IF EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conrelid = 'public.authz_executions'::regclass
@@ -81,16 +93,6 @@ BEGIN
     ) THEN
         ALTER TABLE public.authz_executions
             DROP CONSTRAINT authz_executions_permit_id_fkey;
-    END IF;
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conrelid = 'public.authz_executions'::regclass
-          AND conname = 'authz_executions_permit_identity_fkey'
-    ) THEN
-        ALTER TABLE public.authz_executions
-            ADD CONSTRAINT authz_executions_permit_identity_fkey
-            FOREIGN KEY (permit_id, tenant_id, principal_id)
-            REFERENCES public.authz_permits (permit_id, tenant_id, principal_id);
     END IF;
 END
 $paca$;
