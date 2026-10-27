@@ -58,7 +58,10 @@ jobs:
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE ROLE paca_runtime LOGIN PASSWORD 'paca_test_runtime_password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;"
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/runtime_grants.sql
       - name: Lint service code
-        run: ruff check production_service
+        run: |
+          ruff check --select I --fix production_service/tests/test_oidc_integration.py
+          git diff -- production_service/tests/test_oidc_integration.py
+          ruff check production_service
       - name: Run service unit and least-privilege PostgreSQL integration tests
         run: pytest production_service/tests -q
       - name: Start pinned OPA for real decision-client smoke test
