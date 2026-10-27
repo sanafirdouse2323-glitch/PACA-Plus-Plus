@@ -18,7 +18,6 @@ import json
 
 from .agent_boundary import AgentBoundaryError, AgentToolResult
 from .content_boundary import (
-    ContentBoundaryError,
     GuardedAgentPipeline,
     OutputBlocked,
     ProvenancedDocument,
@@ -60,7 +59,7 @@ class ModelToolCall:
     """One model-proposed call. It intentionally has no action/resource/call-ID fields."""
 
     tool: str
-    arguments: Mapping[str, Any]
+    arguments: dict[str, Any]
 
 
 @dataclass(frozen=True)
