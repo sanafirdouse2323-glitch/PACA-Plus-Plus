@@ -35,6 +35,7 @@ __all__ = [
     "ContentBoundaryError", "ProvenancedDocument", "ProvenanceAuthority", "RetrievalResult",
     "filter_retrieval", "OutputDecision", "OutputBoundary", "OutputBlocked", "GuardedAgentPipeline",
     "InterAgentBoundaryError", "InterAgentMessage", "InterAgentMessageBoundary",
+    "AgentRuntimeError", "AgentContextItem", "ModelToolCall", "ModelTurn", "AgentRunResult", "GuardedAgentRuntime",
 ]
 
 from .content_boundary import (
@@ -43,3 +44,7 @@ from .content_boundary import (
 )
 
 from .inter_agent_boundary import InterAgentBoundaryError, InterAgentMessage, InterAgentMessageBoundary
+
+from .agent_runtime import (
+    AgentRuntimeError, AgentContextItem, ModelToolCall, ModelTurn, AgentRunResult, GuardedAgentRuntime,
+)

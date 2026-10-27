@@ -238,6 +238,82 @@ class AgentToolBoundary:
         self._records: dict[str, dict[str, Any]] = {}
         self._lock = threading.RLock()
 
+    @staticmethod
+    def _argument_schema(spec: ArgumentSpec) -> dict[str, Any]:
+        """Translate the enforced flat schema to a JSON-Schema description."""
+        if spec.kind == "string":
+            schema: dict[str, Any] = {
+                "type": "string",
+                "minLength": spec.min_length,
+                "maxLength": spec.max_length,
+            }
+            if spec.non_whitespace:
+                schema["pattern"] = r"\S"
+        elif spec.kind == "integer":
+            schema = {"type": "integer"}
+        elif spec.kind == "number":
+            schema = {"type": "number"}
+        elif spec.kind == "boolean":
+            schema = {"type": "boolean"}
+        elif spec.kind == "string_list":
+            item_schema: dict[str, Any] = {
+                "type": "string",
+                "minLength": spec.min_length,
+                "maxLength": spec.max_length,
+            }
+            if spec.non_whitespace:
+                item_schema["pattern"] = r"\S"
+            schema = {
+                "type": "array",
+                "items": item_schema,
+                "maxItems": spec.max_items,
+            }
+        else:
+            # ToolSpec and ArgumentSpec validate this before the boundary is created.
+            raise ValueError("unsupported argument kind in trusted tool configuration")
+
+        if spec.nullable:
+            base_type = schema["type"]
+            schema["type"] = [base_type, "null"]
+        if spec.choices:
+            schema["enum"] = list(spec.choices)
+        if spec.kind in {"integer", "number"}:
+            if spec.minimum is not None:
+                schema["minimum"] = spec.minimum
+            if spec.maximum is not None:
+                schema["maximum"] = spec.maximum
+        return schema
+
+    def describe_tools(self) -> tuple[dict[str, Any], ...]:
+        """Return fresh model-facing schemas derived from the enforced allowlist.
+
+        Only the tool name and argument schema are exposed. Server-side action,
+        resource, executor, credentials, and approval-verifier details are omitted.
+        A model-facing schema is descriptive; invoke() remains the enforcement gate.
+        """
+        descriptions: list[dict[str, Any]] = []
+        for name, spec in self._tools.items():
+            properties = {
+                argument_name: self._argument_schema(rule)
+                for argument_name, rule in spec.arguments.items()
+            }
+            required = [
+                argument_name
+                for argument_name, rule in spec.arguments.items()
+                if rule.required
+            ]
+            descriptions.append({
+                "name": name,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                    "additionalProperties": False,
+                },
+                "requires_approval": spec.requires_approval,
+            })
+        return tuple(descriptions)
+
     def _emit(self, event: str, *, call_id: str, tool: str | None = None,
               request_hash: str | None = None, reason: str | None = None) -> None:
         # Never log model text, argument values, credentials, approval tokens, or tool output.

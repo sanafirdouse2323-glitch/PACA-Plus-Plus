@@ -47,7 +47,7 @@ The prototype contains three complementary boundary layers:
 - [Retrieval and output boundaries](docs/CONTENT_BOUNDARIES.md), composed by `GuardedAgentPipeline`: verify retrieval provenance and budgets, and check generated text before release.
 - [Inter-agent message boundary](docs/INTER_AGENT_BOUNDARY.md): validates configured sender/recipient routes and labels accepted messages as untrusted. The host must authenticate the sender independently.
 
-The repository does **not** implement the complete LLM generation/orchestration loop. The host application must invoke the relevant boundary on every path; these classes do not stop separate code paths from bypassing them. They are not a universal prompt-injection detector. See the [threat coverage matrix](docs/THREAT_COVERAGE.md) for tested properties and remaining gaps.
+The [reference runtime](docs/AGENT_RUNTIME.md) now implements the ordering of retrieval, model turns, tool calls, and final-output release behind these boundaries. It is model-vendor-neutral; the host still supplies the actual model/retrieval adapters and must not expose bypass paths. It is not a universal prompt-injection detector. They are not a universal prompt-injection detector. See the [threat coverage matrix](docs/THREAT_COVERAGE.md) for tested properties and remaining gaps.
 
 ### Separate production-service package
 
