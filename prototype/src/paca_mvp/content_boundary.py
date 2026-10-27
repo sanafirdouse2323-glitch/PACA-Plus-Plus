@@ -59,6 +59,13 @@ class ProvenanceAuthority:
             raise ContentBoundaryError("document_id must be a non-empty bounded string")
         if not isinstance(source, str) or not source.strip() or len(source) > 512:
             raise ContentBoundaryError("source must be a non-empty bounded string")
+        for field, label in ((document_id, "document_id"), (source, "source")):
+            try:
+                field.encode("utf-8", errors="strict")
+            except UnicodeEncodeError as exc:
+                raise ContentBoundaryError(f"{label} contains invalid Unicode") from exc
+            if any(ord(ch) < 32 for ch in field):
+                raise ContentBoundaryError(f"{label} must not contain control characters")
         if not isinstance(trust, str) or trust not in TRUST_LEVELS:
             raise ContentBoundaryError("unknown provenance trust level")
         if not isinstance(content, str):
@@ -203,6 +210,10 @@ class OutputBoundary:
         # This boundary accepts plain text/Markdown, not HTML.
         if _HTML_TAG_RE.search(decoded):
             reasons.add("raw_html_forbidden")
+        # Also catch dangerous URI schemes in reference-style Markdown links, where
+        # the destination may be declared on a separate line.
+        if re.search(r"(?i)\\b(?:javascript|data|file|vbscript)\\s*:", decoded):
+            reasons.add("unsafe_link_scheme")
         for match in _MARKDOWN_DESTINATION_RE.finditer(decoded):
             destination = match.group(1).strip("<>")
             scheme = destination.split(":", 1)[0].lower() if ":" in destination else ""
