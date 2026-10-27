@@ -32,6 +32,39 @@ The API rejects duplicate `Authorization`, `Idempotency-Key`, `Content-Length`, 
 
 The API binds to loopback on port 8000. Do not expose it externally before configuring and validating TLS ingress, rate/request limits, secrets management, egress controls, backups/restore, audit retention, monitoring, and incident response.
 
+## Real OIDC provider configuration
+
+The gateway validates access tokens against one explicit OIDC issuer, audience, and JWKS URI. The values in `.env.example` are deliberately non-working placeholders, not deployment credentials or a configured external tenant. Before using a real provider, replace all three with values from the provider's own OpenID Connect discovery document.
+
+For a Keycloak realm named `paca`, obtain `issuer` and `jwks_uri` from:
+
+```text
+https://YOUR-KEYCLOAK-HOST/realms/paca/.well-known/openid-configuration
+```
+
+Set:
+- `PACA_JWT_ISSUER` to the exact `issuer` value in that document (including path and trailing-slash behavior exactly as published).
+- `PACA_JWT_JWKS_URL` to the exact `jwks_uri` value in that document.
+- `PACA_JWT_AUDIENCE` to the API audience configured in the access token; in the example below this is `paca-api`.
+
+The provider must issue **RS256-signed access tokens** with `sub`, `iss`, `aud`, `exp`, `iat`, and a trusted `tenant_id` claim. The service also reads optional string-list `roles` and `tools` claims, and authorization scopes from a string-list `scopes` claim or the standard space-delimited `scope` claim. Do not accept tenant membership or privileged roles from user-editable profile fields. Provision/map them through administrator-controlled identity attributes, groups, app roles, or an equivalent trusted authorization source. The OPA policy in this repository currently expects the resource owner to equal the verified token's `sub` (unless a trusted `admin` role applies).
+
+See [IDENTITY_PROVIDER.md](IDENTITY_PROVIDER.md) for the provider claim contract, production client setup guidance, and the end-to-end verification performed against Keycloak.
+
+### Live identity integration test
+
+CI starts a real Keycloak server with the isolated test realm in `tests/identity/keycloak-realm.json`. The integration test fetches its live OIDC discovery document, requests access tokens from its token endpoint, verifies those tokens through the real JWKS endpoint, and sends them through the actual FastAPI authorization endpoint, PostgreSQL permit/execution store, OPA policy engine, and sandboxed file adapter. It checks successful execution/status, wrong-audience rejection, cross-tenant isolation, and same-tenant owner denial.
+
+Run the targeted check only while a Keycloak test realm, OPA, and the PostgreSQL test database are running:
+
+```sh
+PACA_TEST_OIDC_REALM_URL=http://localhost:8081/realms/paca \
+PACA_TEST_OPA_URL=http://127.0.0.1:8181 \
+pytest tests/test_oidc_integration.py -q
+```
+
+The committed test realm is **for automated local/CI testing only**. It uses HTTP, a test user/password, password-grant authentication, and a hard-coded demonstration scope claim. Do not reuse those credentials, password grant, or hard-coded permissions in production. For production, deploy Keycloak in a supported secure mode behind HTTPS, use a public client with Authorization Code + PKCE for interactive applications, configure the API audience mapper and administrator-controlled tenant/role/scope mappings, and use short-lived access tokens. A successful local/CI flow is integration evidence, not proof that an external organization's tenant has been provisioned or that its policies are correct.
+
 ## Upgrading an existing volume safely
 
 The official PostgreSQL image runs `/docker-entrypoint-initdb.d/` scripts only when initializing an **empty** data directory. Editing `.env` and restarting does not create `paca_runtime` or reapply grants to an existing volume.
