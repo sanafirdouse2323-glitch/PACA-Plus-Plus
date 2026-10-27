@@ -142,7 +142,8 @@ class TestPostgresStoreIntegration:
         assert dispositions == ["claimed", "in_progress"]
         execution_id = next(item.execution_id for item in results if item.disposition == "claimed")
         self.store.finish_execution(
-            execution_id=execution_id, outcome="succeeded", result={"ok": True},
+            execution_id=execution_id, tenant_id=self.tenant_id,
+            principal_id=self.principal_id, outcome="succeeded", result={"ok": True},
             error_code=None, request_id="test-request",
         )
         replay = self.claim("same-key")
