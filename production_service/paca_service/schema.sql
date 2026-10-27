@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS authz_permits (
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT authz_permits_tenant_principal_unique
+        UNIQUE (permit_id, tenant_id, principal_id),
     FOREIGN KEY (tenant_id, resource_id)
         REFERENCES protected_resources (tenant_id, resource_id)
 );
@@ -42,7 +44,7 @@ CREATE INDEX IF NOT EXISTS authz_permits_expiry_idx
 
 CREATE TABLE IF NOT EXISTS authz_executions (
     execution_id UUID PRIMARY KEY,
-    permit_id UUID NOT NULL UNIQUE REFERENCES authz_permits (permit_id),
+    permit_id UUID NOT NULL UNIQUE,
     tenant_id TEXT NOT NULL,
     principal_id TEXT NOT NULL,
     idempotency_key VARCHAR(128) NOT NULL,
@@ -53,8 +55,59 @@ CREATE TABLE IF NOT EXISTS authz_executions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at TIMESTAMPTZ,
-    UNIQUE (tenant_id, principal_id, idempotency_key)
+    UNIQUE (tenant_id, principal_id, idempotency_key),
+    CONSTRAINT authz_executions_permit_identity_fkey
+        FOREIGN KEY (permit_id, tenant_id, principal_id)
+        REFERENCES authz_permits (permit_id, tenant_id, principal_id)
 );
+
+-- Upgrade older schemas from a permit_id-only relationship to a tenant/principal-bound one.
+-- The unique permit_id primary key means the composite key cannot collide with another permit.
+DO $paca$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.authz_permits'::regclass
+          AND conname = 'authz_permits_tenant_principal_unique'
+    ) THEN
+        ALTER TABLE public.authz_permits
+            ADD CONSTRAINT authz_permits_tenant_principal_unique
+            UNIQUE (permit_id, tenant_id, principal_id);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.authz_executions'::regclass
+          AND conname = 'authz_executions_permit_identity_fkey'
+    ) THEN
+        -- Add the stronger relationship before dropping the legacy FK. If legacy
+        -- data is inconsistent, this fails without removing the existing guard.
+        ALTER TABLE public.authz_executions
+            ADD CONSTRAINT authz_executions_permit_identity_fkey
+            FOREIGN KEY (permit_id, tenant_id, principal_id)
+            REFERENCES public.authz_permits (permit_id, tenant_id, principal_id);
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.authz_executions'::regclass
+          AND conname = 'authz_executions_permit_id_fkey'
+    ) THEN
+        ALTER TABLE public.authz_executions
+            DROP CONSTRAINT authz_executions_permit_id_fkey;
+    END IF;
+END
+$paca$;
+
+ALTER TABLE public.authz_permits ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS authz_permits_tenant_isolation ON public.authz_permits;
+CREATE POLICY authz_permits_tenant_isolation ON public.authz_permits
+    USING (tenant_id = current_setting('paca.tenant_id', true))
+    WITH CHECK (tenant_id = current_setting('paca.tenant_id', true));
+
+ALTER TABLE public.authz_executions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS authz_executions_tenant_isolation ON public.authz_executions;
+CREATE POLICY authz_executions_tenant_isolation ON public.authz_executions
+    USING (tenant_id = current_setting('paca.tenant_id', true))
+    WITH CHECK (tenant_id = current_setting('paca.tenant_id', true));
 
 CREATE INDEX IF NOT EXISTS authz_executions_recovery_idx
     ON authz_executions (status, started_at);
@@ -81,6 +134,14 @@ CREATE TABLE IF NOT EXISTS audit_events (
 CREATE INDEX IF NOT EXISTS audit_events_time_idx ON audit_events (occurred_at DESC);
 CREATE INDEX IF NOT EXISTS audit_events_subject_idx
     ON audit_events (tenant_id, principal_id, occurred_at DESC);
+
+-- Audit rows are tenant-scoped too. Legacy/system rows with a NULL tenant are not
+-- visible to the application runtime role through this policy.
+ALTER TABLE public.audit_events ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS audit_events_tenant_isolation ON public.audit_events;
+CREATE POLICY audit_events_tenant_isolation ON public.audit_events
+    USING (tenant_id = current_setting('paca.tenant_id', true))
+    WITH CHECK (tenant_id = current_setting('paca.tenant_id', true));
 
 CREATE OR REPLACE FUNCTION paca_reject_audit_mutation()
 RETURNS trigger

@@ -69,9 +69,19 @@ class PostgresStore:
         with self.pool.connection() as conn:
             conn.execute("SELECT 1").fetchone()
 
+    @staticmethod
+    def _set_tenant_context(conn: Any, tenant_id: str) -> None:
+        """Set transaction-local RLS context before tenant-scoped database work."""
+        if (
+            not isinstance(tenant_id, str) or not tenant_id.strip()
+            or len(tenant_id) > 512 or any(ord(ch) < 32 for ch in tenant_id)
+        ):
+            raise StoreError("a valid tenant context is required for database access")
+        conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (tenant_id,))
+
     def fetch_resource(self, tenant_id: str, resource_id: str) -> dict[str, Any] | None:
-        with self.pool.connection() as conn:
-            conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (tenant_id,))
+        with self.pool.connection() as conn, conn.transaction():
+            self._set_tenant_context(conn, tenant_id)
             row = conn.execute(
                 """
                 SELECT tenant_id, resource_id, owner_id, kind, status, attributes
@@ -99,7 +109,7 @@ class PostgresStore:
         permit_id = uuid4()
         expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
         with self.pool.connection() as conn, conn.transaction():
-                conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (tenant_id,))
+                self._set_tenant_context(conn, tenant_id)
                 conn.execute(
                     """
                     INSERT INTO authz_permits
@@ -129,7 +139,8 @@ class PostgresStore:
     def get_permit(
         self, permit_id: UUID | str, tenant_id: str, principal_id: str
     ) -> PermitRecord | None:
-        with self.pool.connection() as conn:
+        with self.pool.connection() as conn, conn.transaction():
+            self._set_tenant_context(conn, tenant_id)
             row = conn.execute(
                 """
                 SELECT * FROM authz_permits
@@ -144,6 +155,7 @@ class PostgresStore:
         request_id: str | None,
     ) -> None:
         with self.pool.connection() as conn, conn.transaction():
+                self._set_tenant_context(conn, tenant_id)
                 row = conn.execute(
                     """
                     UPDATE authz_permits SET status = 'revoked', updated_at = now()
@@ -169,7 +181,10 @@ class PostgresStore:
         decision_id: str | None = None, arguments_digest: str | None = None,
         context_digest: str | None = None, details: dict[str, Any] | None = None,
     ) -> None:
+        if tenant_id is None:
+            raise StoreError("tenant-scoped audit events require a tenant ID")
         with self.pool.connection() as conn, conn.transaction():
+                self._set_tenant_context(conn, tenant_id)
                 self._audit(
                     conn, event_type=event_type, tenant_id=tenant_id, principal_id=principal_id,
                     request_id=request_id, action=action, resource_id=resource_id,
@@ -195,7 +210,7 @@ class PostgresStore:
             "policy_revision": policy_revision,
         })
         with self.pool.connection() as conn, conn.transaction():
-                conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (tenant_id,))
+                self._set_tenant_context(conn, tenant_id)
                 existing = conn.execute(
                     """
                     SELECT execution_id, request_digest, status, result_json, error_code
@@ -337,7 +352,8 @@ class PostgresStore:
                 return ClaimResult("claimed", execution_id=str(execution_id), status="executing")
 
     def finish_execution(
-        self, *, execution_id: UUID | str, outcome: str, result: dict[str, Any] | None,
+        self, *, execution_id: UUID | str, tenant_id: str, principal_id: str,
+        outcome: str, result: dict[str, Any] | None,
         error_code: str | None, request_id: str | None,
     ) -> None:
         if outcome not in {"succeeded", "failed", "unknown"}:
@@ -346,23 +362,26 @@ class PostgresStore:
             json.dumps(result, allow_nan=False)
         execution_uuid = UUID(str(execution_id))
         with self.pool.connection() as conn, conn.transaction():
+                self._set_tenant_context(conn, tenant_id)
                 row = conn.execute(
                     """
                     UPDATE authz_executions
                     SET status = %s, result_json = %s, error_code = %s, finished_at = now()
-                    WHERE execution_id = %s AND status = 'executing'
+                    WHERE execution_id = %s
+                      AND tenant_id = %s AND principal_id = %s AND status = 'executing'
                     RETURNING permit_id, tenant_id, principal_id
                     """,
                     (
                         outcome, Jsonb(result) if result is not None else None,
-                        error_code, execution_uuid,
+                        error_code, execution_uuid, tenant_id, principal_id,
                     ),
                 ).fetchone()
                 if not row:
                     raise StoreError("execution_state_changed_before_completion")
                 conn.execute(
-                    "UPDATE authz_permits SET status = %s, updated_at = now() WHERE permit_id = %s",
-                    (outcome, row["permit_id"]),
+                    """UPDATE authz_permits SET status = %s, updated_at = now()
+                       WHERE permit_id = %s AND tenant_id = %s AND principal_id = %s""",
+                    (outcome, row["permit_id"], row["tenant_id"], row["principal_id"]),
                 )
                 self._audit(
                     conn, request_id=request_id, tenant_id=row["tenant_id"],
@@ -376,13 +395,17 @@ class PostgresStore:
         self, execution_id: UUID | str, tenant_id: str, principal_id: str
     ) -> dict[str, Any] | None:
         """Return status metadata only; result data is retrievable only via the authorized idempotent retry."""
-        with self.pool.connection() as conn:
+        with self.pool.connection() as conn, conn.transaction():
+            self._set_tenant_context(conn, tenant_id)
             row = conn.execute(
                 """
                 SELECT e.execution_id, e.status, e.error_code, e.created_at, e.started_at,
                        e.finished_at, p.action, p.resource_id, p.policy_revision
                 FROM authz_executions e
-                JOIN authz_permits p ON p.permit_id = e.permit_id
+                JOIN authz_permits p
+                  ON p.permit_id = e.permit_id
+                 AND p.tenant_id = e.tenant_id
+                 AND p.principal_id = e.principal_id
                 WHERE e.execution_id = %s AND e.tenant_id = %s AND e.principal_id = %s
                 """,
                 (UUID(str(execution_id)), tenant_id, principal_id),
@@ -402,32 +425,19 @@ class PostgresStore:
         }
 
     def mark_stale_executions_unknown(self, stale_after_seconds: int) -> int:
-        """Mark abandoned executions unknown; never automatically replay external effects."""
-        count = 0
+        """Run the bounded, audited cross-tenant recovery database function."""
+        if (
+            isinstance(stale_after_seconds, bool)
+            or not isinstance(stale_after_seconds, int)
+            or not 1 <= stale_after_seconds <= 86400
+        ):
+            raise ValueError("stale_after_seconds must be an integer from 1 to 86400")
         with self.pool.connection() as conn, conn.transaction():
-                rows = conn.execute(
-                    """
-                    UPDATE authz_executions
-                    SET status = 'unknown', error_code = 'stale_execution_recovered',
-                        finished_at = now()
-                    WHERE status = 'executing'
-                      AND started_at < now() - (%s * interval '1 second')
-                    RETURNING execution_id, permit_id, tenant_id, principal_id
-                    """,
-                    (stale_after_seconds,),
-                ).fetchall()
-                for row in rows:
-                    conn.execute(
-                        "UPDATE authz_permits SET status = 'unknown', updated_at = now() WHERE permit_id = %s",
-                        (row["permit_id"],),
-                    )
-                    self._audit(
-                        conn, tenant_id=row["tenant_id"], principal_id=row["principal_id"],
-                        event_type="execution_unknown", permit_id=row["permit_id"],
-                        execution_id=row["execution_id"], reason_code="stale_execution_recovered",
-                    )
-                count = len(rows)
-        return count
+            row = conn.execute(
+                "SELECT public.paca_mark_stale_executions_unknown(%s) AS changed_count",
+                (stale_after_seconds,),
+            ).fetchone()
+        return int(row["changed_count"])
 
     @staticmethod
     def _existing_claim(existing: dict[str, Any], request_digest: str) -> ClaimResult:
