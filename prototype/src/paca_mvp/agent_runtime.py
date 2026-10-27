@@ -400,9 +400,19 @@ class GuardedAgentRuntime:
                     "tool_call_failed",
                 ) from exc
             if not isinstance(result, AgentToolResult):
-                raise AgentRuntimeError("tool boundary returned an invalid result envelope",
-                                        "invalid_tool_result")
-            payload = _strict_json_snapshot(result.payload, max_bytes=self._max_tool_result_bytes)
+                raise AgentRuntimeError(
+                    "tool boundary returned an invalid result envelope; external effect outcome may be unknown",
+                    "invalid_tool_result",
+                    cause_code="effect_outcome_unknown",
+                )
+            try:
+                payload = _strict_json_snapshot(result.payload, max_bytes=self._max_tool_result_bytes)
+            except AgentRuntimeError as exc:
+                raise AgentRuntimeError(
+                    "tool result could not be safely copied; external effect outcome may be unknown",
+                    "invalid_tool_result",
+                    cause_code="effect_outcome_unknown",
+                ) from exc
             context.append(AgentContextItem(
                 "tool_result",
                 "untrusted_tool_output",

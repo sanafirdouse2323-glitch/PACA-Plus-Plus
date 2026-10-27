@@ -205,6 +205,58 @@ class GuardedAgentRuntimeTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "invalid_tool_call")
         self.assertEqual(self.effects, [])
 
+    def test_approval_required_tool_fails_closed_without_trusted_approval(self):
+        effects = []
+        spec = ToolSpec(
+            "delete_record", "record.delete", "records:managed",
+            {"record_id": ArgumentSpec("string", max_length=64)},
+            requires_approval=True,
+        )
+        boundary = AgentToolBoundary(
+            {"delete_record": spec},
+            lambda *args: effects.append(args) or {"deleted": True},
+        )
+        pipeline = GuardedAgentPipeline(
+            provenance_authority=self.authority,
+            tool_boundary=boundary,
+            output_boundary=OutputBoundary(),
+        )
+        runtime = self.runtime(
+            lambda context, tools: ModelTurn(
+                tool_call=ModelToolCall("delete_record", {"record_id": "r1"})
+            ),
+            pipeline=pipeline,
+        )
+        with self.assertRaises(AgentRuntimeError) as caught:
+            runtime.run("Delete record r1.")
+        self.assertEqual(caught.exception.code, "tool_call_failed")
+        self.assertEqual(caught.exception.cause_code, "approval_required")
+        self.assertEqual(effects, [])
+
+    def test_invalid_tool_result_fails_with_uncertain_effect_label(self):
+        class InvalidResultBoundary:
+            def describe_tools(self):
+                return ({"name": "search", "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}},)
+            def invoke(self, *args, **kwargs):
+                return {"ok": True}
+
+        pipeline = GuardedAgentPipeline(
+            provenance_authority=self.authority,
+            tool_boundary=InvalidResultBoundary(),
+            output_boundary=OutputBoundary(),
+        )
+        runtime = self.runtime(
+            lambda context, tools: ModelTurn(
+                tool_call=ModelToolCall("search", {"query": "hello"})
+            ),
+            pipeline=pipeline,
+        )
+        with self.assertRaises(AgentRuntimeError) as caught:
+            runtime.run("Search.")
+        self.assertEqual(caught.exception.code, "invalid_tool_result")
+        self.assertEqual(caught.exception.cause_code, "effect_outcome_unknown")
+        self.assertIn("may be unknown", str(caught.exception))
+
     def test_unbounded_json_arguments_are_rejected_before_effect(self):
         runtime = self.runtime(lambda context, tools: ModelTurn(
             tool_call=ModelToolCall("search", {"query": "x" * 4000})

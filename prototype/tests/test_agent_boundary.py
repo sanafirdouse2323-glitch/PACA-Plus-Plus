@@ -265,6 +265,16 @@ class AgentBoundaryTests(unittest.TestCase):
         self.assertEqual(result.payload, {"ok": True})
         self.assertEqual(effects, [{"mode": None}])
 
+    def test_tool_spec_and_boundary_budgets_reject_boolean_limits(self):
+        arguments = {"query": ArgumentSpec("string")}
+        with self.assertRaises(ValueError):
+            ToolSpec("sample", "sample.read", "sample:one", arguments, requires_approval=1)
+        with self.assertRaises(ValueError):
+            ToolSpec("sample", "sample.read", "sample:one", arguments, max_argument_bytes=True)
+        spec = ToolSpec("sample", "sample.read", "sample:one", arguments)
+        with self.assertRaises(ValueError):
+            AgentToolBoundary({"sample": spec}, self.executor, max_calls_per_run=True)
+
     def test_ticket_helper_binds_model_call_to_guarded_gateway(self):
         gateway = Mock()
         gateway.authorize_and_execute.return_value = {"ticket_id": "t-1"}

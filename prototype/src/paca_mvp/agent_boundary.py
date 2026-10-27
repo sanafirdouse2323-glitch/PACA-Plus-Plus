@@ -77,7 +77,7 @@ class ArgumentSpec:
             raise ValueError("argument minimum length cannot exceed maximum length")
         for label, value in (("minimum", self.minimum), ("maximum", self.maximum)):
             if value is not None and (
-                type(value) not in (int, float) or not math.isfinite(value)
+                type(value) not in (int, float) or (type(value) is float and not math.isfinite(value))
             ):
                 raise ValueError(f"argument {label} must be a finite number")
         if self.minimum is not None and self.maximum is not None and self.minimum > self.maximum:
