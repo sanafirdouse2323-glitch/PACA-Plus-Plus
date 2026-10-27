@@ -1,27 +1,18 @@
 # PACA++ hardening layer: architecture, configuration, and claims
 
+This guide documents the OPA-backed protected-effect path, trusted identity/context, durable permits, adapters, and audit outbox. See [Agent attack boundary](AGENT_ATTACKS.md) for the additional LLM tool-call layer.
+
 ## What this branch adds
 
-The legacy **AuthorizationEngine** remains an in-memory, single-process research MVP. This branch adds a separate integration path and a runnable ASGI endpoint for a single, allowlisted `ticket.create` action, without silently rewriting the original ALFA/UCON+ compiler work:
+The legacy **AuthorizationEngine** remains an in-memory, single-process research MVP. The hardening path adds a runnable ASGI endpoint for one allowlisted ticket-create action without silently rewriting the original compiler work. It includes OPA decisions that fail closed, a final authorization recheck, OIDC/JWKS verification, administrator-managed trusted context, fixed execution adapters, durable permits, replay handling, and audit export.
 
-- **Policy decision point:** **OPAClient** calls a named Open Policy Agent (OPA) Data API decision. An absent/malformed decision, missing permit version, timeout, HTTP error, or transport failure raises an error; the gateway does not treat that as permission.
-- **Final authorization recheck:** immediately before a protected effect, the gateway re-authenticates the original credential (so token expiry/signature checks run again), verifies the stable identity/claims have not changed, re-fetches current authorization context (roles, capability, tenant, owner, activation and suspension), re-runs OPA, and checks the policy version. Context or identity changes invalidate the permit rather than executing under a stale decision; callers must submit a new request to obtain a fresh permit. Failures remain fail-closed and distinguish authentication/context/policy outages from an explicit denial.
-- **Policy version recheck:** an allowed decision carries a version. The gateway checks the active version before issuing the permit and checks it again with a fresh decision immediately before the effect. This narrows, but cannot atomically eliminate, the race with policy or context changes; coordinate those deployments with protected effects where that matters.
-- **Authentication:** **OIDCJWTIdentityProvider** verifies RS256 JWT signatures using a configured HTTPS JWKS endpoint and validates issuer, audience, expiry, and required claims. It never accepts merely decoded tokens. It is an adapter, not an identity provider or credential issuer.
-- **Trusted context:** **HTTPAuthorizationContextProvider** obtains contextual attributes from an administrator-configured HTTPS service using a separate service credential. Request-supplied roles/attributes must not be substituted for the result. The gateway rejects a context response that tries to overwrite verified identity.
-- **Reference context service:** `paca_mvp.context_service` exposes a read-only, service-token-protected endpoint backed by administrator-managed PostgreSQL tables. It maps the verified issuer/subject/audience to an internal principal *within the registered resource's tenant*, then returns current role, capability, suspension state, and internal resource ownership. Unmapped/inactive identities and unknown resources receive deny-only context. There are no identity/role mutation endpoints and no default users or resources.
-- **Enforcement adapters:** **FilesystemToolAdapter** maps administrator-defined logical resource IDs to a fixed local root and uses POSIX descriptor-relative, no-follow traversal. **HTTPJSONToolAdapter** can call only administrator-configured action/resource routes over HTTPS, blocks redirects, and sends a downstream idempotency key.
-- **Coordinated durable state:** **SQLitePermitStore** persists short-lived permits, state versions, execution claims, idempotency keys, results, and audit events in a file-backed SQLite database. SQLite transactions serialize local processes sharing that file on the same machine; this is not a distributed database for multi-host coordination.
-- **Failure and replay behavior:** the store claims an operation durably before invoking an adapter. If a process crashes or an adapter raises after a possible partial side effect, the operation becomes/should be reconciled as **unknown**; the system does not automatically replay it. A downstream service that durably honors the idempotency key or exposes reconciliation is required to safely resume.
-- **Audit integrity checking:** events are persisted with a hash-linked chain and a separately stored head. **verify_audit_chain()** checks event hashes, links, and the stored head, detecting changed events and tail truncation when the head is left intact. Appends are refused if the stored head does not match the actual last event; PostgreSQL initialization/migration backfills a missing head from retained history. This is **not tamper-proof** against an attacker who can rewrite the database and its head. Production audit should also be streamed to an independently controlled append-only system.
-- **HTTP request-boundary checks:** the ASGI size-limit middleware preserves duplicate headers until validation and rejects duplicate `Authorization`/`Idempotency-Key` headers on the ticket route, duplicate framing/host/content-type headers, and requests that combine `Content-Length` with `Transfer-Encoding`. This reduces ambiguity between upstream proxies and application header parsing; it does not replace equivalent validation at the load balancer and HTTP server.
-- **Adversarial checks:** the new test file covers OPA failures, malformed decisions, stale policy/state, expired permits, repeated idempotency keys, effect failures, crash recovery, concurrent execution, symlink traversal, fixed API routes, and audit-chain tampering.
+The agent boundary is complementary: it validates the model's tool proposal and fixes the action/resource mapping before the call reaches GuardedGateway. It does not replace OIDC, trusted context, OPA, the durable permit store, downstream idempotency, or the application's handling of untrusted tool output.
 
 ## Run locally
 
-Requires Python 3.10+ and Docker for the OPA and PostgreSQL integration services. Install the optional `web` extra to run the ASGI gateway.
+Requires Python 3.10+ and Docker for the OPA and PostgreSQL integration services.
 
-~~~bash
+~~~
 cd prototype
 python -m pip install -e ".[web,test]"
 python -m unittest discover -s tests -v
@@ -33,91 +24,17 @@ python examples/opa_smoke.py
 docker compose down
 ~~~
 
-The OPA and PostgreSQL Compose ports are bound to loopback. PostgreSQL is enabled only by the `integration` profile; the example database password is for local tests only. The example Rego policy permits an analyst to read only a resource owned by the verified internal principal in the same tenant; it does not compare raw OIDC subjects to ownership IDs. It permits ticket creation only when a trusted context grants the support role and explicit capability in the registered resource tenant, and requires `suspended=false`. A signed JWT claim that explicitly says suspended still triggers a deny, but current suspension comes from trusted context so a stale token claim cannot override it. The policy is illustrative, not universal production policy. Increment **policy_version** whenever authorization semantics change; production bundle deployments should tie this to an immutable, verified bundle revision and coordinate rollout.
+The OPA and PostgreSQL Compose ports are bound to loopback. PostgreSQL is enabled only by the integration profile; the example database password is for local tests only.
 
-## Run the HTTP gateway
+## Tool-boundary integration
 
-1. Configure a real OIDC issuer, audience and JWKS endpoint, OPA, a downstream HTTPS API and its idempotency semantics in `.env` using `.env.example` as a template. Never commit real secrets. The reference context service can be started with `uvicorn paca_mvp.context_service:create_context_app --factory --host 127.0.0.1 --port 8081`; for local-only testing set `PACA_CONTEXT_URL=http://127.0.0.1:8081/v1/attributes` and explicitly set `PACA_CONTEXT_ALLOW_INSECURE_LOCALHOST=true`. Do not enable that flag for non-loopback URLs or production.
-2. Start local OPA and PostgreSQL: `docker compose up -d opa` and `docker compose --profile integration up -d postgres`. To apply all numbered migrations, set `PACA_MIGRATION_DSN` to the intended database URL and run `python examples/apply_postgres_migration.py`; applied versions are recorded in `paca_schema_migrations`. Migration 002 creates the reference context tables but inserts no users, capabilities, suspension state, or resources. Provision these through a separate controlled administrator process. In production, use distinct migration, permit-store, and read-only context-service database roles; keep `PACA_DATABASE_AUTO_MIGRATE=false` for the gateway runtime. Non-loopback PostgreSQL DSNs must use `sslmode=verify-full`.
-3. Load your environment in the shell (for example, `set -a; . ./.env; set +a`) and run `uvicorn paca_mvp.service:create_app --factory --host 127.0.0.1 --port 8080`.
-4. Call `POST /v1/tickets` with a valid `Authorization: Bearer ...`, a stable `Idempotency-Key`, and a JSON body such as `{"title":"Example","description":"Details" }`. The endpoint fixes the action/resource itself; callers cannot choose the adapter, URL or route.
-5. Use `GET /readyz` to check OPA and database readiness. It is not a substitute for downstream/context-service health checks.
-
-The configured downstream endpoint receives the ticket argument object as ordinary JSON and the standard `Idempotency-Key` header. The downstream API must durably implement that key; this gateway cannot impose idempotency semantics on a third-party service.
-
-## Typical application wiring
-
-Use deployment-managed secrets and configuration, not values supplied by an agent:
-
-~~~python
-import os
-from paca_mvp import (
-    OPAClient, SQLitePermitStore, GuardedGateway,
-    OIDCJWTIdentityProvider, HTTPAuthorizationContextProvider,
-    HTTPJSONToolAdapter, HTTPRoute,
-)
-
-identity = OIDCJWTIdentityProvider(
-    issuer=os.environ["OIDC_ISSUER"],
-    audience=os.environ["OIDC_AUDIENCE"],
-    jwks_url=os.environ["OIDC_JWKS_URL"],
-)
-context = HTTPAuthorizationContextProvider(
-    os.environ["PACA_CONTEXT_URL"],
-    os.environ["PACA_CONTEXT_SERVICE_TOKEN"],
-)
-opa = OPAClient(os.environ["OPA_URL"], bearer_token=os.getenv("OPA_BEARER_TOKEN"))
-store = SQLitePermitStore(os.environ["PACA_SQLITE_PATH"])
-gateway = GuardedGateway(opa, store, identity, context)
-tickets = HTTPJSONToolAdapter(
-    os.environ["TICKET_API_BASE_URL"],
-    {("ticket.create", "ticket-collection:default"): HTTPRoute("POST", "/v1/tickets")},
-    bearer_token=os.environ["TICKET_API_TOKEN"],
-)
-result = gateway.authorize_and_execute(
-    credential=access_token,  # obtain from the real caller; do not log it
-    action="ticket.create",
-    resource="ticket-collection:default",
-    arguments={"title": "Example"},
-    adapter=tickets,
-    idempotency_key=stable_operation_id,
-)
-~~~
-
-For the ticket example, the context tables must contain a tenant registration for `ticket-collection:default` and an active support principal with `can_create_tickets=true` and `suspended=false`. A file resource must be registered with an internal owner principal ID in the same tenant. These records are not seeded automatically. In production, grant the context service only `SELECT` on `paca_context_principals` and `paca_context_resources`; use a separately authenticated administrator process to change roles, capabilities, ownership, activation, or suspension. The OPA client requires a bearer token for non-loopback HTTPS OPA endpoints; loopback HTTP is permitted only for local development. The protected HTTP adapter also requires a configured bearer token. Do not expose OPA's unauthenticated admin/decision endpoint to untrusted networks.
-
-## Independent audit delivery
-
-Every new local audit event and its outbox delivery intent are committed in the same SQLite or PostgreSQL transaction. Migration 003 adds the PostgreSQL outbox; the migration runner validates the retained audit chain and queues historical entries that predate the outbox. SQLite queues retained valid events during store initialization. Before each batch, the exporter verifies the entire source audit chain and refuses to deliver if verification fails; it also verifies each outbox payload against its source event hash. The worker uses leases so multiple instances can share PostgreSQL, and bounded exponential retry avoids a tight loop during sink outages.
-
-Configure the destination URL and service token in .env (or inject them from a secrets manager), then run a single batch:
-
-~~~bash
-cd prototype
-python -m pip install -e ".[web,test]"
-python -m paca_mvp.audit_export --once
-~~~
-
-Run without --once for a polling worker. The command reads PACA_DATABASE_URL for PostgreSQL or PACA_SQLITE_PATH for a single-host SQLite store, plus PACA_AUDIT_SINK_URL and PACA_AUDIT_SINK_TOKEN. Monitor the JSON output's outbox.pending, retry_scheduled, retry_state_errors, and ack_state_errors; alert on persistent backlog and delivery failures. The exporter stores only exception *types* for retry diagnostics, not raw error messages.
-
-The HTTPS receiver contract is intentionally explicit: validate the event hash, durably append before returning 2xx, deduplicate by the Idempotency-Key/event ID, and reject conflicting reuse. Delivery is **at least once**, not exactly once: if the receiver commits but the worker crashes before acknowledging the local outbox row, the event may be sent again. The receiver must deduplicate. Point the endpoint to a receiver backed by independently controlled append-only or WORM storage with access restrictions and retention controls. This repo includes the exporter and contract, not a deployed WORM destination or proof that a chosen receiver is immutable. Do not put real sink credentials in source control.
+Use the [agent attack boundary guide](AGENT_ATTACKS.md) for the supported API and an example wiring ticket creation to GuardedGateway. The tool allowlist, schema, action/resource mapping, gateway, adapter, and caller credential must come from trusted application configuration. An LLM must never be able to supply or change them. Treat all tool output as untrusted data, even when returned from an authorized operation.
 
 ## Guarantees and boundaries
 
-- When all relevant effects go through **GuardedGateway** and a supplied adapter, a missing/invalid decision fails closed, the permit is bound to the canonical JSON request fingerprint, identity and trusted context are rechecked immediately before the effect, and the persistent claim prevents a second local execution claim for the same permit. This narrows time-of-check/time-of-use exposure but cannot make OPA, the context database, permit database, and a remote side effect one atomic transaction.
-- The gateway cannot force third-party APIs to honor **Idempotency-Key**, cannot atomically commit a remote side effect and a local SQLite transaction, and cannot know whether a timed-out remote effect happened without downstream reconciliation.
-- The sample filesystem adapter applies file effects, but its root directory, resource mapping, process privileges, mount configuration, and threat model still matter. Restrict OS permissions and run it with least privilege.
-- SQLite is for single-host development/deployment. Use a transactional shared database with appropriate isolation/locking for multi-host replicas. The PostgreSQL adapter is included and CI integration-tested, but production deployments still need managed database provisioning, least-privilege roles, TLS/network restrictions, migrations, backups and operational monitoring.
-- OIDC revocation and tenant-specific authorization still depend on the configured issuer and context service. JWT signature validation alone does not establish every application-specific authorization fact.
-- The audit hash chain and stored head detect some tampering, including tail truncation if the head is not rewritten; the exporter now refuses to forward events when that chain check fails. They are not equivalent to an external WORM log, a signature, or a tamper-proof audit guarantee. The transactional outbox preserves export intent with each audit event and retries delivery, but remote delivery is at least once and depends on an independently controlled, idempotent destination.
-- The sample uses a manually versioned Rego policy marker (`paca-example-v4` in this branch). Version 4 binds ownership to internal principal IDs and tenant IDs instead of raw OIDC subjects. Production should validate and pin signed bundles, expose immutable bundle revisions, secure the OPA management plane, configure decision logs, and coordinate policy version changes with the protected effect boundary.
-- This does not complete or validate the repository's original ALFA/UCON+ parser/compiler, establish formal correctness, certify compliance, demonstrate a novel research contribution, or constitute an independent security audit.
-
-## Release checklist before real production use
-
-1. Deploy an authenticated/TLS-protected OPA instance, verify policy bundles and pin a bundle revision.
-2. Configure a real OIDC issuer/JWKS, claim mapping, token lifetime/revocation policy, and a trusted authorization-context service.
-3. Use PostgresPermitStore for multi-host deployment with a managed PostgreSQL instance, a least-privilege runtime role, TLS/network restrictions, explicit schema migrations, backups and disaster recovery; reserve SQLite for single-host use. Apply all numbered migrations with the dedicated migration DSN using `python examples/apply_postgres_migration.py`, then run the gateway with `PACA_DATABASE_AUTO_MIGRATE=false`.
-4. Require durable downstream idempotency or reconciliation for each remote effect; exercise timeout-after-commit and process-kill recovery tests against a non-production service.
-5. Configure and operate the audit outbox exporter to deliver to an independently controlled append-only/WORM destination. Verify deduplication, retention, alerting, backlog handling and restore procedures. Restrict database and secret access, and define incident response.
-6. Run the full CI suite, real OPA integration smoke, concurrency/fault-injection tests, adapter-specific adversarial tests, and a human security review against the deployment threat model.
+- When all relevant effects go through GuardedGateway and a supplied adapter, missing/invalid policy decisions fail closed, permits are bound to the request fingerprint, and identity/trusted context/policy are rechecked immediately before the effect.
+- The final policy/context recheck narrows but cannot atomically eliminate races with arbitrary remote side effects.
+- Durable operation records prevent unsafe automatic replay within their persistence and idempotency guarantees. A crash during a remote effect can leave an unknown outcome; reconcile before retry.
+- Audit hash chains and the transactional outbox are defense-in-depth, not tamper-proof storage against privileged database administrators.
+- The agent boundary's in-memory call cache is scoped to one process/run. It is not a distributed store, formal proof, or substitute for the existing durable permit and idempotency system.
+- These components do not claim to stop every prompt injection, prove universal security, provide exactly-once remote execution, establish standards compliance, or constitute an independent security audit. Sensitive workloads require an explicit deployment threat model, end-to-end tests, least privilege, monitoring, backups, incident response, and independent review.
