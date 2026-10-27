@@ -45,7 +45,19 @@ If the policy uses administrative privileges, map only approved server-side real
 
 For an interactive application, use Authorization Code with PKCE and have that client obtain an access token intended for `paca-api`. Do not use the committed test realm's direct password grant or hard-coded scope values in production. Prefer the organization's normal authentication, MFA, user lifecycle, client scope, and role-assignment controls.
 
-## 4. What the live integration test proves
+## 4. Signing-key rotation and JWKS caching
+
+The service uses PyJWT's `PyJWKClient` with a 300-second JWKS-set cache. The regression test exercises the real PyJWT client against a changing JWKS response: it first accepts a token signed by `key-1`, then publishes `key-2` and confirms that a token carrying the new `kid` triggers a JWKS refresh and is accepted.
+
+For an identity-provider key rotation:
+1. Publish the new public signing key with a **new, unique `kid`**. Do not replace key material while reusing an existing `kid`.
+2. Verify the provider's JWKS endpoint actually publishes the new key and issue a test access token signed by it.
+3. Roll the change through staging and confirm that the service accepts the new-key token and still enforces issuer, audience, expiry, tenant, and authorization claims.
+4. Retire the old key only after the provider's intended overlap period and token lifetime have been considered.
+
+A token with an unknown `kid` causes PyJWT to refresh the JWKS set. The cached JWKS may continue to supply a previously known key for up to the configured cache lifespan (300 seconds); this is an explicit rotation/revocation latency to include in the deployment threat model. Do not treat removal of a key from the provider as immediate revocation of all tokens already verifiable with a cached key. For emergency key compromise, follow a tested provider-and-service incident procedure that accounts for cache lifetime, outstanding access-token lifetime, and any process/cache restart needed. The automated test simulates JWKS rotation; it does not rotate keys in your external organization’s identity tenant or prove its operational procedures.
+
+## 5. What the live integration test proves
 
 The CI integration does not generate an RSA key and sign a token in the test process. It starts the versioned Keycloak server with the test-only realm export at `tests/identity/keycloak-realm.json`, calls the live OIDC discovery endpoint, obtains signed access tokens from the live token endpoint, and validates them against the live JWKS URI through the production `JWTAuthenticator`. It then uses the actual FastAPI routes, OPA HTTP client/policy, least-privilege PostgreSQL runtime store, and sandboxed filesystem adapter.
 
@@ -55,6 +67,8 @@ The expected behaviors include:
 3. the resulting execution status is accessible to the same identity;
 4. a second tenant cannot discover or inspect the first tenant's resource/execution;
 5. a same-tenant user who is not the resource owner is denied by the real OPA policy.
+
+The focused authenticator tests additionally verify rejection of malformed subject, tenant, role, tool, and scope claims, and exercise JWKS refresh when the provider publishes a new signing-key ID.
 
 The test realm's HTTP endpoint, test-only password, and demonstration scope mapper are intentionally not production-safe configuration. The test does not create or configure an external identity-provider tenant on your behalf. Production must use your actual HTTPS issuer, audience, JWKS endpoint, identity lifecycle and claim-mapping setup.
 
