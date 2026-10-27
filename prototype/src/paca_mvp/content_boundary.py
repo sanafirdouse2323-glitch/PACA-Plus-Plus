@@ -156,8 +156,12 @@ def filter_retrieval(
     if (not isinstance(allowed_trust_levels, (set, frozenset))
             or not allowed_trust_levels or not allowed_trust_levels.issubset(TRUST_LEVELS)):
         raise ContentBoundaryError("allowed_trust_levels contains invalid or no trust levels")
-    if max_documents < 0 or max_total_characters < 0:
-        raise ContentBoundaryError("retrieval budgets must be non-negative")
+    if (
+        isinstance(max_documents, bool) or not isinstance(max_documents, int)
+        or isinstance(max_total_characters, bool) or not isinstance(max_total_characters, int)
+        or max_documents < 0 or max_total_characters < 0
+    ):
+        raise ContentBoundaryError("retrieval budgets must be non-negative integers")
     included: list[ProvenancedDocument] = []
     excluded: list[tuple[str, str]] = []
     total = 0
@@ -194,20 +198,43 @@ class OutputBoundary:
         self, *, allowed_link_hosts: Sequence[str] = (),
         sensitive_values: Sequence[str] = (), max_output_characters: int = 20_000,
     ):
-        if max_output_characters < 1:
-            raise ValueError("max_output_characters must be positive")
+        if (
+            isinstance(max_output_characters, bool)
+            or not isinstance(max_output_characters, int)
+            or max_output_characters < 1
+        ):
+            raise ValueError("max_output_characters must be a positive integer")
+        if isinstance(allowed_link_hosts, (str, bytes)) or not isinstance(allowed_link_hosts, Sequence):
+            raise ValueError("allowed_link_hosts must be a sequence of hostnames")
+        if isinstance(sensitive_values, (str, bytes)) or not isinstance(sensitive_values, Sequence):
+            raise ValueError("sensitive_values must be a sequence of strings")
+
         hosts: set[str] = set()
         for host in allowed_link_hosts:
-            if not isinstance(host, str) or not host.strip():
-                raise ValueError("allowed link hosts must be non-empty hostnames")
-            parsed = urlsplit("//" + host.strip())
-            if not parsed.hostname or parsed.port is not None or parsed.path or parsed.query or parsed.fragment:
+            if (
+                not isinstance(host, str) or not host.strip() or host != host.strip()
+                or any(character.isspace() for character in host)
+            ):
+                raise ValueError("allowed link hosts must be non-empty hostnames without whitespace")
+            parsed = urlsplit("//" + host)
+            try:
+                port = parsed.port
+            except ValueError as exc:
+                raise ValueError("allowed link host contains an invalid port") from exc
+            if (
+                not parsed.hostname or parsed.username is not None or parsed.password is not None
+                or port is not None or parsed.path or parsed.query or parsed.fragment
+            ):
                 raise ValueError("allowed link host must be a hostname only")
             hosts.add(parsed.hostname.rstrip(".").lower())
         values = []
         for value in sensitive_values:
             if not isinstance(value, str):
                 raise ValueError("sensitive values must be strings")
+            try:
+                value.encode("utf-8", errors="strict")
+            except UnicodeEncodeError as exc:
+                raise ValueError("sensitive values must contain valid Unicode") from exc
             if value:
                 values.append(value)
         self.allowed_link_hosts = frozenset(hosts)

