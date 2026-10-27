@@ -47,6 +47,7 @@ class JWTAuthenticator:
             cache_jwk_set=True,
             lifespan=300,
             timeout=timeout_seconds,
+            cooldown_duration=30,
         )
 
     def authenticate(self, token: str) -> Principal:
