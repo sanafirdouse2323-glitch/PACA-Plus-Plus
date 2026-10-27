@@ -65,7 +65,7 @@ The example above illustrates the interface; it does not configure a real provid
 
 - The model-provider adapter must preserve the structured trust labels. The labels alone do not prevent semantic prompt injection.
 - The tool schema is a model-facing description only. `AgentToolBoundary.invoke` performs the actual argument, routing, approval and effect checks. Server-side action/resource values are not included in the model-facing schema.
-- If a tool needs human approval, the runtime does not invent approval credentials. The call fails closed unless the host has a separately designed trusted approval flow.
+- This runtime currently has no approval-token provider hook. A tool configured with `requires_approval=True` therefore fails closed when proposed through this runtime. Do not enable such tools through the runtime until a trusted, request-bound approval integration has been implemented and tested; never use model-generated approval data.
 - If a tool call fails after the downstream may have received it, the runtime does not claim that no effect occurred. Follow the boundary's outcome code and reconcile uncertain effects before retrying.
 - If the turn or tool budget is exhausted, retrieval fails, model generation fails, or final output is blocked, no unchecked final answer is returned.
 - The runtime cannot prevent another host code path from bypassing it or protect an exposed downstream endpoint. Put every sensitive effect behind the guarded gateway and enforce equivalent policy downstream.
