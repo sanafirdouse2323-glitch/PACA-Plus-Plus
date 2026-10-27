@@ -1,8 +1,18 @@
+"""Reference parser for the PACA++ policy DSL.
+
+The parser accepts compact policy strings such as:
+
+    permit readFile when user.role == admin and user.department == engineering
+    deny deleteFile when user.role != admin with obligation audit_log(user.id)
+
+It preserves the existing simple API (`parse_policy`) while adding support for
+multiple obligations and logical connectors.
+"""
+
 from __future__ import annotations
 
-import random
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from .ast import Expression, Obligation, Policy
 
@@ -54,7 +64,8 @@ def _clean_value(raw: str):
 
 
 def _split_top_level(expr: str) -> List[str]:
-    """Split on and/or while respecting nested grouping and quoted strings."""
+    """Split an expression on `and`/`or` at the top level only."""
+
     fragments: List[str] = []
     current: List[str] = []
     depth = 0
@@ -94,16 +105,12 @@ def _split_top_level(expr: str) -> List[str]:
         if depth == 0:
             remaining = expr[i:].lower()
             if remaining.startswith(" and "):
-                fragment = "".join(current).strip()
-                if fragment:
-                    fragments.append(fragment)
+                fragments.append("".join(current).strip())
                 current = []
                 i += 5
                 continue
             if remaining.startswith(" or "):
-                fragment = "".join(current).strip()
-                if fragment:
-                    fragments.append(fragment)
+                fragments.append("".join(current).strip())
                 current = []
                 i += 4
                 continue
@@ -111,10 +118,10 @@ def _split_top_level(expr: str) -> List[str]:
         current.append(ch)
         i += 1
 
-    tail = "".join(current).strip()
-    if tail:
-        fragments.append(tail)
-    return [fragment for fragment in fragments if fragment]
+    cleaned = "".join(current).strip()
+    if cleaned:
+        fragments.append(cleaned)
+    return [f for f in fragments if f]
 
 
 def _parse_condition(fragment: str) -> Expression:
@@ -123,12 +130,23 @@ def _parse_condition(fragment: str) -> Expression:
         raise ValueError(f"Unsupported condition fragment: {fragment!r}")
 
     data = match.groupdict()
+    operator = data["operator"].lower()
+    if operator in {"==", "!=", ">=", "<=", ">", "<"}:
+        normalized = operator
+    elif operator == "in":
+        normalized = "in"
+    elif operator == "contains":
+        normalized = "contains"
+    elif operator == "matches":
+        normalized = "matches"
+    else:
+        normalized = operator
+
     return Expression(
         entity=data["entity"],
         attribute=data["attribute"],
-        operator=data["operator"],
+        operator=normalized,
         value=_clean_value(data["value"]),
-        source="context",
     )
 
 
@@ -141,7 +159,10 @@ def _parse_conditions(raw: str) -> Tuple[List[Expression], List[str]]:
         return [], []
 
     conditions = [_parse_condition(fragment) for fragment in fragments]
-    connectors = [part.lower() for part in re.findall(r"\s+(and|or)\s+", raw, flags=re.IGNORECASE)]
+    connectors: List[str] = []
+
+    parts = re.findall(r"\s+(and|or)\s+", raw, flags=re.IGNORECASE)
+    connectors.extend(part.lower() for part in parts)
     return conditions, connectors
 
 
@@ -150,6 +171,17 @@ def _parse_obligation(raw: Optional[str]) -> Optional[Obligation]:
         return None
 
     text = raw.strip()
+    if not text:
+        return None
+
+    if "," in text:
+        obligations = [part.strip() for part in text.split(",") if part.strip()]
+        parsed = [_parse_obligation(item) for item in obligations]
+        first = parsed[0]
+        if first is None:
+            return None
+        return first
+
     name_match = re.match(r"(?P<name>[A-Za-z_][A-Za-z0-9_.-]*)", text)
     if not name_match:
         raise ValueError(f"Invalid obligation: {raw!r}")
@@ -178,6 +210,7 @@ def _parse_obligations(raw: Optional[str]) -> List[Obligation]:
 
 def parse_policy(source: str) -> Policy:
     """Parse a PACA++ policy string into a `Policy` AST object."""
+
     text = (source or "").strip()
     if not text:
         raise ValueError("Policy source is empty.")
@@ -193,13 +226,13 @@ def parse_policy(source: str) -> Policy:
 
     expressions, connectors = _parse_conditions(conditions_text)
     parsed_obligations = _parse_obligations(obligations_text)
-    primary_obligation = parsed_obligations[0] if parsed_obligations else None
+    obligation = parsed_obligations[0] if parsed_obligations else None
 
     return Policy(
         name=f"{effect}_{action}",
         action=action,
         expressions=expressions,
-        obligation=primary_obligation,
+        obligation=obligation,
         obligations=parsed_obligations,
         effect=effect,
         connectors=connectors,
@@ -207,66 +240,10 @@ def parse_policy(source: str) -> Policy:
 
 
 def parse_policy_file(path: str) -> Policy:
+    """Read a policy file and parse it."""
+
     with open(path, "r", encoding="utf-8") as handle:
         return parse_policy(handle.read())
 
 
-def generate_random_policy(seed: int | None = None) -> Policy:
-    """Create a deterministic, valid policy for testing and fuzzing."""
-    rng = random.Random(seed)
-    effects = ["permit", "deny"]
-    actions = ["readFile", "writeFile", "deleteFile", "sshAccess", "deploy", "viewReport"]
-    entities = ["user", "resource", "context", "session"]
-    attributes = ["role", "department", "clearance", "trust", "risk", "source", "region"]
-    operators = ["==", "!=", ">=", "<=", ">", "<"]
-
-    action = rng.choice(actions)
-    effect = rng.choice(effects)
-    count = rng.randint(1, 3)
-    expressions: List[Expression] = []
-    for _ in range(count):
-        expressions.append(
-            Expression(
-                entity=rng.choice(entities),
-                attribute=rng.choice(attributes),
-                operator=rng.choice(operators),
-                value=rng.choice(["admin", "user", "engineering", "prod", "low", "high", 3, 7, 9]),
-            )
-        )
-
-    return Policy(
-        name=f"{effect}_{action}",
-        action=action,
-        expressions=expressions,
-        effect=effect,
-    )
-
-
-def generate_random_context(seed: int | None = None) -> Dict[str, Any]:
-    """Create a realistic runtime context for evaluating generated policies."""
-    rng = random.Random(seed)
-    return {
-        "user": {
-            "role": rng.choice(["admin", "user", "auditor", "analyst"]),
-            "department": rng.choice(["engineering", "security", "finance", "ops"]),
-            "clearance": rng.randint(1, 5),
-            "trust": rng.randint(1, 10),
-        },
-        "resource": {
-            "type": rng.choice(["file", "database", "endpoint", "report"]),
-            "owner": rng.choice(["ops", "engineering", "security"]),
-            "risk": rng.randint(1, 10),
-        },
-        "session": {
-            "source": rng.choice(["internal", "external", "vpn"]),
-            "region": rng.choice(["us-east", "eu-west", "apac"]),
-        },
-    }
-
-
-__all__ = [
-    "generate_random_context",
-    "generate_random_policy",
-    "parse_policy",
-    "parse_policy_file",
-]
+__all__ = ["parse_policy", "parse_policy_file"]
