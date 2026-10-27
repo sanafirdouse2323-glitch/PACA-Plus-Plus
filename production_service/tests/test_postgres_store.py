@@ -346,11 +346,28 @@ class TestPostgresStoreIntegration:
         with pytest.raises(InsufficientPrivilege), self.store.pool.connection() as conn:
             conn.execute(f"CREATE TABLE public.{table_name} (id integer)")
 
-        # A runtime login must not be able to assume the administrative role.
+        # Discover an actual privileged role rather than assuming deployment-specific
+        # names (the CI database admin is not necessarily called "paca").
+        with self.store.pool.connection() as conn:
+            privileged_role = conn.execute(
+                """
+                SELECT rolname
+                FROM pg_roles
+                WHERE rolname <> current_user
+                  AND (rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls)
+                ORDER BY rolsuper DESC, rolcreaterole DESC, rolcreatedb DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        assert privileged_role is not None
         with pytest.raises(
             (InsufficientPrivilege, psycopg.errors.InvalidAuthorizationSpecification)
         ), self.store.pool.connection() as conn:
-            conn.execute("SET ROLE paca")
+            conn.execute(
+                psycopg.sql.SQL("SET ROLE {}").format(
+                    psycopg.sql.Identifier(privileged_role["rolname"])
+                )
+            )
 
     def test_security_definer_functions_are_pinned_and_recovery_threshold_is_bounded(self):
         with self.store.pool.connection() as conn:
