@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -28,7 +29,7 @@ class FakeJWKS:
         return SimpleNamespace(key=self.key)
 
 
-def signed_token(private_key, **overrides):
+def signed_token(private_key, kid: str = "test-key", omit_claim: str | None = None, **overrides):
     now = datetime.now(UTC)
     payload = {
         "iss": ISSUER,
@@ -43,7 +44,16 @@ def signed_token(private_key, **overrides):
         "jti": "jwt-123",
     }
     payload.update(overrides)
-    return jwt.encode(payload, private_key, algorithm="RS256", headers={"kid": "test-key"})
+    if omit_claim is not None:
+        payload.pop(omit_claim, None)
+    return jwt.encode(payload, private_key, algorithm="RS256", headers={"kid": kid})
+
+
+
+def public_jwk(public_key, kid: str) -> dict[str, object]:
+    jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(public_key))
+    jwk.update({"kid": kid, "use": "sig", "alg": "RS256"})
+    return jwk
 
 
 @pytest.fixture
@@ -69,6 +79,82 @@ def test_authenticator_verifies_signature_issuer_audience_and_required_claims(rs
         auth.authenticate(signed_token(private, aud="another-api"))
     with pytest.raises(AuthenticationError):
         auth.authenticate(signed_token(private, tenant_id=""))
+
+
+
+@pytest.mark.parametrize("missing_claim", ["sub", "exp", "iat", "iss", "aud", "tenant_id"])
+def test_authenticator_requires_identity_claims(rsa_keys, missing_claim):
+    private, public = rsa_keys
+    auth = JWTAuthenticator(
+        ISSUER,
+        AUDIENCE,
+        "https://identity.example.org/jwks",
+        jwks_client=FakeJWKS(public),
+    )
+    with pytest.raises(AuthenticationError):
+        auth.authenticate(signed_token(private, omit_claim=missing_claim))
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [
+        {"sub": ""},
+        {"sub": 42},
+        {"tenant_id": 7},
+        {"tenant_id": "   "},
+        {"roles": "admin"},
+        {"roles": [7]},
+        {"tools": [" "]},
+        {"scopes": 7},
+    ],
+)
+def test_authenticator_rejects_malformed_identity_and_authorization_claims(rsa_keys, claims):
+    private, public = rsa_keys
+    auth = JWTAuthenticator(
+        ISSUER,
+        AUDIENCE,
+        "https://identity.example.org/jwks",
+        jwks_client=FakeJWKS(public),
+    )
+    with pytest.raises(AuthenticationError):
+        auth.authenticate(signed_token(private, **claims))
+
+
+def test_authenticator_refreshes_jwks_when_provider_rotates_to_a_new_kid(monkeypatch):
+    old_private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    new_private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    published = {"keys": [public_jwk(old_private.public_key(), "key-1")]}
+    fetch_count = 0
+
+    jwks_client = jwt.PyJWKClient(
+        "https://identity.example.org/jwks",
+        cache_jwk_set=True,
+        lifespan=300,
+        timeout=1,
+    )
+
+    def fetch_data():
+        nonlocal fetch_count
+        fetch_count += 1
+        return published
+
+    monkeypatch.setattr(jwks_client, "fetch_data", fetch_data)
+    auth = JWTAuthenticator(
+        ISSUER,
+        AUDIENCE,
+        "https://identity.example.org/jwks",
+        jwks_client=jwks_client,
+    )
+
+    old_principal = auth.authenticate(signed_token(old_private, kid="key-1"))
+    assert old_principal.subject == "alice"
+    assert fetch_count == 1
+
+    # Simulate the provider publishing a rotated public key with a new, unique kid.
+    published["keys"] = [public_jwk(new_private.public_key(), "key-2")]
+    new_principal = auth.authenticate(signed_token(new_private, kid="key-2"))
+    assert new_principal.subject == "alice"
+    assert fetch_count == 2
 
 
 def test_authenticator_pins_rs256_and_rejects_unsigned_or_hmac_tokens(rsa_keys):
