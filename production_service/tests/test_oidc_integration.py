@@ -19,7 +19,6 @@ from paca_service.config import Settings
 from paca_service.opa import OPAClient
 from paca_service.store import PostgresStore
 
-
 REALM_URL = os.getenv("PACA_TEST_OIDC_REALM_URL", "").rstrip("/")
 DATABASE_URL = os.getenv("PACA_TEST_DATABASE_URL", "")
 ADMIN_DATABASE_URL = os.getenv("PACA_TEST_ADMIN_DATABASE_URL", "")
