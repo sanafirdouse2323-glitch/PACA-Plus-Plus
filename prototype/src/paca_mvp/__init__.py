@@ -34,9 +34,12 @@ __all__ = [
     "ArgumentSpec", "ToolSpec", "build_ticket_create_boundary",
     "ContentBoundaryError", "ProvenancedDocument", "ProvenanceAuthority", "RetrievalResult",
     "filter_retrieval", "OutputDecision", "OutputBoundary", "OutputBlocked", "GuardedAgentPipeline",
+    "InterAgentBoundaryError", "InterAgentMessage", "InterAgentMessageBoundary",
 ]
 
 from .content_boundary import (
     ContentBoundaryError, ProvenancedDocument, ProvenanceAuthority, RetrievalResult,
     filter_retrieval, OutputDecision, OutputBoundary, OutputBlocked, GuardedAgentPipeline,
 )
+
+from .inter_agent_boundary import InterAgentBoundaryError, InterAgentMessage, InterAgentMessageBoundary

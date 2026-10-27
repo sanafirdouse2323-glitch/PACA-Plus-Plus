@@ -25,13 +25,14 @@ The incident review identifies two gaps a tool-call gate alone does not cover: r
 
 - HMAC-authenticated provenance is only as safe as key custody. If untrusted code has access to the authority/key, it can issue a trusted label. HMAC verifies issuer possession and integrity; it does not establish that the source content is truthful or safe.
 - This is not a universal prompt-injection detector and does not reliably detect every secret, PII item, encoded payload, steganographic channel or covert channel.
+- This module does not inspect image pixels/OCR, audio, video, or other non-text inputs. Image-embedded instructions require a separately implemented multimodal inspection path; they are not made safe by text provenance or output checks.
 - The host allowlist must be administrator-controlled. An allowed host can still leak data through query parameters; only allow hosts that are safe to receive the output.
 - This checks output text, not every downstream client's behavior. Clients need restrictive rendering, disabled raw HTML/remote images, CSP and network-egress policy as appropriate.
 - Provenance is only as reliable as trusted ingestion. If an LLM can set `trust="trusted"`, this gate is bypassed by design.
 - Default retrieval filtering can reduce recall. Where untrusted sources are needed, retain their labels and enforce effects out-of-band.
 - This does not prevent platform bugs, compromised dependencies, direct calls to separately exposed endpoints, or unsafe executor code. Use sandboxing, least privilege and ordinary application security controls.
 - Planning/SMT verification remains a separate hypothesis. No solver or formal proof is implemented here.
-- Inter-agent messages should be untrusted unless sender identity and delegated capabilities are independently authenticated. This module is not a complete multi-agent protocol.
+- The separate [inter-agent message boundary](INTER_AGENT_BOUNDARY.md) validates host-authenticated sender/recipient routes and keeps accepted messages explicitly untrusted. It does not authenticate the transport, grant capabilities, or semantically detect cross-agent prompt injection; those remain separate responsibilities/gaps.
 
 ## Minimal integration pattern
 
