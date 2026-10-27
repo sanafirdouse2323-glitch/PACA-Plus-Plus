@@ -210,9 +210,8 @@ class TestPostgresStoreIntegration:
 
             # RLS WITH CHECK must reject tenant reassignment even when the target
             # tenant/resource pair itself exists and would satisfy ordinary FKs.
-            with pytest.raises(InsufficientPrivilege):
-                with conn.transaction():
-                    conn.execute(
+            with pytest.raises(InsufficientPrivilege), conn.transaction():
+                conn.execute(
                         """
                         UPDATE authz_permits
                         SET tenant_id = %s, principal_id = %s, resource_id = %s
@@ -225,9 +224,8 @@ class TestPostgresStoreIntegration:
         # execution row; this must fail even though B is the active RLS context.
         with self.store.pool.connection() as conn, conn.transaction():
             conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (other_tenant,))
-            with pytest.raises(psycopg.errors.ForeignKeyViolation):
-                with conn.transaction():
-                    conn.execute(
+            with pytest.raises(psycopg.errors.ForeignKeyViolation), conn.transaction():
+                conn.execute(
                         """
                         INSERT INTO authz_executions
                             (execution_id, permit_id, tenant_id, principal_id,
