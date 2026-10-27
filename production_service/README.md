@@ -24,6 +24,10 @@ This directory contains a separate FastAPI authorization gateway that combines R
 
    `/healthz` only indicates that the process is alive. `/readyz` verifies database connectivity and a real OPA deny-by-default decision that must carry the configured policy revision.
 
+All tenant-scoped tables (`protected_resources`, `authz_permits`, `authz_executions`, and `audit_events`) have PostgreSQL row-level-security policies. The runtime store sets transaction-local `paca.tenant_id` before every tenant-scoped query, and execution rows have a composite foreign key tying tenant/principal to the referenced permit. Stale-execution recovery is the only cross-tenant store operation exposed to the runtime role; it uses a bounded, audited `SECURITY DEFINER` function rather than an unscoped application query.
+
+**RLS trust boundary:** `paca.tenant_id` is a custom PostgreSQL setting, not a database-authenticated identity. These policies protect against omitted tenant predicates and alternate application query paths while the trusted application controls the transaction. A party holding the raw runtime database credential can set that custom setting itself; do not expose the credential to tenants or untrusted plugins. If the threat model includes malicious SQL under that credential, use a stronger separation model such as distinct tenant database roles/databases or a trusted database-access broker.
+
 The API rejects duplicate `Authorization`, `Idempotency-Key`, `Content-Length`, `Transfer-Encoding`, `Host`, and `Content-Type` headers, rejects conflicting request framing, and limits request bodies to 1 MiB. The downstream HTTP adapter streams response bodies and stops reading after its configured response-size limit. These application checks supplement rather than replace ingress-level body, concurrency, and rate limits.
 
 The API binds to loopback on port 8000. Do not expose it externally before configuring and validating TLS ingress, rate/request limits, secrets management, egress controls, backups/restore, audit retention, monitoring, and incident response.
@@ -36,6 +40,7 @@ Before upgrading, take and verify a database backup. Keep the existing data volu
 
 ```sh
 docker compose exec database bash -lc 'source /docker-entrypoint-initdb.d/000-runtime-role.sh'
+docker compose exec -T database psql -U paca -d paca -v ON_ERROR_STOP=1 -f /docker-entrypoint-initdb.d/001-schema.sql
 docker compose exec -T database psql -U paca -d paca -v ON_ERROR_STOP=1 -f /docker-entrypoint-initdb.d/002-runtime-grants.sql
 docker compose up --build -d
 ```
