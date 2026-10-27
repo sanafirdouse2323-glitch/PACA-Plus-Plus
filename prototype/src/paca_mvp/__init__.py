@@ -32,4 +32,11 @@ __all__ = [
     "AuditDeliveryError", "AuditOutboxWorker", "HTTPSAuditSink",
     "AgentBoundaryError", "AgentToolBoundary", "AgentToolResult", "ApprovalRequired",
     "ArgumentSpec", "ToolSpec", "build_ticket_create_boundary",
+    "ContentBoundaryError", "ProvenancedDocument", "ProvenanceAuthority", "RetrievalResult",
+    "filter_retrieval", "OutputDecision", "OutputBoundary",
 ]
+
+from .content_boundary import (
+    ContentBoundaryError, ProvenancedDocument, ProvenanceAuthority, RetrievalResult,
+    filter_retrieval, OutputDecision, OutputBoundary,
+)
