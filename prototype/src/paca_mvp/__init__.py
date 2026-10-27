@@ -15,6 +15,10 @@ from .context_service import (
     ContextRepositoryUnavailable, PostgresAuthorizationContextRepository, create_context_app,
 )
 from .audit_export import AuditDeliveryError, AuditOutboxWorker, HTTPSAuditSink
+from .agent_boundary import (
+    AgentBoundaryError, AgentToolBoundary, AgentToolResult, ApprovalRequired,
+    ArgumentSpec, ToolSpec, build_ticket_create_boundary,
+)
 
 __all__ = [
     "AuthorizationEngine", "Decision", "Policy", "PolicyError", "Rule", "AuthorizationError",
@@ -26,4 +30,6 @@ __all__ = [
     "FilesystemToolAdapter", "ToolInvocationError", "PostgresPermitStore",
     "ContextRepositoryUnavailable", "PostgresAuthorizationContextRepository", "create_context_app",
     "AuditDeliveryError", "AuditOutboxWorker", "HTTPSAuditSink",
+    "AgentBoundaryError", "AgentToolBoundary", "AgentToolResult", "ApprovalRequired",
+    "ArgumentSpec", "ToolSpec", "build_ticket_create_boundary",
 ]

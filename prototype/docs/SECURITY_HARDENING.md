@@ -1,5 +1,7 @@
 # PACA++ hardening layer: architecture, configuration, and claims
 
+For the additional LLM tool-call layer, see [Agent attack boundary](AGENT_ATTACKS.md).
+
 ## What this branch adds
 
 The legacy **AuthorizationEngine** remains an in-memory, single-process research MVP. This branch adds a separate integration path and a runnable ASGI endpoint for a single, allowlisted `ticket.create` action, without silently rewriting the original ALFA/UCON+ compiler work:
