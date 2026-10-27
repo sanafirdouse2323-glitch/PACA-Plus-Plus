@@ -47,3 +47,8 @@ CI results show that specified tests passed on a particular commit. They do not 
 ## Research status
 
 The current evidence is a research/engineering scaffold. Before claiming a novel contribution, the supported semantics and threat model need a reproducible specification, differential tests against relevant systems, and a literature/artifact comparison. A successful build is useful implementation evidence, not proof of novelty.
+
+
+## Preserved source archive
+
+The separate [PACA-Plus-Plus-New repository](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus-New) is preserved under [`archive/paca-plus-plus-new/`](archive/paca-plus-plus-new/). The archive contains the original README, recovery notes, and text snapshots of source files, including source payloads that were embedded in malformed Git tree paths. It is archival material, not an importable working package. See `RECOVERY_NOTES.md` before attempting reconstruction.
