@@ -14,7 +14,7 @@ The incident review identifies two gaps a tool-call gate alone does not cover: r
 ## Implemented checks
 
 - Denies remote Markdown image beacons.
-- Denies remote HTML image, iframe, script, source, video and audio content.
+- Denies raw HTML active elements (including image, iframe, script, SVG, form and embedded media), including data-URI and event-handler variants.
 - Denies HTTP(S) links unless their host is explicitly allowlisted.
 - Denies common credential patterns and configured sensitive values.
 - Checks output type, Unicode validity and size.

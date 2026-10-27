@@ -49,6 +49,8 @@ class OutputBoundaryTests(unittest.TestCase):
             '<img src="https://attacker.example/x">',
             '<script src="https://attacker.example/x"></script>',
             '<iframe src="https://attacker.example/x"></iframe>',
+            '<svg onload="fetch(\'https://attacker.example/x\')"></svg>',
+            '<img src="data:image/svg+xml,blocked">',
         ):
             with self.subTest(text=text):
                 self.assertFalse(OutputBoundary().inspect(text).allowed)

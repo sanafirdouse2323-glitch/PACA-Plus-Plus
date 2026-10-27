@@ -15,7 +15,7 @@ import re
 TRUST_LEVELS = frozenset({"trusted", "internal", "untrusted", "unknown"})
 _URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 _MD_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(\s*<?(https?://[^\s)>]+)", re.IGNORECASE)
-_HTML_REMOTE_RE = re.compile(r"(?is)<\s*(img|iframe|script|source|video|audio)\b[^>]*https?://")
+_HTML_ACTIVE_RE = re.compile(r"(?is)<\s*(img|iframe|script|source|video|audio|object|embed|svg|form|input|link|meta)\b")
 _SECRET_PATTERNS = (
     re.compile(r"(?i)\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|password)\s*[:=]\s*[^\s,;]+"),
     re.compile(r"\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{20,})\b"),
@@ -146,11 +146,8 @@ class OutputBoundary:
         reasons: set[str] = set()
         if _MD_IMAGE_RE.search(decoded):
             reasons.add("remote_image_beacon")
-        for match in _HTML_REMOTE_RE.finditer(decoded):
-            tag, attr, _, value = match.groups()
-            if tag.lower() in {"img", "iframe", "script", "source", "video", "audio"}:
-                if attr.lower() in {"src", "srcset"} and re.search(r"(?i)https?://", value):
-                    reasons.add("remote_embedded_content")
+        if _HTML_ACTIVE_RE.search(decoded):
+            reasons.add("active_html_content")
         for match in _URL_RE.finditer(decoded):
             raw_url = match.group(0).rstrip(".,;:!?) ]}")
             try:
@@ -161,6 +158,12 @@ class OutputBoundary:
                 continue
             if parsed.scheme.lower() not in {"http", "https"} or not host:
                 reasons.add("malformed_url")
+            elif parsed.username is not None or parsed.password is not None:
+                reasons.add("url_credentials_forbidden")
+            elif parsed.scheme.lower() != "https":
+                reasons.add("insecure_link_forbidden")
+            elif parsed.port not in {None, 443}:
+                reasons.add("nonstandard_link_port_forbidden")
             elif host not in self.allowed_link_hosts:
                 reasons.add("external_link_not_allowlisted")
         for pattern in _SECRET_PATTERNS:
