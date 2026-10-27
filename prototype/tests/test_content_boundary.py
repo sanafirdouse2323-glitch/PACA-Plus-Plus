@@ -25,10 +25,15 @@ class RetrievalBoundaryTests(unittest.TestCase):
 
     def test_retrieval_budgets_are_enforced(self):
         docs = [ProvenancedDocument.create(str(i), "kb", "trusted", "1234") for i in range(3)]
-        result = filter_retrieval(docs, max_documents=2, max_total_characters=6)
+        result = filter_retrieval(docs, max_documents=2, max_total_characters=8)
+        self.assertEqual([x.document_id for x in result.included], ["0", "1"])
+        self.assertEqual(result.excluded, (("2", "document_budget_exceeded"),))
+
+    def test_character_budget_rejects_content_that_would_exceed_limit(self):
+        docs = [ProvenancedDocument.create(str(i), "kb", "trusted", "1234") for i in range(2)]
+        result = filter_retrieval(docs, max_total_characters=6)
         self.assertEqual([x.document_id for x in result.included], ["0"])
-        self.assertEqual(result.excluded[0][1], "character_budget_exceeded")
-        self.assertEqual(result.excluded[1][1], "document_budget_exceeded")
+        self.assertEqual(result.excluded, (("1", "character_budget_exceeded"),))
 
     def test_invalid_trust_and_invalid_budget_fail_closed(self):
         with self.assertRaises(ContentBoundaryError):
