@@ -316,3 +316,144 @@ class TestPostgresStoreIntegration:
             )
         with pytest.raises(InsufficientPrivilege), self.store.pool.connection() as conn:
             conn.execute("DELETE FROM audit_events WHERE event_id = %s", (row["event_id"],))
+
+    def test_runtime_role_cannot_escalate_or_mutate_privileged_objects(self):
+        """Exercise database grants, separately from row-level tenant policies."""
+        with self.store.pool.connection() as conn:
+            grants = conn.execute(
+                """
+                SELECT
+                    has_schema_privilege(current_user, 'public', 'CREATE') AS can_create_in_public,
+                    has_table_privilege(current_user, 'protected_resources', 'DELETE') AS can_delete_resources,
+                    has_table_privilege(current_user, 'authz_permits', 'DELETE') AS can_delete_permits,
+                    has_table_privilege(current_user, 'authz_executions', 'DELETE') AS can_delete_executions,
+                    has_table_privilege(current_user, 'audit_events', 'UPDATE') AS can_update_audit,
+                    has_table_privilege(current_user, 'audit_events', 'DELETE') AS can_delete_audit,
+                    has_function_privilege(
+                        current_user, 'public.paca_reject_audit_mutation()', 'EXECUTE'
+                    ) AS can_call_audit_trigger_function
+                """
+            ).fetchone()
+        assert grants["can_create_in_public"] is False
+        assert grants["can_delete_resources"] is False
+        assert grants["can_delete_permits"] is False
+        assert grants["can_delete_executions"] is False
+        assert grants["can_update_audit"] is False
+        assert grants["can_delete_audit"] is False
+        assert grants["can_call_audit_trigger_function"] is False
+
+        table_name = "runtime_escalation_probe_" + uuid4().hex
+        with pytest.raises(InsufficientPrivilege):
+            with self.store.pool.connection() as conn:
+                conn.execute(f"CREATE TABLE public.{table_name} (id integer)")
+
+        # A runtime login must not be able to assume the administrative role.
+        with pytest.raises((InsufficientPrivilege, psycopg.errors.InvalidAuthorizationSpecification)):
+            with self.store.pool.connection() as conn:
+                conn.execute("SET ROLE paca")
+
+    def test_security_definer_functions_are_pinned_and_recovery_threshold_is_bounded(self):
+        with self.store.pool.connection() as conn:
+            functions = conn.execute(
+                """
+                SELECT p.proname, p.prosecdef, p.proconfig,
+                       pg_get_userbyid(p.proowner) AS function_owner,
+                       has_function_privilege(current_user, p.oid, 'EXECUTE') AS runtime_can_execute
+                FROM pg_proc AS p
+                JOIN pg_namespace AS n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public'
+                  AND p.proname IN (
+                    'paca_lock_resource_for_execution',
+                    'paca_mark_stale_executions_unknown'
+                  )
+                """
+            ).fetchall()
+        by_name = {row["proname"]: row for row in functions}
+        assert set(by_name) == {
+            "paca_lock_resource_for_execution",
+            "paca_mark_stale_executions_unknown",
+        }
+        for row in by_name.values():
+            assert row["prosecdef"] is True
+            assert row["function_owner"] != "paca_runtime"
+            assert any(
+                setting.replace(" ", "") == "search_path=pg_catalog,public"
+                for setting in (row["proconfig"] or [])
+            )
+            assert row["runtime_can_execute"] is True
+
+        # The cross-tenant recovery function is intentionally callable by the
+        # runtime role; reject out-of-range thresholds at the database boundary.
+        for threshold in (0, 86401):
+            with pytest.raises(psycopg.errors.InvalidParameterValue):
+                with self.store.pool.connection() as conn:
+                    conn.execute(
+                        "SELECT public.paca_mark_stale_executions_unknown(%s)",
+                        (threshold,),
+                    )
+
+    def test_compromised_runtime_credential_can_change_rls_tenant_context(self):
+        """Executable evidence of the documented stolen-DB-credential boundary.
+
+        This is not a passing tenant-isolation control: it proves that custom GUC
+        RLS context is trusted application state, not a database-authenticated
+        tenant identity. A party holding the raw runtime credential can switch
+        the setting and read/update another tenant's permit. Keep this test so
+        the residual risk remains explicit rather than claiming RLS prevents it.
+        """
+        other_tenant = "compromised-" + uuid4().hex
+        other_principal = "other-user-" + uuid4().hex
+        other_resource = "file-" + uuid4().hex
+        other_permit = uuid4()
+        with psycopg.connect(ADMIN_DATABASE_URL, row_factory=dict_row) as admin:
+            admin.execute(
+                """
+                INSERT INTO protected_resources
+                    (tenant_id, resource_id, owner_id, kind, status, attributes)
+                VALUES (%s, %s, %s, 'file', 'active', %s)
+                """,
+                (other_tenant, other_resource, other_principal, Jsonb({"relative_path": "private.txt"})),
+            )
+            admin.execute(
+                """
+                INSERT INTO authz_permits
+                    (permit_id, tenant_id, principal_id, action, resource_id,
+                     arguments_digest, context_digest, policy_revision, decision_id,
+                     status, expires_at)
+                VALUES (%s, %s, %s, 'file.read', %s, %s, %s, 'test-revision',
+                        'security-test', 'issued', now() + interval '10 minutes')
+                """,
+                (other_permit, other_tenant, other_principal, other_resource,
+                 self.arguments_digest, "b" * 64),
+            )
+
+        with self.store.pool.connection() as conn, conn.transaction():
+            conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (self.tenant_id,))
+            assert conn.execute(
+                "SELECT 1 FROM protected_resources WHERE tenant_id = %s AND resource_id = %s",
+                (other_tenant, other_resource),
+            ).fetchone() is None
+            conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (other_tenant,))
+            leaked_resource = conn.execute(
+                "SELECT tenant_id, resource_id FROM protected_resources WHERE resource_id = %s",
+                (other_resource,),
+            ).fetchone()
+            assert leaked_resource == {
+                "tenant_id": other_tenant, "resource_id": other_resource
+            }
+            changed = conn.execute(
+                """
+                UPDATE authz_permits SET status = 'revoked'
+                WHERE tenant_id = %s AND permit_id = %s
+                RETURNING status
+                """,
+                (other_tenant, other_permit),
+            ).fetchone()
+            assert changed == {"status": "revoked"}
+
+        with psycopg.connect(ADMIN_DATABASE_URL, row_factory=dict_row) as admin:
+            status = admin.execute(
+                "SELECT status FROM authz_permits WHERE permit_id = %s", (other_permit,)
+            ).fetchone()
+        assert status == {"status": "revoked"}
+
