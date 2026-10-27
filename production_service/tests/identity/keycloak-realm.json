@@ -86,7 +86,11 @@
           "value": "paca-e2e-only-password",
           "temporary": false
         }
-      ]
+      ],
+      "firstName": "PACA",
+      "lastName": "E2E User",
+      "email": "paca-e2e-user@example.test",
+      "requiredActions": []
     },
     {
       "username": "paca-other-user",
@@ -103,7 +107,11 @@
           "value": "paca-e2e-only-password",
           "temporary": false
         }
-      ]
+      ],
+      "firstName": "Other",
+      "lastName": "Tenant User",
+      "email": "paca-other-user@example.test",
+      "requiredActions": []
     }
   ]
 }
