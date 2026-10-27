@@ -281,10 +281,13 @@ class TestPostgresStoreIntegration:
     def test_stale_execution_is_classified_unknown_not_automatically_retried(self):
         claim = self.claim("stale-key")
         assert claim.disposition == "claimed"
-        with self.store.pool.connection() as conn:
+        with self.store.pool.connection() as conn, conn.transaction():
+            conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (self.tenant_id,))
             conn.execute(
-                "UPDATE authz_executions SET started_at = now() - interval '10 minutes' WHERE execution_id = %s",
-                (claim.execution_id,),
+                """UPDATE authz_executions
+                   SET started_at = now() - interval '10 minutes'
+                   WHERE execution_id = %s AND tenant_id = %s AND principal_id = %s""",
+                (claim.execution_id, self.tenant_id, self.principal_id),
             )
         assert self.store.mark_stale_executions_unknown(120) == 1
         status = self.store.get_execution_status(
@@ -299,7 +302,8 @@ class TestPostgresStoreIntegration:
             event_type="integration-test", tenant_id=self.tenant_id,
             principal_id=self.principal_id, request_id="test-request",
         )
-        with self.store.pool.connection() as conn:
+        with self.store.pool.connection() as conn, conn.transaction():
+            conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (self.tenant_id,))
             row = conn.execute(
                 "SELECT event_id FROM audit_events WHERE event_type = 'integration-test' AND tenant_id = %s LIMIT 1",
                 (self.tenant_id,),
