@@ -33,10 +33,10 @@ __all__ = [
     "AgentBoundaryError", "AgentToolBoundary", "AgentToolResult", "ApprovalRequired",
     "ArgumentSpec", "ToolSpec", "build_ticket_create_boundary",
     "ContentBoundaryError", "ProvenancedDocument", "ProvenanceAuthority", "RetrievalResult",
-    "filter_retrieval", "OutputDecision", "OutputBoundary",
+    "filter_retrieval", "OutputDecision", "OutputBoundary", "OutputBlocked", "GuardedAgentPipeline",
 ]
 
 from .content_boundary import (
     ContentBoundaryError, ProvenancedDocument, ProvenanceAuthority, RetrievalResult,
-    filter_retrieval, OutputDecision, OutputBoundary,
+    filter_retrieval, OutputDecision, OutputBoundary, OutputBlocked, GuardedAgentPipeline,
 )

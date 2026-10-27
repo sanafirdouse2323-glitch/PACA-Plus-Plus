@@ -6,7 +6,7 @@ The incident review identifies two gaps a tool-call gate alone does not cover: r
 
 ## Request path
 
-1. **Ingestion:** a trusted component assigns each document a source identifier and trust label: `trusted`, `internal`, `untrusted`, or `unknown`. It issues provenance using `ProvenanceAuthority.issue`; an HMAC signature binds the document ID, source, trust label and content digest. Never derive trust from the document's own claims or model-generated metadata. Keep the HMAC key only in trusted ingestion/retrieval code; never expose it to an LLM, plugin or tool output. For separate ingestion and retrieval services, use an asymmetric signing service instead of distributing the HMAC secret.
+1. **Ingestion:** a trusted component assigns each document a source identifier and trust label: `trusted`, `internal`, `untrusted`, or `unknown`. It issues provenance using `ProvenanceAuthority.issue`; an HMAC binds the document ID, source, source-policy-derived trust label and content digest. Trust levels come from an administrator-configured source-to-trust mapping; unregistered sources become `unknown`. The issuer does not accept a caller-supplied trust label. Never derive trust from the document's own claims or model-generated metadata. Keep the HMAC key only in trusted ingestion/retrieval code; never expose it to an LLM, plugin or tool output. For separate ingestion and retrieval services, use an asymmetric signing service instead of distributing the HMAC secret.
 2. **Retrieval gate:** call `filter_retrieval` after candidate retrieval and before content enters model context. The default admits only `trusted` and `internal`. Other items are excluded with a reason code. A use case may explicitly allow untrusted content as data, but must retain its label and never promote its authority.
 3. **Agent reasoning:** labels are context, not authorization. The model may still be influenced by injected instructions. Every proposed effect must go through the existing `AgentToolBoundary` and `GuardedGateway`.
 4. **Output gate:** call `OutputBoundary.inspect` after generation and before returning content to a UI, sending a message, or invoking a renderer. Deliver only when `allowed=True`. If denied, do not deliver or render the original output; return a fixed safe error or regenerate under a constrained policy.
@@ -23,7 +23,7 @@ The incident review identifies two gaps a tool-call gate alone does not cover: r
 
 ## Limits that must remain explicit
 
-- HMAC provenance is only as safe as key custody. If untrusted code has access to the authority/key, it can issue a trusted label. HMAC verifies issuer possession and integrity; it does not establish that the source content is truthful or safe.
+- HMAC-authenticated provenance is only as safe as key custody. If untrusted code has access to the authority/key, it can issue a trusted label. HMAC verifies issuer possession and integrity; it does not establish that the source content is truthful or safe.
 - This is not a universal prompt-injection detector and does not reliably detect every secret, PII item, encoded payload, steganographic channel or covert channel.
 - The host allowlist must be administrator-controlled. An allowed host can still leak data through query parameters; only allow hosts that are safe to receive the output.
 - This checks output text, not every downstream client's behavior. Clients need restrictive rendering, disabled raw HTML/remote images, CSP and network-egress policy as appropriate.
@@ -40,8 +40,11 @@ from paca_mvp.content_boundary import OutputBoundary, ProvenanceAuthority, filte
 
 # Illustrative only: load a unique random key (at least 32 bytes) from a secret manager.
 # Only trusted ingestion code should receive the authority that can issue provenance.
-authority = ProvenanceAuthority(provenance_key_from_secret_manager)
-document = authority.issue("doc-123", "internal-kb", "trusted", "approved text")
+authority = ProvenanceAuthority(
+    provenance_key_from_secret_manager,
+    source_trust_levels={"internal-kb": "trusted", "web": "untrusted"},
+)
+document = authority.issue("doc-123", "internal-kb", "approved text")
 retrieval = filter_retrieval(candidate_documents, authority=authority)
 model_context = [
     {"source": d.source, "trust": d.trust, "content": d.content}
@@ -56,6 +59,28 @@ if not decision.allowed:
     return {"error": "output_blocked", "reasons": list(decision.reason_codes)}
 return {"text": decision.text}
 ```
+
+### One facade for the full boundary
+
+Use `GuardedAgentPipeline` in the host orchestrator so retrieval, model-proposed tool calls, and user-visible output use the same configured boundaries. Deliver only the string returned by `release_output`; if it raises `OutputBlocked`, do not deliver the original model output.
+
+```python
+from paca_mvp import (
+    GuardedAgentPipeline, ProvenanceAuthority, OutputBoundary,
+)
+
+pipeline = GuardedAgentPipeline(
+    provenance_authority=provenance_authority,
+    tool_boundary=agent_tool_boundary,
+    output_boundary=OutputBoundary(allowed_link_hosts=("docs.example.org",)),
+)
+retrieval = pipeline.retrieve(candidate_documents)
+tool_result = pipeline.invoke_tool(tool_call, call_id=trusted_operation_id)
+safe_text = pipeline.release_output(generated_text)
+deliver_to_user(safe_text)  # never deliver generated_text directly
+```
+
+The repository does not implement an LLM generation loop; the host application must use this facade on every relevant path. It cannot stop a separate code path from bypassing the facade or calling an exposed downstream endpoint directly.
 
 The example host and sensitive value are placeholders. Do not log raw blocked output by default because it may contain the secret that triggered the block.
 

@@ -1,6 +1,6 @@
 # Agent attack boundary: enforce policy outside the model
 
-For retrieval-time provenance filtering and output exfiltration checks, see [Content boundaries](CONTENT_BOUNDARIES.md). The tool-call boundary and content boundary are complementary: neither replaces the other.
+For retrieval-time provenance filtering and output exfiltration checks, see [Content boundaries](CONTENT_BOUNDARIES.md). `GuardedAgentPipeline` composes the existing tool-call, retrieval and output gates without reimplementing authorization; the host LLM orchestrator must use it for every relevant path.
 
 ## Purpose and scope
 

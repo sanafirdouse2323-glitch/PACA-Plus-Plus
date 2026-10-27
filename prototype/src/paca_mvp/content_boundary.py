@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 import hmac
 import json
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import urlsplit
 import html
 import re
@@ -48,10 +48,22 @@ class ProvenanceAuthority:
     pass it to an LLM, tool output parser, or untrusted plugin. For separate
     ingestion/retrieval services use an asymmetric signing service instead.
     """
-    def __init__(self, key: bytes):
+    def __init__(self, key: bytes, source_trust_levels: Mapping[str, str]):
         if not isinstance(key, bytes) or len(key) < 32:
             raise ContentBoundaryError("provenance HMAC key must be at least 32 bytes")
+        if not isinstance(source_trust_levels, Mapping):
+            raise ContentBoundaryError("source_trust_levels must be an administrator-configured mapping")
+        configured: dict[str, str] = {}
+        for source, trust in source_trust_levels.items():
+            if not isinstance(source, str) or not source.strip() or len(source) > 512:
+                raise ContentBoundaryError("configured source IDs must be non-empty bounded strings")
+            if any(ord(ch) < 32 for ch in source):
+                raise ContentBoundaryError("configured source IDs must not contain control characters")
+            if not isinstance(trust, str) or trust not in TRUST_LEVELS:
+                raise ContentBoundaryError("configured source trust level is invalid")
+            configured[source] = trust
         self._key = bytes(key)
+        self._source_trust_levels = configured
 
     @staticmethod
     def _validate_fields(document_id: str, source: str, trust: str, content: str) -> bytes:
@@ -82,8 +94,9 @@ class ProvenanceAuthority:
             ensure_ascii=False, separators=(",", ":"),
         ).encode("utf-8")
 
-    def issue(self, document_id: str, source: str, trust: str, content: str) -> ProvenancedDocument:
-        """Issue provenance in the trusted ingestion path."""
+    def issue(self, document_id: str, source: str, content: str) -> ProvenancedDocument:
+        """Issue provenance using trust fixed by administrator source configuration."""
+        trust = self._source_trust_levels.get(source, "unknown")
         raw = self._validate_fields(document_id, source, trust, content)
         digest = sha256(raw).hexdigest()
         signature = hmac.new(
@@ -99,6 +112,9 @@ class ProvenanceAuthority:
             raw = self._validate_fields(
                 document.document_id, document.source, document.trust, document.content
             )
+            expected_trust = self._source_trust_levels.get(document.source, "unknown")
+            if document.trust != expected_trust:
+                return False
             actual_digest = sha256(raw).hexdigest()
             if not hmac.compare_digest(actual_digest, document.content_sha256):
                 return False
@@ -248,3 +264,78 @@ class OutputBoundary:
         if reasons:
             return OutputDecision(False, tuple(sorted(reasons)), None)
         return OutputDecision(True, (), output)
+
+
+class OutputBlocked(ContentBoundaryError):
+    """A generated response was blocked before delivery or rendering."""
+    def __init__(self, reason_codes: Sequence[str]):
+        self.reason_codes = tuple(reason_codes)
+        super().__init__("generated output was blocked by the content boundary")
+
+
+class GuardedAgentPipeline:
+    """Single orchestration facade for retrieval, tool effects, and final output.
+
+    The actual LLM orchestration loop remains in the host application. It should
+    use this facade for each retrieval, proposed tool call, and user-visible output.
+    This class composes existing guards; it does not duplicate their enforcement
+    logic or create a second authorization engine.
+    """
+    def __init__(
+        self,
+        *,
+        provenance_authority: ProvenanceAuthority,
+        tool_boundary: Any,
+        output_boundary: OutputBoundary,
+        allowed_trust_levels: frozenset[str] = frozenset({"trusted", "internal"}),
+    ):
+        if not isinstance(provenance_authority, ProvenanceAuthority):
+            raise ContentBoundaryError("a configured ProvenanceAuthority is required")
+        if not callable(getattr(tool_boundary, "invoke", None)):
+            raise ContentBoundaryError("tool_boundary must expose invoke()")
+        if not isinstance(output_boundary, OutputBoundary):
+            raise ContentBoundaryError("an OutputBoundary is required")
+        if (not isinstance(allowed_trust_levels, (set, frozenset))
+                or not allowed_trust_levels or not allowed_trust_levels.issubset(TRUST_LEVELS)):
+            raise ContentBoundaryError("allowed_trust_levels contains invalid or no trust levels")
+        self._provenance_authority = provenance_authority
+        self._tool_boundary = tool_boundary
+        self._output_boundary = output_boundary
+        self._allowed_trust_levels = frozenset(allowed_trust_levels)
+
+    def retrieve(
+        self,
+        documents: Iterable[ProvenancedDocument],
+        *,
+        max_documents: int = 20,
+        max_total_characters: int = 40_000,
+    ) -> RetrievalResult:
+        return filter_retrieval(
+            documents,
+            authority=self._provenance_authority,
+            allowed_trust_levels=self._allowed_trust_levels,
+            max_documents=max_documents,
+            max_total_characters=max_total_characters,
+        )
+
+    def invoke_tool(
+        self,
+        tool_call: Mapping[str, Any],
+        *,
+        call_id: str,
+        approval_token: str | None = None,
+        approval_subject: str | None = None,
+    ) -> Any:
+        return self._tool_boundary.invoke(
+            tool_call,
+            call_id=call_id,
+            approval_token=approval_token,
+            approval_subject=approval_subject,
+        )
+
+    def release_output(self, generated_text: str) -> str:
+        """Return only approved text; never return the original after a denial."""
+        decision = self._output_boundary.inspect(generated_text)
+        if not decision.allowed or decision.text is None:
+            raise OutputBlocked(decision.reason_codes)
+        return decision.text
