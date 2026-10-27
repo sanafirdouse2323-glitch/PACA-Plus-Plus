@@ -49,6 +49,14 @@ The gateway verifies RS256 tokens for one configured issuer/audience. In this im
 
 These are code-level checks, not independent deployment audit results. Existing database volumes do not rerun initialization scripts automatically; role migration and grants must be applied explicitly after a verified backup.
 
+## Runtime-credential compromise test and residual risk
+
+The PostgreSQL integration suite now checks the runtime role's DDL/table privileges, inability to assume the `paca` administrative role, fixed `search_path` on `SECURITY DEFINER` functions, and database-side bounds on the recovery threshold. It also contains an explicitly named adversarial test, `test_compromised_runtime_credential_can_change_rls_tenant_context`, that reproduces a known boundary: after switching the custom setting to another tenant, the runtime login can read that tenant's rows and update its permit state.
+
+That adversarial test is evidence of a residual risk, **not a passing tenant-isolation control**. A green CI result must not be interpreted as protection against stolen runtime database credentials or arbitrary SQL execution under that credential. The runtime role is least-privileged compared with the schema administrator, but it has write access to permit/execution state and permission to invoke the cross-tenant stale-execution recovery function. A compromised runtime credential can therefore affect authorization state across tenants.
+
+For threat models that include runtime credential theft or SQL injection, move away from a freely settable tenant GUC as the security identity. Consider per-tenant database roles/databases or a narrowly scoped trusted database-access broker. Move global recovery into a separate narrowly authorized worker/role if the runtime credential should not be able to trigger cross-tenant state transitions. Add tests for the chosen architecture before treating this threat as mitigated.
+
 ## RLS limitation
 
 The `paca.tenant_id` value is a custom session setting supplied by the application, not an identity PostgreSQL authenticates independently. RLS catches missing tenant predicates and constrains ordinary app paths when the trusted application sets the context correctly. It does not protect against an attacker who has raw access to the runtime database credential and can set the custom setting to another tenant. Keep that credential server-side, and use separate database roles/databases or a trusted broker if malicious SQL under the runtime credential is in scope.
