@@ -19,6 +19,9 @@ _URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
 _MD_IMAGE_RE = re.compile(r"!\s*\[[^\]]*\]\s*(?:\([^)]*\)|\[[^]]*\])?", re.IGNORECASE)
 _HTML_TAG_RE = re.compile(r"(?is)<\s*/?\s*[a-z][^>]*>")
 _MARKDOWN_DESTINATION_RE = re.compile(r"\[[^]]*\]\(\s*<?([^\s)>]+)", re.IGNORECASE)
+_MARKDOWN_REFERENCE_DESTINATION_RE = re.compile(
+    r"(?im)^[ \t]{0,3}\[[^\]\n]+\]:[ \t]*<?([^\s>]+)"
+)
 _SECRET_PATTERNS = (
     re.compile(r"(?i)\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|password)\s*[:=]\s*[^\s,;]+"),
     re.compile(r"\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{20,})\b"),
@@ -263,13 +266,14 @@ class OutputBoundary:
         # the destination may be declared on a separate line.
         if re.search(r"(?i)\b(?:javascript|data|file|vbscript)\s*:", decoded):
             reasons.add("unsafe_link_scheme")
-        for match in _MARKDOWN_DESTINATION_RE.finditer(decoded):
-            destination = match.group(1).strip("<>")
-            scheme = destination.split(":", 1)[0].lower() if ":" in destination else ""
-            if scheme and scheme not in {"http", "https"}:
-                reasons.add("unsafe_link_scheme")
-            elif destination.startswith("//"):
-                reasons.add("protocol_relative_link_forbidden")
+        for pattern in (_MARKDOWN_DESTINATION_RE, _MARKDOWN_REFERENCE_DESTINATION_RE):
+            for match in pattern.finditer(decoded):
+                destination = match.group(1).strip("<>")
+                scheme = destination.split(":", 1)[0].lower() if ":" in destination else ""
+                if scheme and scheme not in {"http", "https"}:
+                    reasons.add("unsafe_link_scheme")
+                elif destination.startswith("//"):
+                    reasons.add("protocol_relative_link_forbidden")
         for match in _URL_RE.finditer(decoded):
             raw_url = match.group(0).rstrip(".,;:!?) ]}")
             try:

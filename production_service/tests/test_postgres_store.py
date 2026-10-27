@@ -114,6 +114,27 @@ class TestPostgresStoreIntegration:
         assert privileges["can_update_audit"] is False
         assert privileges["can_delete_audit"] is False
 
+    def test_resource_lock_function_rejects_tenant_mismatch_with_transaction_context(self):
+        other_tenant_id = "other-" + uuid4().hex
+        other_resource_id = "file-" + uuid4().hex
+        with psycopg.connect(ADMIN_DATABASE_URL, row_factory=dict_row) as admin:
+            admin.execute(
+                """
+                INSERT INTO protected_resources
+                    (tenant_id, resource_id, owner_id, kind, status, attributes)
+                VALUES (%s, %s, %s, 'file', 'active', %s)
+                """,
+                (other_tenant_id, other_resource_id, self.principal_id, Jsonb(self.attributes)),
+            )
+
+        with self.store.pool.connection() as conn, conn.transaction():
+            conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (self.tenant_id,))
+            row = conn.execute(
+                "SELECT * FROM public.paca_lock_resource_for_execution(%s, %s)",
+                (other_tenant_id, other_resource_id),
+            ).fetchone()
+        assert row is None
+
     def test_concurrent_claim_consumes_permit_at_most_once_and_replays_durably(self):
         with ThreadPoolExecutor(max_workers=2) as executor:
             results = list(executor.map(lambda _: self.claim("same-key"), range(2)))
