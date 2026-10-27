@@ -6,6 +6,8 @@ PACA++ explores authorization correctness at the protected-effect boundary of LL
 
 ## What is in this repository?
 
+- **`legacy_policy_engine/`:** the usable source snapshot from the earlier `PACA-Plus-Plus-New` repository, relocated as a separate legacy package to avoid replacing similarly named files in the current compiler, prototype, or production service. Its dependency manifest and tests are included. The legacy source is not yet wired into the root CI and should be validated independently before it is treated as part of the supported API.
+
 - **`compiler/` and root `tests/`:** an experimental policy-subset parser and text emitters, with regression tests for the supported subset. Unsupported entity mappings and semantics fail explicitly instead of silently generating an output.
 - **`prototype/`:** the legacy in-memory JSON-policy engine and simulated-effect CLI; a separate hardening path adds OPA, OIDC/JWKS verification, trusted authorization context, SQLite/PostgreSQL coordination, execution recovery, adapters, and a transactional audit outbox. The legacy engine and hardening path have different trust and durability properties.
 - **`production_service/`:** a separately packaged FastAPI gateway combining verified JWT authentication, an OPA/Rego decision, resource-context lookup, PostgreSQL permits/execution records, and configured effect adapters. It is not the compiler, and it is not the same implementation as the `prototype/` gateway.
@@ -49,6 +51,6 @@ CI results show that specified tests passed on a particular commit. They do not 
 The current evidence is a research/engineering scaffold. Before claiming a novel contribution, the supported semantics and threat model need a reproducible specification, differential tests against relevant systems, and a literature/artifact comparison. A successful build is useful implementation evidence, not proof of novelty.
 
 
-## Preserved source archive
+## Consolidated repository note
 
-The separate [PACA-Plus-Plus-New repository](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus-New) is preserved under [`archive/paca-plus-plus-new/`](archive/paca-plus-plus-new/). The archive contains the original README, recovery notes, and text snapshots of source files, including source payloads that were embedded in malformed Git tree paths. It is archival material, not an importable working package. See `RECOVERY_NOTES.md` before attempting reconstruction.
+The usable legacy policy-engine source is included under [`legacy_policy_engine/`](legacy_policy_engine/). The prior `PACA-Plus-Plus-New` repository remains unchanged as a backup for now; this avoids destroying the source history while the consolidation is validated. The archived snapshot under `archive/paca-plus-plus-new/` is historical material, not an importable working package.
