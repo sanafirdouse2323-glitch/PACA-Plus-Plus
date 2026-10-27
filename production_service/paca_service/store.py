@@ -77,7 +77,7 @@ class PostgresStore:
             or len(tenant_id) > 512 or any(ord(ch) < 32 for ch in tenant_id)
         ):
             raise StoreError("a valid tenant context is required for database access")
-        self._set_tenant_context(conn, tenant_id)
+        conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (tenant_id,))
 
     def fetch_resource(self, tenant_id: str, resource_id: str) -> dict[str, Any] | None:
         with self.pool.connection() as conn, conn.transaction():
