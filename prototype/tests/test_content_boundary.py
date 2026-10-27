@@ -113,7 +113,7 @@ class OutputBoundaryTests(unittest.TestCase):
         for text in (
             "[go](javascript:alert(1))",
             "[go](data:text/html,hello)",
-            "[go][ref]\\n\\n[ref]: javascript:alert(1)",
+            "[go][ref]\n\n[ref]: javascript:alert(1)",
             "https://docs.example:bad/path",
             "http://docs.example/path",
             "https://user:pass@docs.example/path",

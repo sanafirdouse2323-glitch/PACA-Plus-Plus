@@ -212,7 +212,7 @@ class OutputBoundary:
             reasons.add("raw_html_forbidden")
         # Also catch dangerous URI schemes in reference-style Markdown links, where
         # the destination may be declared on a separate line.
-        if re.search(r"(?i)\\b(?:javascript|data|file|vbscript)\\s*:", decoded):
+        if re.search(r"(?i)\b(?:javascript|data|file|vbscript)\s*:", decoded):
             reasons.add("unsafe_link_scheme")
         for match in _MARKDOWN_DESTINATION_RE.finditer(decoded):
             destination = match.group(1).strip("<>")
