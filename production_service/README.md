@@ -55,13 +55,17 @@ See [IDENTITY_PROVIDER.md](IDENTITY_PROVIDER.md) for the provider claim contract
 
 CI starts a real Keycloak server with the isolated test realm in `tests/identity/keycloak-realm.json`. The integration test fetches its live OIDC discovery document, requests access tokens from its token endpoint, verifies those tokens through the real JWKS endpoint, and sends them through the actual FastAPI authorization endpoint, PostgreSQL permit/execution store, OPA policy engine, and sandboxed file adapter. It checks successful execution/status, wrong-audience rejection, cross-tenant isolation, and same-tenant owner denial.
 
-Run the targeted check only while a Keycloak test realm, OPA, and the PostgreSQL test database are running:
+Run the targeted check only while a Keycloak test realm, OPA, and an **isolated disposable PostgreSQL test database** are reachable from the test process. Set both database DSNs first: `PACA_TEST_ADMIN_DATABASE_URL` must use the test database's administrative/fixture-provisioning role, and `PACA_TEST_DATABASE_URL` must use the restricted runtime role. The test intentionally skips if either DSN is absent; a skipped test is not a successful OIDC integration test.
 
 ```sh
+export PACA_TEST_ADMIN_DATABASE_URL='<admin DSN for disposable test database>'
+export PACA_TEST_DATABASE_URL='<restricted runtime DSN for the same test database>'
 PACA_TEST_OIDC_REALM_URL=http://localhost:8081/realms/paca \
 PACA_TEST_OPA_URL=http://127.0.0.1:8181 \
 pytest tests/test_oidc_integration.py -q
 ```
+
+Replace the two quoted DSN examples with valid connection URLs; do not point this test at a production database. The CI workflow provisions an isolated PostgreSQL service with the separate administrative and restricted runtime credentials and runs this end-to-end test explicitly.
 
 The committed test realm is **for automated local/CI testing only**. It uses HTTP, a test user/password, password-grant authentication, and a hard-coded demonstration scope claim. Do not reuse those credentials, password grant, or hard-coded permissions in production. For production, deploy Keycloak in a supported secure mode behind HTTPS, use a public client with Authorization Code + PKCE for interactive applications, configure the API audience mapper and administrator-controlled tenant/role/scope mappings, and use short-lived access tokens. A successful local/CI flow is integration evidence, not proof that an external organization's tenant has been provisioned or that its policies are correct.
 
