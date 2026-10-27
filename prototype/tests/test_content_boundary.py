@@ -141,6 +141,12 @@ class OutputBoundaryTests(unittest.TestCase):
                 result = OutputBoundary(allowed_link_hosts=("docs.example",)).inspect(text)
                 self.assertFalse(result.allowed)
 
+    def test_protocol_relative_reference_link_is_blocked(self):
+        text = "[click][away]\n\n[away]: //attacker.example/path"
+        result = OutputBoundary().inspect(text)
+        self.assertFalse(result.allowed)
+        self.assertIn("protocol_relative_link_forbidden", result.reason_codes)
+
     def test_markdown_reference_images_are_blocked(self):
         result = OutputBoundary(allowed_link_hosts=("docs.example",)).inspect(
             "![pixel][track]\n\n[track]: https://docs.example/pixel?secret=1"

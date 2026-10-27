@@ -23,7 +23,8 @@ SET search_path = pg_catalog, public
 AS $paca_lock$
     SELECT pr.tenant_id, pr.resource_id, pr.owner_id, pr.kind, pr.status, pr.attributes
     FROM public.protected_resources AS pr
-    WHERE pr.tenant_id = p_tenant_id
+    WHERE p_tenant_id = current_setting('paca.tenant_id', true)
+      AND pr.tenant_id = p_tenant_id
       AND pr.resource_id = p_resource_id
     FOR SHARE
 $paca_lock$;
