@@ -41,12 +41,17 @@ The gateway verifies RS256 tokens for one configured issuer/audience. In this im
 ## Current safeguards checked into this repository
 
 - The local Compose API connects through `paca_runtime`, not the bootstrap/admin credential.
-- Runtime grants permit reading trusted resources, narrowly scoped permit/execution writes, and audit select/insert only.
+- Runtime grants permit reading trusted resources, narrowly scoped permit/execution writes, and audit select/insert only. Row-level-security policies scope all four tenant-bearing tables to the transaction-local `paca.tenant_id`; execution rows are composite-FK-bound to their permit's tenant and principal.
+- Tenant-aware store methods set the RLS context in a transaction and finalization requires both tenant and principal. Global stale-execution recovery is exposed only through a fixed, bounded, audited `SECURITY DEFINER` function; the runtime role cannot issue the original unscoped sweep as direct table DML.
 - Rego decisions carry the policy revision on default-deny and allow paths; CI exercises the actual OPA client readiness and an allow/deny pair.
 - Configuration rejects plaintext HTTP to remote OPA/downstream endpoints and requires `sslmode=verify-full` for remote PostgreSQL URLs.
 - PostgreSQL tests use a separate admin DSN for fixture provisioning and run service operations through the restricted runtime DSN.
 
 These are code-level checks, not independent deployment audit results. Existing database volumes do not rerun initialization scripts automatically; role migration and grants must be applied explicitly after a verified backup.
+
+## RLS limitation
+
+The `paca.tenant_id` value is a custom session setting supplied by the application, not an identity PostgreSQL authenticates independently. RLS catches missing tenant predicates and constrains ordinary app paths when the trusted application sets the context correctly. It does not protect against an attacker who has raw access to the runtime database credential and can set the custom setting to another tenant. Keep that credential server-side, and use separate database roles/databases or a trusted broker if malicious SQL under the runtime credential is in scope.
 
 ## Deployment gates before sensitive workloads
 
