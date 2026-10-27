@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha256
+import hmac
+import json
 from typing import Iterable, Sequence
 from urllib.parse import urlsplit
 import html
@@ -14,8 +16,9 @@ import re
 
 TRUST_LEVELS = frozenset({"trusted", "internal", "untrusted", "unknown"})
 _URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
-_MD_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(\s*<?(https?://[^\s)>]+)", re.IGNORECASE)
-_HTML_ACTIVE_RE = re.compile(r"(?is)<\s*(img|iframe|script|source|video|audio|object|embed|svg|form|input|link|meta)\b")
+_MD_IMAGE_RE = re.compile(r"!\s*\[[^\]]*\]\s*(?:\([^)]*\)|\[[^]]*\])?", re.IGNORECASE)
+_HTML_TAG_RE = re.compile(r"(?is)<\s*/?\s*[a-z][^>]*>")
+_MARKDOWN_DESTINATION_RE = re.compile(r"\[[^]]*\]\(\s*<?([^\s)>]+)", re.IGNORECASE)
 _SECRET_PATTERNS = (
     re.compile(r"(?i)\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|password)\s*[:=]\s*[^\s,;]+"),
     re.compile(r"\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{20,})\b"),
@@ -29,29 +32,79 @@ class ContentBoundaryError(ValueError):
 
 @dataclass(frozen=True)
 class ProvenancedDocument:
-    """A document plus provenance assigned by a trusted ingestion component."""
+    """A document and signed provenance metadata from the trusted ingestion boundary."""
     document_id: str
     source: str
     trust: str
     content: str
     content_sha256: str
+    provenance_signature: str
 
-    @classmethod
-    def create(cls, document_id: str, source: str, trust: str, content: str) -> "ProvenancedDocument":
+
+class ProvenanceAuthority:
+    """HMAC-based provenance issuer/verifier.
+
+    Hold the authority/key only in trusted ingestion and retrieval code. Do not
+    pass it to an LLM, tool output parser, or untrusted plugin. For separate
+    ingestion/retrieval services use an asymmetric signing service instead.
+    """
+    def __init__(self, key: bytes):
+        if not isinstance(key, bytes) or len(key) < 32:
+            raise ContentBoundaryError("provenance HMAC key must be at least 32 bytes")
+        self._key = bytes(key)
+
+    @staticmethod
+    def _validate_fields(document_id: str, source: str, trust: str, content: str) -> bytes:
         if not isinstance(document_id, str) or not document_id.strip() or len(document_id) > 256:
             raise ContentBoundaryError("document_id must be a non-empty bounded string")
         if not isinstance(source, str) or not source.strip() or len(source) > 512:
             raise ContentBoundaryError("source must be a non-empty bounded string")
-        if trust not in TRUST_LEVELS:
+        if not isinstance(trust, str) or trust not in TRUST_LEVELS:
             raise ContentBoundaryError("unknown provenance trust level")
         if not isinstance(content, str):
             raise ContentBoundaryError("document content must be text")
         try:
-            raw = content.encode("utf-8", errors="strict")
+            return content.encode("utf-8", errors="strict")
         except UnicodeEncodeError as exc:
             raise ContentBoundaryError("document contains invalid Unicode") from exc
-        return cls(document_id, source, trust, content, sha256(raw).hexdigest())
 
+    @staticmethod
+    def _payload(document_id: str, source: str, trust: str, content_sha256: str) -> bytes:
+        return json.dumps(
+            [document_id, source, trust, content_sha256],
+            ensure_ascii=False, separators=(",", ":"),
+        ).encode("utf-8")
+
+    def issue(self, document_id: str, source: str, trust: str, content: str) -> ProvenancedDocument:
+        """Issue provenance in the trusted ingestion path."""
+        raw = self._validate_fields(document_id, source, trust, content)
+        digest = sha256(raw).hexdigest()
+        signature = hmac.new(
+            self._key, self._payload(document_id, source, trust, digest), sha256
+        ).hexdigest()
+        return ProvenancedDocument(document_id, source, trust, content, digest, signature)
+
+    def verify(self, document: ProvenancedDocument) -> bool:
+        """Verify provenance signature and content digest; malformed objects fail."""
+        if not isinstance(document, ProvenancedDocument):
+            return False
+        try:
+            raw = self._validate_fields(
+                document.document_id, document.source, document.trust, document.content
+            )
+            actual_digest = sha256(raw).hexdigest()
+            if not hmac.compare_digest(actual_digest, document.content_sha256):
+                return False
+            expected = hmac.new(
+                self._key,
+                self._payload(document.document_id, document.source, document.trust, actual_digest),
+                sha256,
+            ).hexdigest()
+            return isinstance(document.provenance_signature, str) and hmac.compare_digest(
+                expected, document.provenance_signature
+            )
+        except (ContentBoundaryError, TypeError, ValueError, UnicodeEncodeError):
+            return False
 
 @dataclass(frozen=True)
 class RetrievalResult:
@@ -63,12 +116,16 @@ class RetrievalResult:
 def filter_retrieval(
     documents: Iterable[ProvenancedDocument],
     *,
+    authority: ProvenanceAuthority,
     allowed_trust_levels: frozenset[str] = frozenset({"trusted", "internal"}),
     max_documents: int = 20,
     max_total_characters: int = 40_000,
 ) -> RetrievalResult:
     """Apply retrieval-time provenance policy before content enters model context."""
-    if not allowed_trust_levels or not allowed_trust_levels.issubset(TRUST_LEVELS):
+    if not isinstance(authority, ProvenanceAuthority):
+        raise ContentBoundaryError("a trusted ProvenanceAuthority verifier is required")
+    if (not isinstance(allowed_trust_levels, (set, frozenset))
+            or not allowed_trust_levels or not allowed_trust_levels.issubset(TRUST_LEVELS)):
         raise ContentBoundaryError("allowed_trust_levels contains invalid or no trust levels")
     if max_documents < 0 or max_total_characters < 0:
         raise ContentBoundaryError("retrieval budgets must be non-negative")
@@ -78,12 +135,8 @@ def filter_retrieval(
     for doc in documents:
         if not isinstance(doc, ProvenancedDocument):
             raise ContentBoundaryError("retrieval input must contain ProvenancedDocument values")
-        try:
-            actual = sha256(doc.content.encode("utf-8", errors="strict")).hexdigest()
-        except (AttributeError, UnicodeEncodeError) as exc:
-            raise ContentBoundaryError("invalid document content") from exc
-        if actual != doc.content_sha256:
-            excluded.append((doc.document_id, "provenance_digest_mismatch"))
+        if not authority.verify(doc):
+            excluded.append((getattr(doc, "document_id", "<invalid>"), "invalid_provenance_signature"))
             continue
         if doc.trust not in allowed_trust_levels:
             excluded.append((doc.document_id, "trust_level_not_allowed"))
@@ -144,15 +197,25 @@ class OutputBoundary:
 
         decoded = html.unescape(output)
         reasons: set[str] = set()
+        # Deny all Markdown images, including reference-style images.
         if _MD_IMAGE_RE.search(decoded):
-            reasons.add("remote_image_beacon")
-        if _HTML_ACTIVE_RE.search(decoded):
-            reasons.add("active_html_content")
+            reasons.add("markdown_image_forbidden")
+        # This boundary accepts plain text/Markdown, not HTML.
+        if _HTML_TAG_RE.search(decoded):
+            reasons.add("raw_html_forbidden")
+        for match in _MARKDOWN_DESTINATION_RE.finditer(decoded):
+            destination = match.group(1).strip("<>")
+            scheme = destination.split(":", 1)[0].lower() if ":" in destination else ""
+            if scheme and scheme not in {"http", "https"}:
+                reasons.add("unsafe_link_scheme")
+            elif destination.startswith("//"):
+                reasons.add("protocol_relative_link_forbidden")
         for match in _URL_RE.finditer(decoded):
             raw_url = match.group(0).rstrip(".,;:!?) ]}")
             try:
                 parsed = urlsplit(raw_url)
                 host = (parsed.hostname or "").rstrip(".").lower()
+                port = parsed.port
             except ValueError:
                 reasons.add("malformed_url")
                 continue
@@ -162,7 +225,7 @@ class OutputBoundary:
                 reasons.add("url_credentials_forbidden")
             elif parsed.scheme.lower() != "https":
                 reasons.add("insecure_link_forbidden")
-            elif parsed.port not in {None, 443}:
+            elif port not in {None, 443}:
                 reasons.add("nonstandard_link_port_forbidden")
             elif host not in self.allowed_link_hosts:
                 reasons.add("external_link_not_allowlisted")
