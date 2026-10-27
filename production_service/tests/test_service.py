@@ -178,10 +178,13 @@ class FakeStore:
         return ClaimResult("claimed", execution_id=execution_id, status="executing")
 
     def finish_execution(
-        self, *, execution_id: str, outcome: str, result: dict[str, Any] | None,
+        self, *, execution_id: str, tenant_id: str, principal_id: str,
+        outcome: str, result: dict[str, Any] | None,
         error_code: str | None, request_id: str | None,
     ) -> None:
         item = self.executions[execution_id]
+        if (item["tenant_id"], item["principal_id"]) != (tenant_id, principal_id):
+            raise RuntimeError("execution tenant/principal mismatch")
         item["status"] = outcome
         item["result"] = result
         item["error_code"] = error_code
