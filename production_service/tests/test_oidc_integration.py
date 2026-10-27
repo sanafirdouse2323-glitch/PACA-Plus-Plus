@@ -251,35 +251,9 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
             )
             assert wrong_tenant.status_code == 404, wrong_tenant.text
     finally:
-        # Delete only records tied to the UUID-scoped resources created above.
-        # Respect the database FK graph: audit rows, executions, permits, resources.
+        # Audit events are append-only by design, including for the runtime role.
+        # Preserve those evidence records; clean only the FK-linked mutable test rows.
         with psycopg.connect(ADMIN_DATABASE_URL, row_factory=dict_row) as admin:
-            admin.execute(
-                """
-                DELETE FROM audit_events
-                WHERE tenant_id = %s
-                  AND (
-                    resource_id IN (%s, %s)
-                    OR permit_id IN (
-                        SELECT permit_id FROM authz_permits
-                        WHERE tenant_id = %s AND resource_id IN (%s, %s)
-                    )
-                    OR execution_id IN (
-                        SELECT execution_id FROM authz_executions
-                        WHERE tenant_id = %s
-                          AND permit_id IN (
-                            SELECT permit_id FROM authz_permits
-                            WHERE tenant_id = %s AND resource_id IN (%s, %s)
-                          )
-                    )
-                  )
-                """,
-                (
-                    principal.tenant_id, resource_id, denied_resource_id,
-                    principal.tenant_id, resource_id, denied_resource_id,
-                    principal.tenant_id, principal.tenant_id, resource_id, denied_resource_id,
-                ),
-            )
             admin.execute(
                 """
                 DELETE FROM authz_executions
