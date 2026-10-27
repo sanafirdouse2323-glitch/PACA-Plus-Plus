@@ -47,7 +47,7 @@ For an interactive application, use Authorization Code with PKCE and have that c
 
 ## 4. Signing-key rotation and JWKS caching
 
-The service uses PyJWT's `PyJWKClient` with a 300-second JWKS-set cache. The regression test exercises the real PyJWT client against a changing JWKS response: it first accepts a token signed by `key-1`, then publishes `key-2` and confirms that a token carrying the new `kid` triggers a JWKS refresh and is accepted.
+The service requires PyJWT 2.15.1 or newer (below 3.0) and uses `PyJWKClient` with a 300-second JWKS-set cache and an explicit 30-second cooldown between forced refreshes prompted by unknown key IDs. The regression test exercises the real PyJWT client against a changing JWKS response: it first accepts a token signed by `key-1`, then publishes `key-2` and confirms that a token carrying the new `kid` triggers a JWKS refresh and is accepted.
 
 For an identity-provider key rotation:
 1. Publish the new public signing key with a **new, unique `kid`**. Do not replace key material while reusing an existing `kid`.
@@ -55,7 +55,7 @@ For an identity-provider key rotation:
 3. Roll the change through staging and confirm that the service accepts the new-key token and still enforces issuer, audience, expiry, tenant, and authorization claims.
 4. Retire the old key only after the provider's intended overlap period and token lifetime have been considered.
 
-A token with an unknown `kid` causes PyJWT to refresh the JWKS set. The cached JWKS may continue to supply a previously known key for up to the configured cache lifespan (300 seconds); this is an explicit rotation/revocation latency to include in the deployment threat model. Do not treat removal of a key from the provider as immediate revocation of all tokens already verifiable with a cached key. For emergency key compromise, follow a tested provider-and-service incident procedure that accounts for cache lifetime, outstanding access-token lifetime, and any process/cache restart needed. The automated test simulates JWKS rotation; it does not rotate keys in your external organization’s identity tenant or prove its operational procedures.
+A token with an unknown `kid` can cause PyJWT to refresh the JWKS set, subject to the 30-second forced-refresh cooldown. Repeated unknown-key IDs cannot force an unbounded stream of JWKS fetches. A newly rotated key may not be accepted until the refresh cooldown permits another fetch; publish the new public key alongside the current key well before issuing tokens with the new key ID. The cached JWKS may continue to supply a previously known key for up to the configured cache lifespan (300 seconds); this is an explicit rotation/revocation latency to include in the deployment threat model. Do not treat removal of a key from the provider as immediate revocation of all tokens already verifiable with a cached key. For emergency key compromise, follow a tested provider-and-service incident procedure that accounts for cache lifetime, outstanding access-token lifetime, and any process/cache restart needed. The automated test simulates JWKS rotation; it does not rotate keys in your external organization’s identity tenant or prove its operational procedures.
 
 ## 5. What the live integration test proves
 
