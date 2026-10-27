@@ -1,5 +1,7 @@
 # Agent attack boundary: enforce policy outside the model
 
+For retrieval-time provenance filtering and output exfiltration checks, see [Content boundaries](CONTENT_BOUNDARIES.md). The tool-call boundary and content boundary are complementary: neither replaces the other.
+
 ## Purpose and scope
 
 This is an initial executable guard at the tool/effect boundary for LLM-agent systems. It does not try to prove that a model can never be prompt-injected. Instead, it prevents model-generated text from directly choosing arbitrary action names, resource IDs, routes, or argument fields, and ensures each proposed action still goes through the existing guarded gateway.
