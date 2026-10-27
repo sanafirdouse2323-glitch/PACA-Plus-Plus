@@ -343,14 +343,14 @@ class TestPostgresStoreIntegration:
         assert grants["can_call_audit_trigger_function"] is False
 
         table_name = "runtime_escalation_probe_" + uuid4().hex
-        with pytest.raises(InsufficientPrivilege):
-            with self.store.pool.connection() as conn:
-                conn.execute(f"CREATE TABLE public.{table_name} (id integer)")
+        with pytest.raises(InsufficientPrivilege), self.store.pool.connection() as conn:
+            conn.execute(f"CREATE TABLE public.{table_name} (id integer)")
 
         # A runtime login must not be able to assume the administrative role.
-        with pytest.raises((InsufficientPrivilege, psycopg.errors.InvalidAuthorizationSpecification)):
-            with self.store.pool.connection() as conn:
-                conn.execute("SET ROLE paca")
+        with pytest.raises(
+            (InsufficientPrivilege, psycopg.errors.InvalidAuthorizationSpecification)
+        ), self.store.pool.connection() as conn:
+            conn.execute("SET ROLE paca")
 
     def test_security_definer_functions_are_pinned_and_recovery_threshold_is_bounded(self):
         with self.store.pool.connection() as conn:
@@ -385,12 +385,11 @@ class TestPostgresStoreIntegration:
         # The cross-tenant recovery function is intentionally callable by the
         # runtime role; reject out-of-range thresholds at the database boundary.
         for threshold in (0, 86401):
-            with pytest.raises(psycopg.errors.InvalidParameterValue):
-                with self.store.pool.connection() as conn:
-                    conn.execute(
-                        "SELECT public.paca_mark_stale_executions_unknown(%s)",
-                        (threshold,),
-                    )
+            with pytest.raises(psycopg.errors.InvalidParameterValue), self.store.pool.connection() as conn:
+                conn.execute(
+                    "SELECT public.paca_mark_stale_executions_unknown(%s)",
+                    (threshold,),
+                )
 
     def test_compromised_runtime_credential_can_change_rls_tenant_context(self):
         """Executable evidence of the documented stolen-DB-credential boundary.
