@@ -477,7 +477,7 @@ def create_app(
         try:
             store.finish_execution(
                 execution_id=claim.execution_id, tenant_id=principal.tenant_id,
-                    principal_id=principal.subject, outcome="succeeded",
+                principal_id=principal.subject, outcome="succeeded",
                 result=result, error_code=None, request_id=rid,
             )
         except Exception:
