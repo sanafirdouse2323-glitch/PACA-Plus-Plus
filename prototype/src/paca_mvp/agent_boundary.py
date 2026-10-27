@@ -62,9 +62,24 @@ class ArgumentSpec:
     def __post_init__(self) -> None:
         if self.kind not in _KINDS:
             raise ValueError(f"unsupported argument kind: {self.kind!r}")
-        if (self.max_length < 0 or self.min_length < 0
-                or self.min_length > self.max_length or self.max_items < 0):
-            raise ValueError("argument limits are invalid")
+        if any(type(value) is not bool for value in (
+            self.required, self.non_whitespace, self.nullable
+        )):
+            raise ValueError("required, non_whitespace, and nullable must be booleans")
+        for label, value in (
+            ("max_length", self.max_length),
+            ("min_length", self.min_length),
+            ("max_items", self.max_items),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{label} must be a non-negative integer")
+        if self.min_length > self.max_length:
+            raise ValueError("argument minimum length cannot exceed maximum length")
+        for label, value in (("minimum", self.minimum), ("maximum", self.maximum)):
+            if value is not None and (
+                type(value) not in (int, float) or (type(value) is float and not math.isfinite(value))
+            ):
+                raise ValueError(f"argument {label} must be a finite number")
         if self.minimum is not None and self.maximum is not None and self.minimum > self.maximum:
             raise ValueError("argument minimum cannot exceed maximum")
         if self.kind not in {"integer", "number"} and (
@@ -73,9 +88,24 @@ class ArgumentSpec:
             raise ValueError("numeric bounds are only valid for integer/number arguments")
         if not isinstance(self.choices, (tuple, list)):
             raise ValueError("choices must be a tuple or list")
-        object.__setattr__(self, "choices", tuple(self.choices))
-        if any(not (item is None or type(item) in (str, int, float, bool)) for item in self.choices):
-            raise ValueError("choices must contain scalar JSON values")
+        choices = tuple(self.choices)
+        if self.kind == "string_list" and choices:
+            raise ValueError("choices are not supported for string_list arguments")
+        for item in choices:
+            if item is None:
+                if not self.nullable:
+                    raise ValueError("None is a valid choice only for nullable arguments")
+                continue
+            compatible = (
+                (self.kind == "string" and type(item) is str)
+                or (self.kind == "integer" and type(item) is int)
+                or (self.kind == "number" and type(item) in (int, float)
+                    and (type(item) is not float or math.isfinite(item)))
+                or (self.kind == "boolean" and type(item) is bool)
+            )
+            if not compatible:
+                raise ValueError("choices must match the argument kind and contain finite JSON scalars")
+        object.__setattr__(self, "choices", choices)
 
 
 @dataclass(frozen=True)
@@ -102,8 +132,10 @@ class ToolSpec:
             if not isinstance(spec, ArgumentSpec):
                 raise ValueError("schema values must be ArgumentSpec instances")
             checked[name] = spec
-        if self.max_argument_bytes < 1:
-            raise ValueError("max_argument_bytes must be positive")
+        if type(self.requires_approval) is not bool:
+            raise ValueError("requires_approval must be a boolean")
+        if isinstance(self.max_argument_bytes, bool) or not isinstance(self.max_argument_bytes, int) or self.max_argument_bytes < 1:
+            raise ValueError("max_argument_bytes must be a positive integer")
         object.__setattr__(self, "arguments", MappingProxyType(checked))
 
 
@@ -219,8 +251,13 @@ class AgentToolBoundary:
             raise ValueError("at least one trusted tool must be configured")
         if not callable(executor):
             raise ValueError("executor must be callable")
-        if max_calls_per_run < 1 or max_total_argument_bytes < 1 or max_result_bytes < 1:
-            raise ValueError("run and payload limits must be positive")
+        for label, value in (
+            ("max_calls_per_run", max_calls_per_run),
+            ("max_total_argument_bytes", max_total_argument_bytes),
+            ("max_result_bytes", max_result_bytes),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{label} must be a positive integer")
         checked: dict[str, ToolSpec] = {}
         for name, spec in tools.items():
             if not isinstance(name, str) or not isinstance(spec, ToolSpec) or name != spec.name:
@@ -237,6 +274,85 @@ class AgentToolBoundary:
         self._argument_bytes = 0
         self._records: dict[str, dict[str, Any]] = {}
         self._lock = threading.RLock()
+
+    @staticmethod
+    def _argument_schema(spec: ArgumentSpec) -> dict[str, Any]:
+        """Translate the enforced flat schema to a JSON-Schema description."""
+        if spec.kind == "string":
+            schema: dict[str, Any] = {
+                "type": "string",
+                "minLength": spec.min_length,
+                "maxLength": spec.max_length,
+            }
+            if spec.non_whitespace:
+                schema["pattern"] = r"\S"
+        elif spec.kind == "integer":
+            schema = {"type": "integer"}
+        elif spec.kind == "number":
+            schema = {"type": "number"}
+        elif spec.kind == "boolean":
+            schema = {"type": "boolean"}
+        elif spec.kind == "string_list":
+            item_schema: dict[str, Any] = {
+                "type": "string",
+                "minLength": spec.min_length,
+                "maxLength": spec.max_length,
+            }
+            if spec.non_whitespace:
+                item_schema["pattern"] = r"\S"
+            schema = {
+                "type": "array",
+                "items": item_schema,
+                "maxItems": spec.max_items,
+            }
+        else:
+            # ToolSpec and ArgumentSpec validate this before the boundary is created.
+            raise ValueError("unsupported argument kind in trusted tool configuration")
+
+        if spec.nullable:
+            base_type = schema["type"]
+            schema["type"] = [base_type, "null"]
+        if spec.choices:
+            enum_values = list(spec.choices)
+            if spec.nullable and None not in enum_values:
+                enum_values.append(None)
+            schema["enum"] = enum_values
+        if spec.kind in {"integer", "number"}:
+            if spec.minimum is not None:
+                schema["minimum"] = spec.minimum
+            if spec.maximum is not None:
+                schema["maximum"] = spec.maximum
+        return schema
+
+    def describe_tools(self) -> tuple[dict[str, Any], ...]:
+        """Return fresh model-facing schemas derived from the enforced allowlist.
+
+        Only the tool name and argument schema are exposed. Server-side action,
+        resource, executor, credentials, and approval-verifier details are omitted.
+        A model-facing schema is descriptive; invoke() remains the enforcement gate.
+        """
+        descriptions: list[dict[str, Any]] = []
+        for name, spec in self._tools.items():
+            properties = {
+                argument_name: self._argument_schema(rule)
+                for argument_name, rule in spec.arguments.items()
+            }
+            required = [
+                argument_name
+                for argument_name, rule in spec.arguments.items()
+                if rule.required
+            ]
+            descriptions.append({
+                "name": name,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                    "additionalProperties": False,
+                },
+                "requires_approval": spec.requires_approval,
+            })
+        return tuple(descriptions)
 
     def _emit(self, event: str, *, call_id: str, tool: str | None = None,
               request_hash: str | None = None, reason: str | None = None) -> None:

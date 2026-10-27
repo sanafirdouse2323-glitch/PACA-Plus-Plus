@@ -1,6 +1,6 @@
 # Agent attack boundary: enforce policy outside the model
 
-For retrieval-time provenance filtering and output exfiltration checks, see [Content boundaries](CONTENT_BOUNDARIES.md). `GuardedAgentPipeline` composes the existing tool-call, retrieval and output gates without reimplementing authorization; the host LLM orchestrator must use it for every relevant path. For inter-agent routing and message-taint checks, see [Inter-agent message boundary](INTER_AGENT_BOUNDARY.md); it is not a semantic prompt-injection detector.
+For a complete in-repository reference loop, see [Guarded agent runtime](AGENT_RUNTIME.md). It composes retrieval, model turns, tool calls and final-output release through `GuardedAgentPipeline`; it remains adapter-neutral and does not itself call a model vendor or stop unrelated host paths from bypassing it. For retrieval/output details, see [Content boundaries](CONTENT_BOUNDARIES.md). For inter-agent routing and message-taint checks, see [Inter-agent message boundary](INTER_AGENT_BOUNDARY.md); it is not a semantic prompt-injection detector.
 
 ## Purpose and scope
 

@@ -235,6 +235,46 @@ class AgentBoundaryTests(unittest.TestCase):
             boundary.invoke({"tool": "search", "arguments": {"query": "hello"}}, call_id="call-denied")
         self.assertEqual(ctx.exception.code, "gateway_rejected")
 
+    def test_argument_spec_rejects_malformed_limits_and_incompatible_choices(self):
+        with self.assertRaises(ValueError):
+            ArgumentSpec("string", max_length=True)
+        with self.assertRaises(ValueError):
+            ArgumentSpec("integer", choices=(True,))
+        with self.assertRaises(ValueError):
+            ArgumentSpec("string", choices=(None,))
+        with self.assertRaises(ValueError):
+            ArgumentSpec("string_list", choices=("one",))
+        with self.assertRaises(ValueError):
+            ArgumentSpec("number", minimum=float("nan"))
+
+    def test_nullable_choice_schema_matches_runtime_acceptance(self):
+        effects = []
+        spec = ToolSpec("choose", "settings.choose", "settings:default", {
+            "mode": ArgumentSpec("string", required=False, nullable=True, choices=("safe",)),
+        })
+        boundary = AgentToolBoundary(
+            {"choose": spec},
+            lambda action, resource, args, call_id: effects.append(dict(args)) or {"ok": True},
+        )
+        schema = boundary.describe_tools()[0]["parameters"]["properties"]["mode"]
+        self.assertEqual(schema["enum"], ["safe", None])
+        result = boundary.invoke(
+            {"tool": "choose", "arguments": {"mode": None}},
+            call_id="nullable-choice",
+        )
+        self.assertEqual(result.payload, {"ok": True})
+        self.assertEqual(effects, [{"mode": None}])
+
+    def test_tool_spec_and_boundary_budgets_reject_boolean_limits(self):
+        arguments = {"query": ArgumentSpec("string")}
+        with self.assertRaises(ValueError):
+            ToolSpec("sample", "sample.read", "sample:one", arguments, requires_approval=1)
+        with self.assertRaises(ValueError):
+            ToolSpec("sample", "sample.read", "sample:one", arguments, max_argument_bytes=True)
+        spec = ToolSpec("sample", "sample.read", "sample:one", arguments)
+        with self.assertRaises(ValueError):
+            AgentToolBoundary({"sample": spec}, self.executor, max_calls_per_run=True)
+
     def test_ticket_helper_binds_model_call_to_guarded_gateway(self):
         gateway = Mock()
         gateway.authorize_and_execute.return_value = {"ticket_id": "t-1"}

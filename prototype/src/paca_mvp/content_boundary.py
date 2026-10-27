@@ -336,6 +336,13 @@ class GuardedAgentPipeline:
         self._output_boundary = output_boundary
         self._allowed_trust_levels = frozenset(allowed_trust_levels)
 
+    def describe_tools(self) -> tuple[dict[str, Any], ...]:
+        """Return model-facing schemas from the exact boundary used for invocation."""
+        describe = getattr(self._tool_boundary, "describe_tools", None)
+        if not callable(describe):
+            raise ContentBoundaryError("tool_boundary must expose describe_tools() for guarded orchestration")
+        return describe()
+
     def retrieve(
         self,
         documents: Iterable[ProvenancedDocument],
