@@ -1,14 +1,16 @@
 # PACA++ Research Prototype
 
-The repository keeps its original ALFA/UCON+ compiler goal distinct from its Python research prototypes. The checked-in Python package currently does not parse or compile ALFA/UCON+ policies.
+This directory contains the Python research prototype. It is separate from the top-level `compiler/` experiment. The Python package does **not** parse or compile ALFA/UCON+ policies.
 
 ## Requirements
 
 - Python 3.10 or newer.
-- PyJWT with cryptography support is installed by the project package for configured RS256/OIDC verification.
-- Docker is needed only for the real OPA policy smoke test.
+- PyJWT with cryptography support for configured RS256/OIDC verification.
+- Docker only for the real OPA and PostgreSQL integration checks.
 
-## Run from this directory
+## Run locally
+
+From this directory:
 
 ~~~bash
 python -m pip install -e ".[web,test]"
@@ -18,23 +20,47 @@ python experiments/run_experiments.py
 docker compose up -d opa
 docker compose --profile integration up -d postgres
 python examples/opa_smoke.py
-# Use real deployment credentials in .env, then run:
-# uvicorn paca_mvp.service:create_app --factory --host 127.0.0.1 --port 8080
 docker compose down
 ~~~
 
-The old **AuthorizationEngine** still uses a process-local permit store and its demo runs only a simulated effect. The separate hardening path adds **OPAClient**, **OIDCJWTIdentityProvider**, **HTTPAuthorizationContextProvider**, **SQLitePermitStore**, multi-host **PostgresPermitStore**, **GuardedGateway**, protected tool/API adapters, a runnable ASGI gateway at `paca_mvp.service`, and an optional reference context service at `paca_mvp.context_service`. The context service resolves roles, current suspension, capabilities, internal principal IDs, and resource ownership from administrator-managed PostgreSQL data. Audit events and export intents are committed together, and `paca-audit-export` delivers them at least once through a leased retryable outbox to a configured HTTPS sink. The receiver must durably deduplicate events and enforce independent append-only/WORM retention; no real receiver is provisioned by this repo. See [the hardening guide](docs/SECURITY_HARDENING.md) for setup and limitations. LLM applications should also pass every model-proposed tool call through the [agent attack boundary](docs/AGENT_ATTACKS.md) and [retrieval/output content boundaries](docs/CONTENT_BOUNDARIES.md), including the `GuardedAgentPipeline` facade for retrieval, tool calls, and final-output release, plus the [inter-agent message boundary](docs/INTER_AGENT_BOUNDARY.md) for authenticated-route checks and untrusted-message taint. See the [threat coverage and evidence matrix](docs/THREAT_COVERAGE.md) for tested properties, partial mitigations and unimplemented gaps. These controls reduce specific attack paths but do not claim to defeat every prompt injection.
+The legacy demonstration uses simulated effects. The OPA/PostgreSQL commands exercise the configured integration path; they require the relevant containers and test configuration.
 
-## Security boundaries
+## Components
 
-- OPA decision failures, missing or malformed permit results, and missing active policy versions must fail closed.
-- The OIDC adapter verifies RS256 signatures and issuer/audience/expiry claims against a configured HTTPS JWKS endpoint. A real identity provider, suitable claims, and revocation/tenant policy remain deployment responsibilities.
-- The trusted context provider must be an administrator-configured service. The reference implementation maps issuer/subject/audience to an internal principal within the registered resource tenant; ownership checks compare internal IDs and tenant IDs, not raw OIDC subjects. Caller-supplied identity and role claims are not authorization context.
-- SQLite transactions coordinate processes sharing one local database file; use `PostgresPermitStore` (included) for multi-host coordination.
-- Durable permits and idempotency records prevent automatic replay. A crash during a remote effect results in an **unknown** operation requiring downstream reconciliation; local SQLite and an arbitrary remote service do not share an atomic transaction.
-- **verify_audit_chain()** detects modified events, broken links, and tail truncation when the separately stored head is unchanged; it is not tamper-proof against an attacker who can rewrite the database and head. The transactional outbox preserves export intent and retries failed exports, but delivery is at least once; the independent receiver must deduplicate by event ID/hash and enforce append-only/WORM retention.
-- The HTTP adapter requires preconfigured routes and HTTPS and sends a downstream idempotency key. It cannot force the remote API to honor that key.
-- The filesystem adapter confines access to admin-configured logical resources under a configured root and uses POSIX no-follow path traversal. Run it with least privilege and do not expose it to untrusted callers without the gateway.
-- The sample Rego policy (version `paca-example-v4`) uses internal-principal and tenant-bound analyst reads plus support ticket creation gated by a trusted capability. Permits require `suspended=false` from the trusted authorization context; a signed JWT `suspended=true` claim also denies. Missing current suspension status defaults to deny. The policy is illustrative, and its version marker must be incremented as policy changes. Production deployments should use verified policy bundles/revisions, secure OPA, and coordinate policy rollout with effects.
+### Legacy MVP
+
+`AuthorizationEngine` is a small JSON-policy example with a process-local permit store. It is useful for deterministic experiments, but it is not the hardened authorization path and its demo does not execute a real external effect.
+
+### Hardened prototype gateway
+
+The separate hardening path includes OPA decisions, OIDC/JWKS identity verification, server-side authorization context, SQLite single-host and PostgreSQL multi-host permit stores, guarded tool/API adapters, and a runnable ASGI gateway at `paca_mvp.service`. The optional `paca_mvp.context_service` reads authorization facts from administrator-managed PostgreSQL data. See [Security hardening](docs/SECURITY_HARDENING.md) for configuration and limitations.
+
+### Audit delivery
+
+Audit events and export intents are written transactionally. The `paca-audit-export` worker sends events at least once to a configured HTTPS sink. The receiver must durably deduplicate events and use independently controlled append-only or retention-protected storage. This repository does not provision that receiver. A local hash chain is tamper-evident, not tamper-proof against a database administrator who can also change its stored head.
+
+### LLM-agent boundaries
+
+The prototype contains three complementary boundary layers:
+
+- [Agent tool boundary](docs/AGENT_ATTACKS.md): limits model-proposed tool calls to server-configured tools, actions, resources and argument schemas. Tool results remain untrusted.
+- [Retrieval and output boundaries](docs/CONTENT_BOUNDARIES.md), composed by `GuardedAgentPipeline`: verify retrieval provenance and budgets, and check generated text before release.
+- [Inter-agent message boundary](docs/INTER_AGENT_BOUNDARY.md): validates configured sender/recipient routes and labels accepted messages as untrusted. The host must authenticate the sender independently.
+
+The repository does **not** implement the complete LLM generation/orchestration loop. The host application must invoke the relevant boundary on every path; these classes do not stop separate code paths from bypassing them. They are not a universal prompt-injection detector. See the [threat coverage matrix](docs/THREAT_COVERAGE.md) for tested properties and remaining gaps.
+
+### Separate production-service package
+
+The repository also contains a separate implementation in [`production_service/`](../production_service/README.md), with its own [threat model](../production_service/THREAT_MODEL.md). Do not assume its identity/context model is identical to this prototype's internal-principal context service; follow each implementation's own setup and threat-model documentation.
+
+## Security and deployment limits
+
+- OPA decision failures, malformed or missing permit results, and missing active policy versions must fail closed.
+- Identity verification requires a real, correctly configured issuer/JWKS endpoint. The trusted context provider must be administrator-controlled; caller-supplied roles or ownership claims are not authorization context.
+- SQLite coordinates processes sharing one local database file. Use the PostgreSQL store for multi-host coordination.
+- Durable permits and idempotency do not make a database transaction atomic with an arbitrary remote effect. Ambiguous external outcomes require downstream reconciliation; do not blindly retry them.
+- The HTTP adapter uses configured routes and HTTPS. The downstream service must independently enforce authorization and honor its idempotency contract.
+- The filesystem adapter confines access to configured logical resources, but it is not a sandbox for arbitrary executor code. Use least privilege.
+- The sample Rego policy is illustrative. Production deployments need controlled policy rollout, secure OPA configuration, secret management, verified TLS where applicable, network controls, backups, monitoring, audit retention, incident response and deployment-specific testing.
 
 These components are a hardening foundation—not a production-readiness claim, independent security audit, formal proof, standards-compliance claim, or proof of research novelty.
