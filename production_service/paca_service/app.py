@@ -416,7 +416,8 @@ def create_app(
         except EffectRejected as exc:
             try:
                 store.finish_execution(
-                    execution_id=claim.execution_id, outcome="failed",
+                    execution_id=claim.execution_id, tenant_id=principal.tenant_id,
+                    principal_id=principal.subject, outcome="failed",
                     result={"status": "failed"}, error_code=exc.code, request_id=rid,
                 )
             except Exception:
@@ -437,7 +438,8 @@ def create_app(
         except EffectOutcomeUnknown as exc:
             try:
                 store.finish_execution(
-                    execution_id=claim.execution_id, outcome="unknown", result=None,
+                    execution_id=claim.execution_id, tenant_id=principal.tenant_id,
+                    principal_id=principal.subject, outcome="unknown", result=None,
                     error_code=exc.code, request_id=rid,
                 )
             except Exception:
@@ -456,7 +458,8 @@ def create_app(
             logger.exception("adapter failed with an uncertain outcome")
             try:
                 store.finish_execution(
-                    execution_id=claim.execution_id, outcome="unknown", result=None,
+                    execution_id=claim.execution_id, tenant_id=principal.tenant_id,
+                    principal_id=principal.subject, outcome="unknown", result=None,
                     error_code="adapter_unexpected_error", request_id=rid,
                 )
             except Exception:
@@ -473,7 +476,8 @@ def create_app(
 
         try:
             store.finish_execution(
-                execution_id=claim.execution_id, outcome="succeeded",
+                execution_id=claim.execution_id, tenant_id=principal.tenant_id,
+                    principal_id=principal.subject, outcome="succeeded",
                 result=result, error_code=None, request_id=rid,
             )
         except Exception:
