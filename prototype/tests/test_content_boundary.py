@@ -57,8 +57,8 @@ class RetrievalBoundaryTests(unittest.TestCase):
             valid.content_sha256, valid.provenance_signature,
         )
         forged = ProvenancedDocument(
-            valid.document_id, valid.source, valid.trust, valid.content,
-            valid.content_sha256, "0" * 64,
+            valid.document_id, valid.source, "untrusted", valid.content,
+            valid.content_sha256, valid.provenance_signature,
         )
         result = filter_retrieval([tampered, forged], authority=self.authority)
         self.assertEqual(result.included, ())
@@ -145,9 +145,6 @@ class OutputBoundaryTests(unittest.TestCase):
         self.assertFalse(gate.inspect({"text": "x"}).allowed)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class GuardedPipelineTests(unittest.TestCase):
     def test_single_pipeline_composes_retrieval_tool_and_output_boundaries(self):
@@ -208,3 +205,7 @@ class GuardedPipelineTests(unittest.TestCase):
         with self.assertRaises(AgentBoundaryError):
             pipeline.invoke_tool({"tool": "admin.delete", "arguments": {}}, call_id="attack-call")
         self.assertEqual(effects, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

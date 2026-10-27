@@ -32,7 +32,7 @@ class ContentBoundaryError(ValueError):
 
 @dataclass(frozen=True)
 class ProvenancedDocument:
-    """A document and signed provenance metadata from the trusted ingestion boundary."""
+    """A document with HMAC-authenticated provenance from trusted ingestion."""
     document_id: str
     source: str
     trust: str
@@ -57,6 +57,10 @@ class ProvenanceAuthority:
         for source, trust in source_trust_levels.items():
             if not isinstance(source, str) or not source.strip() or len(source) > 512:
                 raise ContentBoundaryError("configured source IDs must be non-empty bounded strings")
+            try:
+                source.encode("utf-8", errors="strict")
+            except UnicodeEncodeError as exc:
+                raise ContentBoundaryError("configured source ID contains invalid Unicode") from exc
             if any(ord(ch) < 32 for ch in source):
                 raise ContentBoundaryError("configured source IDs must not contain control characters")
             if not isinstance(trust, str) or trust not in TRUST_LEVELS:
@@ -96,6 +100,8 @@ class ProvenanceAuthority:
 
     def issue(self, document_id: str, source: str, content: str) -> ProvenancedDocument:
         """Issue provenance using trust fixed by administrator source configuration."""
+        if not isinstance(source, str) or not source.strip() or len(source) > 512:
+            raise ContentBoundaryError("source must be a non-empty bounded string")
         trust = self._source_trust_levels.get(source, "unknown")
         raw = self._validate_fields(document_id, source, trust, content)
         digest = sha256(raw).hexdigest()
