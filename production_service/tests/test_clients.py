@@ -131,6 +131,7 @@ def test_authenticator_refreshes_jwks_when_provider_rotates_to_a_new_kid(monkeyp
         cache_jwk_set=True,
         lifespan=300,
         timeout=1,
+        cooldown_duration=30,
     )
 
     def fetch_data():
