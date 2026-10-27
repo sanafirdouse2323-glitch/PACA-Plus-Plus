@@ -53,6 +53,8 @@ The [reference runtime](docs/AGENT_RUNTIME.md) now implements the ordering of re
 
 The repository also contains a separate implementation in [`production_service/`](../production_service/README.md), with its own [threat model](../production_service/THREAT_MODEL.md). Do not assume its identity/context model is identical to this prototype's internal-principal context service; follow each implementation's own setup and threat-model documentation.
 
+**Prototype PostgreSQL isolation scope:** `PostgresPermitStore` uses shared global permit/idempotency state and a global audit chain; its legacy `paca_permits` / `paca_idempotency` / `paca_audit*` schema is not a per-tenant database isolation boundary. The reference context-service queries tenant-match identities to the registered resource tenant, but its legacy setup describes a read-only table role rather than table-level RLS. Do not use those prototype PostgreSQL credentials as an isolation boundary between mutually untrusted tenants. The production-service package has a separate tenant-scoped schema and its own RLS/deployment limits.
+
 ## Security and deployment limits
 
 - OPA decision failures, malformed or missing permit results, and missing active policy versions must fail closed.
