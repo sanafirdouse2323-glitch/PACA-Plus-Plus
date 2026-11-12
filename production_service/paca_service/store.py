@@ -147,7 +147,7 @@ class PostgresStore:
         permit_id = uuid4()
         expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
         with self.pool.connection() as conn, conn.transaction():
-                self._set_tenant_context(conn, tenant_id)
+                self._set_tenant_context(conn, tenant_id, principal_id)
                 conn.execute(
                     """
                     INSERT INTO authz_permits
@@ -178,7 +178,7 @@ class PostgresStore:
         self, permit_id: UUID | str, tenant_id: str, principal_id: str
     ) -> PermitRecord | None:
         with self.pool.connection() as conn, conn.transaction():
-            self._set_tenant_context(conn, tenant_id)
+            self._set_tenant_context(conn, tenant_id, principal_id)
             row = conn.execute(
                 """
                 SELECT * FROM authz_permits
@@ -193,7 +193,7 @@ class PostgresStore:
         request_id: str | None,
     ) -> None:
         with self.pool.connection() as conn, conn.transaction():
-                self._set_tenant_context(conn, tenant_id)
+                self._set_tenant_context(conn, tenant_id, principal_id)
                 row = conn.execute(
                     """
                     UPDATE authz_permits SET status = 'revoked', updated_at = now()
@@ -222,7 +222,7 @@ class PostgresStore:
         if tenant_id is None or principal_id is None:
             raise StoreError("tenant-scoped audit events require tenant and principal IDs")
         with self.pool.connection() as conn, conn.transaction():
-                self._set_tenant_context(conn, tenant_id)
+                self._set_tenant_context(conn, tenant_id, principal_id)
                 self._audit(
                     conn, event_type=event_type, tenant_id=tenant_id, principal_id=principal_id,
                     request_id=request_id, action=action, resource_id=resource_id,
@@ -248,7 +248,7 @@ class PostgresStore:
             "policy_revision": policy_revision,
         })
         with self.pool.connection() as conn, conn.transaction():
-                self._set_tenant_context(conn, tenant_id)
+                self._set_tenant_context(conn, tenant_id, principal_id)
                 existing = conn.execute(
                     """
                     SELECT execution_id, request_digest, status, result_json, error_code
@@ -400,7 +400,7 @@ class PostgresStore:
             json.dumps(result, allow_nan=False)
         execution_uuid = UUID(str(execution_id))
         with self.pool.connection() as conn, conn.transaction():
-                self._set_tenant_context(conn, tenant_id)
+                self._set_tenant_context(conn, tenant_id, principal_id)
                 row = conn.execute(
                     """
                     UPDATE authz_executions
@@ -434,7 +434,7 @@ class PostgresStore:
     ) -> dict[str, Any] | None:
         """Return status metadata only; result data is retrievable only via the authorized idempotent retry."""
         with self.pool.connection() as conn, conn.transaction():
-            self._set_tenant_context(conn, tenant_id)
+            self._set_tenant_context(conn, tenant_id, principal_id)
             row = conn.execute(
                 """
                 SELECT e.execution_id, e.status, e.error_code, e.created_at, e.started_at,
