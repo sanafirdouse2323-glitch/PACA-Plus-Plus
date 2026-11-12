@@ -56,7 +56,10 @@ class PostgresStore:
         tenant_context_key_id: str = "v1",
         pool: ConnectionPool | None = None,
     ) -> None:
-        if not isinstance(tenant_context_hmac_key, bytes) or len(tenant_context_hmac_key) != 32:
+        if (
+            not isinstance(tenant_context_hmac_key, bytes)
+            or len(tenant_context_hmac_key) != 32
+        ):
             raise StoreError("a 32-byte tenant-context HMAC key is required")
         if not isinstance(tenant_context_key_id, str) or not tenant_context_key_id:
             raise StoreError("a tenant-context key ID is required")
@@ -80,8 +83,14 @@ class PostgresStore:
             self.pool.close()
 
     def ping(self) -> None:
-        with self.pool.connection() as conn:
+        with self.pool.connection() as conn, conn.transaction():
             conn.execute("SELECT 1").fetchone()
+            self._set_tenant_context(conn, "__paca_readiness__", "__paca_readiness__")
+            row = conn.execute(
+                "SELECT public.paca_current_tenant_id() AS tenant_id"
+            ).fetchone()
+            if not row or row["tenant_id"] != "__paca_readiness__":
+                raise StoreError("signed tenant-context verification is unavailable")
 
     def _set_tenant_context(self, conn: Any, tenant_id: str, principal_id: str) -> None:
         """Install a short-lived context signed for this PostgreSQL transaction."""
@@ -117,7 +126,9 @@ class PostgresStore:
             raise StoreError("could not sign tenant database context") from exc
 
 
-    def fetch_resource(self, tenant_id: str, principal_id: str, resource_id: str) -> dict[str, Any] | None:
+    def fetch_resource(
+        self, tenant_id: str, principal_id: str, resource_id: str
+    ) -> dict[str, Any] | None:
         with self.pool.connection() as conn, conn.transaction():
             self._set_tenant_context(conn, tenant_id, principal_id)
             row = conn.execute(
