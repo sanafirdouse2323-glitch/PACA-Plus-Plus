@@ -161,7 +161,7 @@ ALTER TABLE protected_resources FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS protected_resources_tenant_isolation ON protected_resources;
 CREATE POLICY protected_resources_tenant_isolation ON protected_resources
     USING (tenant_id = public.paca_current_tenant_id())
-    WITH CHECK (tenant_id = current_setting('paca.tenant_id', true));
+    WITH CHECK (tenant_id = public.paca_current_tenant_id());
 
 CREATE INDEX IF NOT EXISTS authz_permits_owner_idx
     ON authz_permits (tenant_id, principal_id, created_at DESC);
@@ -226,14 +226,14 @@ $paca$;
 ALTER TABLE public.authz_permits ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS authz_permits_tenant_isolation ON public.authz_permits;
 CREATE POLICY authz_permits_tenant_isolation ON public.authz_permits
-    USING (tenant_id = current_setting('paca.tenant_id', true))
-    WITH CHECK (tenant_id = current_setting('paca.tenant_id', true));
+    USING (tenant_id = public.paca_current_tenant_id())
+    WITH CHECK (tenant_id = public.paca_current_tenant_id());
 
 ALTER TABLE public.authz_executions ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS authz_executions_tenant_isolation ON public.authz_executions;
 CREATE POLICY authz_executions_tenant_isolation ON public.authz_executions
-    USING (tenant_id = current_setting('paca.tenant_id', true))
-    WITH CHECK (tenant_id = current_setting('paca.tenant_id', true));
+    USING (tenant_id = public.paca_current_tenant_id())
+    WITH CHECK (tenant_id = public.paca_current_tenant_id());
 
 CREATE INDEX IF NOT EXISTS authz_executions_recovery_idx
     ON authz_executions (status, started_at);
@@ -266,8 +266,8 @@ CREATE INDEX IF NOT EXISTS audit_events_subject_idx
 ALTER TABLE public.audit_events ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS audit_events_tenant_isolation ON public.audit_events;
 CREATE POLICY audit_events_tenant_isolation ON public.audit_events
-    USING (tenant_id = current_setting('paca.tenant_id', true))
-    WITH CHECK (tenant_id = current_setting('paca.tenant_id', true));
+    USING (tenant_id = public.paca_current_tenant_id())
+    WITH CHECK (tenant_id = public.paca_current_tenant_id());
 
 CREATE OR REPLACE FUNCTION paca_reject_audit_mutation()
 RETURNS trigger
