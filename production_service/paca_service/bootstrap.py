@@ -19,7 +19,7 @@ from .store import PostgresStore
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 settings = Settings.from_env()
-store = PostgresStore(settings.database_url)
+store = PostgresStore(settings.database_url, settings.tenant_context_hmac_key, settings.tenant_context_key_id)
 opa = OPAClient(
     settings.opa_url,
     settings.opa_decision_path,
