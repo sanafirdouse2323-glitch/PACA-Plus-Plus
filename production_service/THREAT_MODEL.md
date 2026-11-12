@@ -41,7 +41,7 @@ The gateway verifies RS256 tokens for one configured issuer/audience. In this im
 ## Current safeguards checked into this repository
 
 - The local Compose API connects through `paca_runtime`, not the bootstrap/admin credential.
-- Runtime grants permit reading trusted resources, narrowly scoped permit/execution writes, and audit select/insert only. Row-level-security policies scope all four tenant-bearing tables to the transaction-local `paca.tenant_id`; execution rows are composite-FK-bound to their permit's tenant and principal.
+- Runtime grants permit reading trusted resources, narrowly scoped permit/execution writes, and audit select/insert only. Row-level-security policies scope all four tenant-bearing tables through `paca_current_tenant_id()`, which validates an HMAC-SHA-256 context bound to tenant, verified principal, backend PID, transaction ID, and a short expiry. The HMAC key is held in an administrator-owned private schema inaccessible to the runtime role. Execution rows are composite-FK-bound to their permit's tenant and principal.
 - Tenant-aware store methods set the RLS context in a transaction and finalization requires both tenant and principal. Global stale-execution recovery is exposed only through a fixed, bounded, audited `SECURITY DEFINER` function; the runtime role cannot issue the original unscoped sweep as direct table DML.
 - Rego decisions carry the policy revision on default-deny and allow paths; CI exercises the actual OPA client readiness and an allow/deny pair.
 - Configuration rejects plaintext HTTP to remote OPA/downstream endpoints and requires `sslmode=verify-full` for remote PostgreSQL URLs.
@@ -59,7 +59,7 @@ For threat models that include runtime credential theft or SQL injection, move a
 
 ## RLS limitation
 
-The `paca.tenant_id` value is a custom session setting supplied by the application, not an identity PostgreSQL authenticates independently. RLS catches missing tenant predicates and constrains ordinary app paths when the trusted application sets the context correctly. It does not protect against an attacker who has raw access to the runtime database credential and can set the custom setting to another tenant. Keep that credential server-side, and use separate database roles/databases or a trusted broker if malicious SQL under the runtime credential is in scope.
+PostgreSQL custom GUCs are mutable, so the database does not trust a tenant setting alone. The runtime role can alter context GUCs but cannot forge the HMAC, read the private key table, or replay a captured signature in a different backend or transaction. The API key and database key copy must be protected independently of the runtime database credential. Compromise of the API process/signing key, database owner/superuser, or host is outside this control's protection. The RLS boundary is tenant-level; it does not replace principal/resource checks in OPA and application queries.
 
 ## Deployment gates before sensitive workloads
 
