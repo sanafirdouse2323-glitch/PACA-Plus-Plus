@@ -71,5 +71,5 @@ def test_tenant_context_key_must_be_256_bit_hex():
 
 
 def test_tenant_context_key_id_is_strictly_validated():
-    with pytest.raises(ConfigurationError, match="key ID"):
+    with pytest.raises(ConfigurationError, match="KEY_ID"):
         Settings.from_env(base_env(PACA_TENANT_CONTEXT_KEY_ID="bad key id"))
