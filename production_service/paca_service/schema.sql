@@ -41,6 +41,7 @@ REVOKE ALL ON FUNCTION public.paca_constant_time_equal(bytea, bytea) FROM PUBLIC
 CREATE OR REPLACE FUNCTION public.paca_context_is_valid()
 RETURNS BOOLEAN
 LANGUAGE plpgsql
+STABLE
 SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $paca_context$
@@ -76,7 +77,7 @@ BEGIN
 
     v_issued := v_issued_text::BIGINT;
     v_expires := v_expires_text::BIGINT;
-    v_now := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    v_now := floor(extract(epoch FROM statement_timestamp()))::BIGINT;
     IF v_issued < v_now - 60 OR v_issued > v_now + 5
        OR v_expires <= v_now OR v_expires <= v_issued
        OR v_expires > v_issued + 60 THEN
@@ -112,6 +113,7 @@ $paca_context$;
 CREATE OR REPLACE FUNCTION public.paca_current_tenant_id()
 RETURNS TEXT
 LANGUAGE sql
+STABLE
 SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $paca_tenant$
