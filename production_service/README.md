@@ -77,9 +77,10 @@ The key ID selects a row in `paca_private.tenant_context_keys`. To rotate withou
 
 The official PostgreSQL image runs `/docker-entrypoint-initdb.d/` scripts only when initializing an **empty** data directory. Editing `.env` and restarting does not create `paca_runtime` or reapply grants to an existing volume.
 
-Before upgrading, take and verify a database backup. Keep the existing data volume. With the old database administrator still available, update `.env` with a strong `PACA_RUNTIME_PASSWORD`, then set `PACA_TENANT_CONTEXT_HMAC_KEY` and `PACA_TENANT_CONTEXT_KEY_ID` in the database and API environment, and run these commands from `production_service/`:
+Before upgrading, take and verify a database backup. Keep the existing data volume. With the old database administrator still available, update `.env` with a strong `PACA_RUNTIME_PASSWORD`, `PACA_TENANT_CONTEXT_HMAC_KEY`, and `PACA_TENANT_CONTEXT_KEY_ID`. Recreate the database container so it receives the new environment, then run these commands from `production_service/`:
 
 ```sh
+docker compose up -d --force-recreate database
 docker compose exec database bash -lc 'source /docker-entrypoint-initdb.d/000-runtime-role.sh'
 docker compose exec -T database psql -U paca -d paca -v ON_ERROR_STOP=1 -f /docker-entrypoint-initdb.d/001-schema.sql
 docker compose exec -T database psql -U paca -d paca -v ON_ERROR_STOP=1 -f /docker-entrypoint-initdb.d/002-runtime-grants.sql
