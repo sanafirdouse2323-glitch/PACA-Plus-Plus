@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import pytest
-
 from paca_service.tenant_context import (
     TenantContextError,
     sign_tenant_context,
     tenant_context_message,
 )
+
+import pytest
 
 
 KEY = bytes.fromhex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
