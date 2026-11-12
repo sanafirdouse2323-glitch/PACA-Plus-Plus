@@ -10,7 +10,7 @@ class ResourceNotFound(LookupError):
 
 
 class ResourceStore(Protocol):
-    def fetch_resource(self, tenant_id: str, resource_id: str) -> dict[str, Any] | None: ...
+    def fetch_resource(self, tenant_id: str, principal_id: str, resource_id: str) -> dict[str, Any] | None: ...
 
 
 class AuthorizationContextProvider:
@@ -26,7 +26,7 @@ class AuthorizationContextProvider:
         resource_id: str,
         arguments: dict[str, Any],
     ) -> dict[str, Any]:
-        row = self.store.fetch_resource(principal.tenant_id, resource_id)
+        row = self.store.fetch_resource(principal.tenant_id, principal.subject, resource_id)
         if row is None:
             raise ResourceNotFound("resource_not_found")
         attributes = row.get("attributes") or {}
