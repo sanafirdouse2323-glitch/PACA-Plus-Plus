@@ -135,7 +135,9 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
             ),
         )
 
-    store = PostgresStore(DATABASE_URL)
+    context_key = bytes.fromhex(os.environ["PACA_TENANT_CONTEXT_HMAC_KEY"])
+    context_key_id = os.getenv("PACA_TENANT_CONTEXT_KEY_ID", "v1")
+    store = PostgresStore(DATABASE_URL, context_key, context_key_id)
     opa = OPAClient(
         OPA_URL,
         "/v1/data/paca/authz/decision",
@@ -144,6 +146,8 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
     )
     settings = Settings(
         database_url=DATABASE_URL,
+        tenant_context_hmac_key=context_key,
+        tenant_context_key_id=context_key_id,
         opa_url=OPA_URL,
         opa_decision_path="/v1/data/paca/authz/decision",
         opa_timeout_seconds=2.0,
