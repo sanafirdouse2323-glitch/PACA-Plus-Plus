@@ -12,6 +12,32 @@ CREATE TABLE IF NOT EXISTS paca_private.tenant_context_keys (
 );
 REVOKE ALL ON TABLE paca_private.tenant_context_keys FROM PUBLIC;
 
+CREATE OR REPLACE FUNCTION public.paca_constant_time_equal(
+    p_expected BYTEA,
+    p_supplied BYTEA
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $paca_compare$
+DECLARE
+    v_index INTEGER;
+    v_difference INTEGER := 0;
+BEGIN
+    IF p_expected IS NULL OR p_supplied IS NULL
+       OR octet_length(p_expected) <> 32 OR octet_length(p_supplied) <> 32 THEN
+        RETURN FALSE;
+    END IF;
+    -- Always inspect all 32 bytes; do not exit on the first mismatch.
+    FOR v_index IN 0..31 LOOP
+        v_difference := v_difference
+            | (get_byte(p_expected, v_index) # get_byte(p_supplied, v_index));
+    END LOOP;
+    RETURN v_difference = 0;
+END;
+$paca_compare$;
+REVOKE ALL ON FUNCTION public.paca_constant_time_equal(bytea, bytea) FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION public.paca_context_is_valid()
 RETURNS BOOLEAN
 LANGUAGE plpgsql
@@ -38,7 +64,7 @@ BEGIN
        OR v_signature IS NULL THEN
         RETURN FALSE;
     END IF;
-    IF v_tenant = '' OR v_principal = ''
+    IF v_tenant = '' OR v_principal = '' OR length(v_tenant) > 512 OR length(v_principal) > 512
        OR position(chr(10) IN v_tenant) > 0 OR position(chr(13) IN v_tenant) > 0
        OR position(chr(10) IN v_principal) > 0 OR position(chr(13) IN v_principal) > 0
        OR v_signature !~ '^[0-9a-f]{64}$'
@@ -72,8 +98,10 @@ BEGIN
         || v_principal || chr(10) || v_pid || chr(10) || v_xid || chr(10)
         || v_issued_text || chr(10) || v_expires_text || chr(10) || v_key_id;
 
-    RETURN public.hmac(convert_to(v_message, 'UTF8'), v_secret, 'sha256')
-        = decode(v_signature, 'hex');
+    RETURN public.paca_constant_time_equal(
+        public.hmac(convert_to(v_message, 'UTF8'), v_secret, 'sha256'),
+        decode(v_signature, 'hex')
+    );
 EXCEPTION
     WHEN OTHERS THEN
         -- Invalid/malformed context is a deny, never a permissive fallback.
