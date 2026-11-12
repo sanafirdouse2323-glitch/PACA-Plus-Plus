@@ -67,7 +67,7 @@ def test_context_rejects_control_characters_and_invalid_transaction_ids():
     _assert_raises(
         TenantContextError,
         tenant_context_message,
-        "tenant\\nforged",
+        "tenant\nforged",
         "p",
         1,
         "1",
