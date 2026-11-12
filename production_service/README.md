@@ -22,7 +22,7 @@ This directory contains a separate FastAPI authorization gateway that combines R
    curl --fail http://127.0.0.1:8000/readyz
    ```
 
-   `/healthz` only indicates that the process is alive. `/readyz` verifies database connectivity and a real OPA deny-by-default decision that must carry the configured policy revision.
+   `/healthz` only indicates that the process is alive. `/readyz` verifies PostgreSQL connectivity and signed tenant-context verification, plus a real OPA deny-by-default decision that must carry the configured policy revision.
 
 All tenant-scoped tables (`protected_resources`, `authz_permits`, `authz_executions`, and `audit_events`) have PostgreSQL row-level-security policies that call a database-side verifier. Before each tenant-scoped operation, the API signs the tenant, verified principal, PostgreSQL backend PID, current transaction ID, issue/expiry times, and key ID with HMAC-SHA-256. PostgreSQL verifies the signature using a key in the administrator-owned `paca_private` schema, checks the backend and transaction binding, and accepts only a short-lived context (maximum 60 seconds; the API issues 30-second contexts). RLS does not trust a caller-set tenant GUC by itself. The runtime role can call the verifier/setter functions but cannot read the signing key. Execution rows retain their composite foreign key tying tenant/principal to the referenced permit. Stale-execution recovery remains the only cross-tenant store operation exposed to the runtime role; it uses a bounded, audited `SECURITY DEFINER` function rather than an unscoped application query.
 
@@ -60,18 +60,20 @@ Run the targeted check only while a Keycloak test realm, OPA, and an **isolated 
 ```sh
 export PACA_TEST_ADMIN_DATABASE_URL='<admin DSN for disposable test database>'
 export PACA_TEST_DATABASE_URL='<restricted runtime DSN for the same test database>'
+export PACA_TENANT_CONTEXT_HMAC_KEY="$(openssl rand -hex 32)"
+export PACA_TENANT_CONTEXT_KEY_ID=v1
 PACA_TEST_OIDC_REALM_URL=http://localhost:8081/realms/paca \
 PACA_TEST_OPA_URL=http://127.0.0.1:8181 \
 pytest tests/test_oidc_integration.py -q
 ```
 
-Replace the two quoted DSN examples with valid connection URLs; do not point this test at a production database. The CI workflow provisions an isolated PostgreSQL service with the separate administrative and restricted runtime credentials and runs this end-to-end test explicitly.
+Replace the quoted DSN examples with valid connection URLs; do not point this test at a production database. Provision the same HMAC key into `paca_private.tenant_context_keys` through the administrative connection before running the PostgreSQL tests. The CI workflow provisions an isolated PostgreSQL service with the separate administrative and restricted runtime credentials and runs this end-to-end test explicitly.
 
 The committed test realm is **for automated local/CI testing only**. It uses HTTP, a test user/password, password-grant authentication, and a hard-coded demonstration scope claim. Do not reuse those credentials, password grant, or hard-coded permissions in production. For production, deploy Keycloak in a supported secure mode behind HTTPS, use a public client with Authorization Code + PKCE for interactive applications, configure the API audience mapper and administrator-controlled tenant/role/scope mappings, and use short-lived access tokens. A successful local/CI flow is integration evidence, not proof that an external organization's tenant has been provisioned or that its policies are correct.
 
 ## HMAC key rotation
 
-The key ID selects a row in `paca_private.tenant_context_keys`. To rotate without invalidating in-flight requests, provision a new key under a new ID first, deploy the matching key and ID to every API instance, wait at least 60 seconds after the last old-key request, then disable the old key. Never reuse a key ID for different key material while old API instances may still be active. Keep both the database copy and API copy in a secrets manager; the example `.env` workflow is for local evaluation only.
+The key ID selects a row in `paca_private.tenant_context_keys`. To rotate without invalidating in-flight requests, provision a new key under a new ID first, deploy the matching key and ID to every API instance, wait at least 60 seconds after the last old-key request, then disable the old key with an administrator-only statement such as `UPDATE paca_private.tenant_context_keys SET enabled = FALSE WHERE key_id = 'old-id';`. Never reuse a key ID for different key material while old API instances may still be active. Keep both the database copy and API copy in a secrets manager; the example `.env` workflow is for local evaluation only.
 
 ## Upgrading an existing volume safely
 
@@ -80,6 +82,7 @@ The official PostgreSQL image runs `/docker-entrypoint-initdb.d/` scripts only w
 Before upgrading, take and verify a database backup. Keep the existing data volume. With the old database administrator still available, update `.env` with a strong `PACA_RUNTIME_PASSWORD`, `PACA_TENANT_CONTEXT_HMAC_KEY`, and `PACA_TENANT_CONTEXT_KEY_ID`. Recreate the database container so it receives the new environment, then run these commands from `production_service/`:
 
 ```sh
+docker compose stop api
 docker compose up -d --force-recreate database
 docker compose exec database bash -lc 'source /docker-entrypoint-initdb.d/000-runtime-role.sh'
 docker compose exec -T database psql -U paca -d paca -v ON_ERROR_STOP=1 -f /docker-entrypoint-initdb.d/001-schema.sql
