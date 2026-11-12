@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -82,6 +83,8 @@ def _validate_service_url(
 @dataclass(frozen=True)
 class Settings:
     database_url: str
+    tenant_context_hmac_key: bytes
+    tenant_context_key_id: str
     opa_url: str
     opa_decision_path: str
     opa_timeout_seconds: float
@@ -102,6 +105,12 @@ class Settings:
     def from_env(cls, environ: dict[str, str] | None = None) -> Settings:
         env = dict(os.environ if environ is None else environ)
         database_url = _validate_database_url(_required(env, "PACA_DATABASE_URL"))
+        raw_context_key = _required(env, "PACA_TENANT_CONTEXT_HMAC_KEY")
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", raw_context_key):
+            raise ConfigurationError("PACA_TENANT_CONTEXT_HMAC_KEY must be exactly 64 hexadecimal characters (32 bytes).")
+        context_key_id = env.get("PACA_TENANT_CONTEXT_KEY_ID", "v1").strip()
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", context_key_id):
+            raise ConfigurationError("PACA_TENANT_CONTEXT_KEY_ID must be 1-32 safe identifier characters.")
 
         opa_url = _validate_service_url(
             "PACA_OPA_URL",
@@ -155,6 +164,8 @@ class Settings:
 
         return cls(
             database_url=database_url,
+            tenant_context_hmac_key=bytes.fromhex(raw_context_key),
+            tenant_context_key_id=context_key_id,
             opa_url=opa_url,
             opa_decision_path=decision_path,
             opa_timeout_seconds=_positive_float(env, "PACA_OPA_TIMEOUT_SECONDS", "2", 30),
