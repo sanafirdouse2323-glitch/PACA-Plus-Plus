@@ -1,3 +1,129 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- The HMAC key is provisioned by the database administrator. The runtime role
+-- has no schema/table access; SECURITY DEFINER verification functions read it.
+CREATE SCHEMA IF NOT EXISTS paca_private;
+REVOKE ALL ON SCHEMA paca_private FROM PUBLIC;
+CREATE TABLE IF NOT EXISTS paca_private.tenant_context_keys (
+    key_id TEXT PRIMARY KEY,
+    key_material BYTEA NOT NULL CHECK (octet_length(key_material) = 32),
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+REVOKE ALL ON TABLE paca_private.tenant_context_keys FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.paca_context_is_valid()
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $paca_context$
+DECLARE
+    v_tenant TEXT := nullif(current_setting('paca.ctx_tenant_id', true), '');
+    v_principal TEXT := nullif(current_setting('paca.ctx_principal_id', true), '');
+    v_pid TEXT := nullif(current_setting('paca.ctx_backend_pid', true), '');
+    v_xid TEXT := nullif(current_setting('paca.ctx_transaction_id', true), '');
+    v_issued_text TEXT := nullif(current_setting('paca.ctx_issued_at', true), '');
+    v_expires_text TEXT := nullif(current_setting('paca.ctx_expires_at', true), '');
+    v_key_id TEXT := nullif(current_setting('paca.ctx_key_id', true), '');
+    v_signature TEXT := nullif(current_setting('paca.ctx_signature', true), '');
+    v_issued BIGINT;
+    v_expires BIGINT;
+    v_now BIGINT;
+    v_secret BYTEA;
+    v_message TEXT;
+BEGIN
+    IF v_tenant IS NULL OR v_principal IS NULL OR v_pid IS NULL OR v_xid IS NULL
+       OR v_issued_text IS NULL OR v_expires_text IS NULL OR v_key_id IS NULL
+       OR v_signature IS NULL THEN
+        RETURN FALSE;
+    END IF;
+    IF v_tenant = '' OR v_principal = ''
+       OR position(chr(10) IN v_tenant) > 0 OR position(chr(13) IN v_tenant) > 0
+       OR position(chr(10) IN v_principal) > 0 OR position(chr(13) IN v_principal) > 0
+       OR v_signature !~ '^[0-9a-f]{64}$'
+       OR v_key_id !~ '^[A-Za-z0-9._-]{1,32}$'
+       OR v_xid !~ '^[0-9]+$' OR v_pid !~ '^[0-9]+$'
+       OR v_issued_text !~ '^[0-9]+$' OR v_expires_text !~ '^[0-9]+$' THEN
+        RETURN FALSE;
+    END IF;
+
+    v_issued := v_issued_text::BIGINT;
+    v_expires := v_expires_text::BIGINT;
+    v_now := floor(extract(epoch FROM clock_timestamp()))::BIGINT;
+    IF v_issued < v_now - 60 OR v_issued > v_now + 5
+       OR v_expires <= v_now OR v_expires <= v_issued
+       OR v_expires > v_issued + 60 THEN
+        RETURN FALSE;
+    END IF;
+    IF v_pid::INTEGER <> pg_backend_pid()
+       OR v_xid <> pg_current_xact_id()::TEXT THEN
+        RETURN FALSE;
+    END IF;
+
+    SELECT key_material INTO v_secret
+    FROM paca_private.tenant_context_keys
+    WHERE key_id = v_key_id AND enabled;
+    IF v_secret IS NULL THEN
+        RETURN FALSE;
+    END IF;
+
+    v_message := 'paca-tenant-context-v1' || chr(10) || v_tenant || chr(10)
+        || v_principal || chr(10) || v_pid || chr(10) || v_xid || chr(10)
+        || v_issued_text || chr(10) || v_expires_text || chr(10) || v_key_id;
+
+    RETURN public.hmac(convert_to(v_message, 'UTF8'), v_secret, 'sha256')
+        = decode(v_signature, 'hex');
+EXCEPTION
+    WHEN OTHERS THEN
+        -- Invalid/malformed context is a deny, never a permissive fallback.
+        RETURN FALSE;
+END;
+$paca_context$;
+
+CREATE OR REPLACE FUNCTION public.paca_current_tenant_id()
+RETURNS TEXT
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $paca_tenant$
+    SELECT CASE
+        WHEN public.paca_context_is_valid()
+        THEN nullif(current_setting('paca.ctx_tenant_id', true), '')
+        ELSE NULL
+    END
+$paca_tenant$;
+
+CREATE OR REPLACE FUNCTION public.paca_set_tenant_context(
+    p_tenant_id TEXT,
+    p_principal_id TEXT,
+    p_backend_pid INTEGER,
+    p_transaction_id TEXT,
+    p_issued_at BIGINT,
+    p_expires_at BIGINT,
+    p_key_id TEXT,
+    p_signature TEXT
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $paca_set_context$
+BEGIN
+    PERFORM set_config('paca.ctx_tenant_id', coalesce(p_tenant_id, ''), TRUE);
+    PERFORM set_config('paca.ctx_principal_id', coalesce(p_principal_id, ''), TRUE);
+    PERFORM set_config('paca.ctx_backend_pid', coalesce(p_backend_pid::TEXT, ''), TRUE);
+    PERFORM set_config('paca.ctx_transaction_id', coalesce(p_transaction_id, ''), TRUE);
+    PERFORM set_config('paca.ctx_issued_at', coalesce(p_issued_at::TEXT, ''), TRUE);
+    PERFORM set_config('paca.ctx_expires_at', coalesce(p_expires_at::TEXT, ''), TRUE);
+    PERFORM set_config('paca.ctx_key_id', coalesce(p_key_id, ''), TRUE);
+    PERFORM set_config('paca.ctx_signature', coalesce(p_signature, ''), TRUE);
+    IF NOT public.paca_context_is_valid() THEN
+        RAISE EXCEPTION 'invalid signed tenant context' USING ERRCODE = '42501';
+    END IF;
+END;
+$paca_set_context$;
+
 CREATE TABLE IF NOT EXISTS protected_resources (
     tenant_id TEXT NOT NULL,
     resource_id TEXT NOT NULL,
@@ -34,7 +160,7 @@ ALTER TABLE protected_resources ENABLE ROW LEVEL SECURITY;
 ALTER TABLE protected_resources FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS protected_resources_tenant_isolation ON protected_resources;
 CREATE POLICY protected_resources_tenant_isolation ON protected_resources
-    USING (tenant_id = current_setting('paca.tenant_id', true))
+    USING (tenant_id = public.paca_current_tenant_id())
     WITH CHECK (tenant_id = current_setting('paca.tenant_id', true));
 
 CREATE INDEX IF NOT EXISTS authz_permits_owner_idx
