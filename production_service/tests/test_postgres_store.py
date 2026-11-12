@@ -23,7 +23,7 @@ pytestmark = pytest.mark.skipif(
 
 class TestPostgresStoreIntegration:
     def setup_method(self):
-        self.store = PostgresStore(DATABASE_URL)
+        self.store = PostgresStore(DATABASE_URL, bytes.fromhex(os.environ["PACA_TENANT_CONTEXT_HMAC_KEY"]), os.getenv("PACA_TENANT_CONTEXT_KEY_ID", "v1"))
         self.store.open()
         self.tenant_id = "test-" + uuid4().hex
         self.principal_id = "integration-user"
@@ -190,7 +190,7 @@ class TestPostgresStoreIntegration:
         # With tenant A in transaction context, omitted WHERE clauses and explicit
         # tenant-B lookups must both be constrained by PostgreSQL RLS.
         with self.store.pool.connection() as conn, conn.transaction():
-            conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (self.tenant_id,))
+            self.store._set_tenant_context(conn, self.tenant_id, self.principal_id)
             assert conn.execute(
                 "SELECT count(*) AS n FROM authz_permits"
             ).fetchone()["n"] == 1
@@ -223,7 +223,7 @@ class TestPostgresStoreIntegration:
         # A direct insert under tenant B cannot attach tenant A's permit to B's
         # execution row; this must fail even though B is the active RLS context.
         with self.store.pool.connection() as conn, conn.transaction():
-            conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (other_tenant,))
+            self.store._set_tenant_context(conn, other_tenant, other_principal)
             with pytest.raises(psycopg.errors.ForeignKeyViolation), conn.transaction():
                 conn.execute(
                         """
@@ -255,7 +255,7 @@ class TestPostgresStoreIntegration:
             )
 
         with self.store.pool.connection() as conn, conn.transaction():
-            conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (self.tenant_id,))
+            self.store._set_tenant_context(conn, self.tenant_id, self.principal_id)
             row = conn.execute(
                 "SELECT * FROM public.paca_lock_resource_for_execution(%s, %s)",
                 (other_tenant_id, other_resource_id),
@@ -282,7 +282,7 @@ class TestPostgresStoreIntegration:
         claim = self.claim("stale-key")
         assert claim.disposition == "claimed"
         with self.store.pool.connection() as conn, conn.transaction():
-            conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (self.tenant_id,))
+            self.store._set_tenant_context(conn, self.tenant_id, self.principal_id)
             conn.execute(
                 """UPDATE authz_executions
                    SET started_at = now() - interval '10 minutes'
@@ -303,7 +303,7 @@ class TestPostgresStoreIntegration:
             principal_id=self.principal_id, request_id="test-request",
         )
         with self.store.pool.connection() as conn, conn.transaction():
-            conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (self.tenant_id,))
+            self.store._set_tenant_context(conn, self.tenant_id, self.principal_id)
             row = conn.execute(
                 "SELECT event_id FROM audit_events WHERE event_type = 'integration-test' AND tenant_id = %s LIMIT 1",
                 (self.tenant_id,),
@@ -408,19 +408,11 @@ class TestPostgresStoreIntegration:
                     (threshold,),
                 )
 
-    def test_compromised_runtime_credential_can_change_rls_tenant_context(self):
-        """Executable evidence of the documented stolen-DB-credential boundary.
-
-        This is not a passing tenant-isolation control: it proves that custom GUC
-        RLS context is trusted application state, not a database-authenticated
-        tenant identity. A party holding the raw runtime credential can switch
-        the setting and read/update another tenant's permit. Keep this test so
-        the residual risk remains explicit rather than claiming RLS prevents it.
-        """
+    def test_compromised_runtime_credential_cannot_forge_tenant_context(self):
+        """A runtime DB credential cannot replace the app-held HMAC signature."""
         other_tenant = "compromised-" + uuid4().hex
         other_principal = "other-user-" + uuid4().hex
         other_resource = "file-" + uuid4().hex
-        other_permit = uuid4()
         with psycopg.connect(ADMIN_DATABASE_URL, row_factory=dict_row) as admin:
             admin.execute(
                 """
@@ -430,46 +422,58 @@ class TestPostgresStoreIntegration:
                 """,
                 (other_tenant, other_resource, other_principal, Jsonb({"relative_path": "private.txt"})),
             )
-            admin.execute(
-                """
-                INSERT INTO authz_permits
-                    (permit_id, tenant_id, principal_id, action, resource_id,
-                     arguments_digest, context_digest, policy_revision, decision_id,
-                     status, expires_at)
-                VALUES (%s, %s, %s, 'file.read', %s, %s, %s, 'test-revision',
-                        'security-test', 'issued', now() + interval '10 minutes')
-                """,
-                (other_permit, other_tenant, other_principal, other_resource,
-                 self.arguments_digest, "b" * 64),
-            )
 
         with self.store.pool.connection() as conn, conn.transaction():
-            conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (self.tenant_id,))
+            self.store._set_tenant_context(conn, self.tenant_id, self.principal_id)
             assert conn.execute(
                 "SELECT 1 FROM protected_resources WHERE tenant_id = %s AND resource_id = %s",
                 (other_tenant, other_resource),
             ).fetchone() is None
-            conn.execute("SELECT set_config('paca.tenant_id', %s, true)", (other_tenant,))
-            leaked_resource = conn.execute(
-                "SELECT tenant_id, resource_id FROM protected_resources WHERE resource_id = %s",
+
+            # A stolen DB credential can set arbitrary custom GUCs, but cannot
+            # produce a valid HMAC for the altered tenant/principal tuple.
+            conn.execute("SELECT set_config('paca.ctx_tenant_id', %s, true)", (other_tenant,))
+            conn.execute("SELECT set_config('paca.ctx_principal_id', %s, true)", (other_principal,))
+            conn.execute("SELECT set_config('paca.ctx_signature', %s, true)", ("0" * 64,))
+            assert conn.execute(
+                "SELECT public.paca_current_tenant_id() AS tenant_id"
+            ).fetchone()["tenant_id"] is None
+            assert conn.execute(
+                "SELECT 1 FROM protected_resources WHERE resource_id = %s",
                 (other_resource,),
-            ).fetchone()
-            assert leaked_resource == {
-                "tenant_id": other_tenant, "resource_id": other_resource
-            }
-            changed = conn.execute(
-                """
-                UPDATE authz_permits SET status = 'revoked'
-                WHERE tenant_id = %s AND permit_id = %s
-                RETURNING status
-                """,
-                (other_tenant, other_permit),
-            ).fetchone()
-            assert changed == {"status": "revoked"}
+            ).fetchone() is None
 
-        with psycopg.connect(ADMIN_DATABASE_URL, row_factory=dict_row) as admin:
-            status = admin.execute(
-                "SELECT status FROM authz_permits WHERE permit_id = %s", (other_permit,)
-            ).fetchone()
-        assert status == {"status": "revoked"}
+            with pytest.raises(InsufficientPrivilege):
+                conn.execute("SELECT key_material FROM paca_private.tenant_context_keys")
 
+    def test_signed_tenant_context_cannot_be_replayed_in_a_new_transaction(self):
+        with self.store.pool.connection() as conn:
+            with conn.transaction():
+                self.store._set_tenant_context(conn, self.tenant_id, self.principal_id)
+                names = (
+                    "tenant_id", "principal_id", "backend_pid", "transaction_id",
+                    "issued_at", "expires_at", "key_id", "signature",
+                )
+                captured = {
+                    name: conn.execute(
+                        "SELECT current_setting(%s, true) AS value",
+                        ("paca.ctx_" + name,),
+                    ).fetchone()["value"]
+                    for name in names
+                }
+                assert conn.execute(
+                    "SELECT public.paca_current_tenant_id() AS tenant_id"
+                ).fetchone()["tenant_id"] == self.tenant_id
+
+            with conn.transaction():
+                for name, value in captured.items():
+                    conn.execute(
+                        "SELECT set_config(%s, %s, true)",
+                        ("paca.ctx_" + name, value),
+                    )
+                assert conn.execute(
+                    "SELECT public.paca_current_tenant_id() AS tenant_id"
+                ).fetchone()["tenant_id"] is None
+                assert conn.execute(
+                    "SELECT count(*) AS n FROM protected_resources"
+                ).fetchone()["n"] == 0
