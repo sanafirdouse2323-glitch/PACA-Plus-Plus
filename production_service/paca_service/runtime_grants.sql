@@ -1,6 +1,9 @@
 -- Runtime can invoke the verifier/setter but cannot read the private HMAC key.
 REVOKE ALL ON SCHEMA paca_private FROM PUBLIC;
+REVOKE ALL ON SCHEMA paca_private FROM paca_runtime;
 REVOKE ALL ON TABLE paca_private.tenant_context_keys FROM PUBLIC;
+REVOKE ALL ON TABLE paca_private.tenant_context_keys FROM paca_runtime;
+REVOKE ALL ON FUNCTION public.paca_constant_time_equal(bytea, bytea) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.paca_context_is_valid() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.paca_current_tenant_id() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.paca_set_tenant_context(text, text, integer, text, bigint, bigint, text, text) FROM PUBLIC;
