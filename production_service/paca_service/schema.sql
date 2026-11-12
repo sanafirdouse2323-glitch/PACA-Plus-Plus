@@ -110,6 +110,8 @@ EXCEPTION
 END;
 $paca_context$;
 
+REVOKE ALL ON FUNCTION public.paca_context_is_valid() FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION public.paca_current_tenant_id()
 RETURNS TEXT
 LANGUAGE sql
@@ -123,6 +125,8 @@ AS $paca_tenant$
         ELSE NULL
     END
 $paca_tenant$;
+
+REVOKE ALL ON FUNCTION public.paca_current_tenant_id() FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION public.paca_set_tenant_context(
     p_tenant_id TEXT,
@@ -153,6 +157,8 @@ BEGIN
     END IF;
 END;
 $paca_set_context$;
+
+REVOKE ALL ON FUNCTION public.paca_set_tenant_context(text, text, integer, text, bigint, bigint, text, text) FROM PUBLIC;
 
 CREATE TABLE IF NOT EXISTS protected_resources (
     tenant_id TEXT NOT NULL,
