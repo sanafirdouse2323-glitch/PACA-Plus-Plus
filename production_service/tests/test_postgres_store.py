@@ -23,7 +23,11 @@ pytestmark = pytest.mark.skipif(
 
 class TestPostgresStoreIntegration:
     def setup_method(self):
-        self.store = PostgresStore(DATABASE_URL, bytes.fromhex(os.environ["PACA_TENANT_CONTEXT_HMAC_KEY"]), os.getenv("PACA_TENANT_CONTEXT_KEY_ID", "v1"))
+        self.store = PostgresStore(
+            DATABASE_URL,
+            bytes.fromhex(os.environ["PACA_TENANT_CONTEXT_HMAC_KEY"]),
+            os.getenv("PACA_TENANT_CONTEXT_KEY_ID", "v1"),
+        )
         self.store.open()
         self.tenant_id = "test-" + uuid4().hex
         self.principal_id = "integration-user"
