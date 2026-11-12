@@ -18,7 +18,13 @@ def tenant_context_message(
     key_id: str,
 ) -> bytes:
     values = (tenant_id, principal_id, transaction_id, key_id)
-    if any(not isinstance(value, str) or not value or any(ord(ch) < 32 for ch in value) for value in values):
+    if any(
+        not isinstance(value, str)
+        or not value
+        or len(value) > 512
+        or any(ord(ch) < 32 for ch in value)
+        for value in values
+    ):
         raise TenantContextError("tenant context fields must be non-empty printable strings")
     if isinstance(backend_pid, bool) or not isinstance(backend_pid, int) or backend_pid <= 0:
         raise TenantContextError("invalid PostgreSQL backend PID")
