@@ -59,7 +59,14 @@ jobs:
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/schema.sql
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE ROLE paca_runtime LOGIN PASSWORD 'paca_test_runtime_password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;"
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/runtime_grants.sql
-          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -v context_key_id="$PACA_TENANT_CONTEXT_KEY_ID" -v context_key="$PACA_TENANT_CONTEXT_HMAC_KEY" -c "INSERT INTO paca_private.tenant_context_keys (key_id, key_material, enabled) VALUES (:'context_key_id', decode(:'context_key', 'hex'), TRUE) ON CONFLICT (key_id) DO UPDATE SET key_material = EXCLUDED.key_material, enabled = TRUE;"
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -v context_key_id="$PACA_TENANT_CONTEXT_KEY_ID" \
+            -v context_key="$PACA_TENANT_CONTEXT_HMAC_KEY" <<'SQL'
+          INSERT INTO paca_private.tenant_context_keys (key_id, key_material, enabled)
+          VALUES (:'context_key_id', decode(:'context_key', 'hex'), TRUE)
+          ON CONFLICT (key_id) DO UPDATE
+          SET key_material = EXCLUDED.key_material, enabled = TRUE;
+          SQL
       - name: Lint service code
         run: ruff check production_service
       - name: Run service unit and least-privilege PostgreSQL integration tests
