@@ -1,3 +1,13 @@
+-- Runtime can invoke the verifier/setter but cannot read the private HMAC key.
+REVOKE ALL ON SCHEMA paca_private FROM PUBLIC;
+REVOKE ALL ON TABLE paca_private.tenant_context_keys FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.paca_context_is_valid() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.paca_current_tenant_id() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.paca_set_tenant_context(text, text, integer, text, bigint, bigint, text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.paca_context_is_valid() TO paca_runtime;
+GRANT EXECUTE ON FUNCTION public.paca_current_tenant_id() TO paca_runtime;
+GRANT EXECUTE ON FUNCTION public.paca_set_tenant_context(text, text, integer, text, bigint, bigint, text, text) TO paca_runtime;
+
 -- Apply as the schema owner / migration administrator after schema.sql.
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 REVOKE ALL ON protected_resources, authz_permits, authz_executions, audit_events FROM PUBLIC;
