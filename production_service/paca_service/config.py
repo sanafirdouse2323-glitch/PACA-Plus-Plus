@@ -107,10 +107,14 @@ class Settings:
         database_url = _validate_database_url(_required(env, "PACA_DATABASE_URL"))
         raw_context_key = _required(env, "PACA_TENANT_CONTEXT_HMAC_KEY")
         if not re.fullmatch(r"[0-9a-fA-F]{64}", raw_context_key):
-            raise ConfigurationError("PACA_TENANT_CONTEXT_HMAC_KEY must be exactly 64 hexadecimal characters (32 bytes).")
+            raise ConfigurationError(
+                "PACA_TENANT_CONTEXT_HMAC_KEY must be exactly 64 hexadecimal characters (32 bytes)."
+            )
         context_key_id = env.get("PACA_TENANT_CONTEXT_KEY_ID", "v1").strip()
         if not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", context_key_id):
-            raise ConfigurationError("PACA_TENANT_CONTEXT_KEY_ID must be 1-32 safe identifier characters.")
+            raise ConfigurationError(
+                "PACA_TENANT_CONTEXT_KEY_ID must be 1-32 safe identifier characters."
+            )
 
         opa_url = _validate_service_url(
             "PACA_OPA_URL",
