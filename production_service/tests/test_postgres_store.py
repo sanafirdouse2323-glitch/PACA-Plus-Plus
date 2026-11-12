@@ -324,6 +324,8 @@ class TestPostgresStoreIntegration:
                 """
                 SELECT
                     has_schema_privilege(current_user, 'public', 'CREATE') AS can_create_in_public,
+                    has_schema_privilege(current_user, 'paca_private', 'USAGE') AS can_use_private_schema,
+                    has_table_privilege(current_user, 'paca_private.tenant_context_keys', 'SELECT') AS can_read_context_keys,
                     has_table_privilege(current_user, 'protected_resources', 'DELETE') AS can_delete_resources,
                     has_table_privilege(current_user, 'authz_permits', 'DELETE') AS can_delete_permits,
                     has_table_privilege(current_user, 'authz_executions', 'DELETE') AS can_delete_executions,
@@ -335,6 +337,8 @@ class TestPostgresStoreIntegration:
                 """
             ).fetchone()
         assert grants["can_create_in_public"] is False
+        assert grants["can_use_private_schema"] is False
+        assert grants["can_read_context_keys"] is False
         assert grants["can_delete_resources"] is False
         assert grants["can_delete_permits"] is False
         assert grants["can_delete_executions"] is False
@@ -381,7 +385,10 @@ class TestPostgresStoreIntegration:
                 WHERE n.nspname = 'public'
                   AND p.proname IN (
                     'paca_lock_resource_for_execution',
-                    'paca_mark_stale_executions_unknown'
+                    'paca_mark_stale_executions_unknown',
+                    'paca_context_is_valid',
+                    'paca_current_tenant_id',
+                    'paca_set_tenant_context'
                   )
                 """
             ).fetchall()
@@ -389,6 +396,9 @@ class TestPostgresStoreIntegration:
         assert set(by_name) == {
             "paca_lock_resource_for_execution",
             "paca_mark_stale_executions_unknown",
+            "paca_context_is_valid",
+            "paca_current_tenant_id",
+            "paca_set_tenant_context",
         }
         for row in by_name.values():
             assert row["prosecdef"] is True
