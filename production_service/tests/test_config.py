@@ -8,6 +8,8 @@ from paca_service.config import ConfigurationError, Settings
 def base_env(**overrides: str) -> dict[str, str]:
     env = {
         "PACA_DATABASE_URL": "postgresql://paca_runtime:secret@database:5432/paca",
+        "PACA_TENANT_CONTEXT_HMAC_KEY": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "PACA_TENANT_CONTEXT_KEY_ID": "v1",
         "PACA_OPA_URL": "http://opa:8181",
         "PACA_EXPECTED_POLICY_REVISION": "paca-dev-2026-10-23",
         "PACA_JWT_ISSUER": "https://identity.example.org/",
@@ -61,3 +63,13 @@ def test_loopback_http_api_destination_is_allowed_for_local_testing():
 def test_non_https_oidc_issuer_is_rejected():
     with pytest.raises(ConfigurationError, match="HTTPS"):
         Settings.from_env(base_env(PACA_JWT_ISSUER="http://identity.example.org/"))
+
+
+def test_tenant_context_key_must_be_256_bit_hex():
+    with pytest.raises(ConfigurationError, match="64 hexadecimal"):
+        Settings.from_env(base_env(PACA_TENANT_CONTEXT_HMAC_KEY="too-short"))
+
+
+def test_tenant_context_key_id_is_strictly_validated():
+    with pytest.raises(ConfigurationError, match="key ID"):
+        Settings.from_env(base_env(PACA_TENANT_CONTEXT_KEY_ID="bad key id"))
