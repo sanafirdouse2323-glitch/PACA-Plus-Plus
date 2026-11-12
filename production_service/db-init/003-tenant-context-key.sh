@@ -16,12 +16,11 @@ if [[ ! "$PACA_TENANT_CONTEXT_KEY_ID" =~ ^[A-Za-z0-9._-]{1,32}$ ]]; then
   exit 1
 fi
 
-psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
-  --set=ON_ERROR_STOP=1 \
-  --set=context_key_id="$PACA_TENANT_CONTEXT_KEY_ID" \
-  --set=context_key="$PACA_TENANT_CONTEXT_HMAC_KEY" <<'SQL'
+# The key ID and key are restricted to safe character sets above, so shell
+# expansion into this administrator-only SQL input cannot change statement structure.
+psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --set=ON_ERROR_STOP=1 <<SQL
 INSERT INTO paca_private.tenant_context_keys (key_id, key_material, enabled)
-VALUES (:'context_key_id', decode(:'context_key', 'hex'), TRUE)
+VALUES ('$PACA_TENANT_CONTEXT_KEY_ID', decode('$PACA_TENANT_CONTEXT_HMAC_KEY', 'hex'), TRUE)
 ON CONFLICT (key_id) DO UPDATE
 SET key_material = EXCLUDED.key_material, enabled = TRUE;
 SQL
