@@ -328,8 +328,13 @@ class TestPostgresStoreIntegration:
                 """
                 SELECT
                     has_schema_privilege(current_user, 'public', 'CREATE') AS can_create_in_public,
-                    has_schema_privilege(current_user, 'paca_private', 'USAGE') AS can_use_private_schema,
-                    has_table_privilege(current_user, 'paca_private.tenant_context_keys', 'SELECT') AS can_read_context_keys,
+                    (SELECT has_schema_privilege(current_user, n.oid, 'USAGE')
+                     FROM pg_namespace AS n WHERE n.nspname = 'paca_private') AS can_use_private_schema,
+                    (SELECT has_table_privilege(current_user, c.oid, 'SELECT')
+                     FROM pg_class AS c
+                     JOIN pg_namespace AS n ON n.oid = c.relnamespace
+                     WHERE n.nspname = 'paca_private'
+                       AND c.relname = 'tenant_context_keys') AS can_read_context_keys,
                     has_table_privilege(current_user, 'protected_resources', 'DELETE') AS can_delete_resources,
                     has_table_privilege(current_user, 'authz_permits', 'DELETE') AS can_delete_permits,
                     has_table_privilege(current_user, 'authz_executions', 'DELETE') AS can_delete_executions,
