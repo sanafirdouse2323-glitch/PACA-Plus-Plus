@@ -6,7 +6,6 @@ from paca_service.tenant_context import (
     tenant_context_message,
 )
 
-
 KEY = bytes.fromhex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 
 
