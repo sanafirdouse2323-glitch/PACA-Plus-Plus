@@ -83,7 +83,7 @@ def create_app(
         try:
             store.open()
             store.ping()
-            store.mark_stale_executions_unknown(settings.stale_execution_seconds)
+            # Cross-tenant stale-execution recovery is administrator-only.
             yield
         finally:
             try:
