@@ -37,4 +37,14 @@ BEGIN
   END LOOP;
 END
 $paca_revoke_memberships$;
+
+-- A direct database CREATE grant (including one inherited from PUBLIC) would
+-- let the runtime role pre-create security-sensitive schemas. Remove it as
+-- well as role memberships; CREATE ROLE attributes do not revoke ACL grants.
+DO $paca_revoke_database_create$
+BEGIN
+  EXECUTE format('REVOKE CREATE ON DATABASE %I FROM paca_runtime', current_database());
+  EXECUTE format('REVOKE CREATE ON DATABASE %I FROM PUBLIC', current_database());
+END
+$paca_revoke_database_create$;
 SQL
