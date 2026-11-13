@@ -96,6 +96,7 @@ END;
 $paca_recovery$;
 
 REVOKE ALL ON FUNCTION public.paca_mark_stale_executions_unknown(integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.paca_mark_stale_executions_unknown(integer) FROM paca_runtime;
 -- Global stale-execution recovery is intentionally owner/admin-only.
 
 GRANT USAGE ON SCHEMA public TO paca_runtime;
