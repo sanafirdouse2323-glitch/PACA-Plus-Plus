@@ -73,7 +73,7 @@ The committed test realm is **for automated local/CI testing only**. It uses HTT
 
 ## Stale execution recovery (administrator-only)
 
-The API deliberately does not run global stale-execution recovery with its restricted runtime credential. This avoids giving a stolen `paca_runtime` credential a cross-tenant state-transition capability. If an operator needs to classify executions left in `executing` after a crash, first investigate downstream effects and confirm the configured stale threshold is longer than the maximum legitimate execution duration. Then run the database function using an administrator-owned connection:
+The API deliberately does not run global stale-execution recovery with its restricted runtime credential. This avoids giving a stolen `paca_runtime` credential a cross-tenant state-transition capability. If an operator needs to classify executions left in `executing` after a crash, first investigate downstream effects and choose a threshold longer than the maximum legitimate execution duration, with an appropriate reconciliation margin. Then run the database function using an administrator-owned connection:
 
 ```sh
 psql "$PACA_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 \
