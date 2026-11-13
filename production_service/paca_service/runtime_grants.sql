@@ -8,27 +8,6 @@ REVOKE ALL ON FUNCTION public.paca_context_is_valid() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.paca_current_tenant_id() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.paca_set_tenant_context(text, text, integer, text, bigint, bigint, text, text) FROM PUBLIC;
 
--- CREATE OR REPLACE preserves the existing function owner. On an upgraded
--- database, explicitly move every SECURITY DEFINER entry point to the trusted
--- migration administrator so a legacy runtime-owned function cannot retain
--- owner privileges after its EXECUTE grant is revoked.
-DO $paca_function_owners$
-DECLARE
-    target_function regprocedure;
-BEGIN
-    FOREACH target_function IN ARRAY ARRAY[
-        'public.paca_context_is_valid()'::regprocedure,
-        'public.paca_current_tenant_id()'::regprocedure,
-        'public.paca_set_tenant_context(text, text, integer, text, bigint, bigint, text, text)'::regprocedure,
-        'public.paca_lock_resource_for_execution(text, text)'::regprocedure,
-        'public.paca_mark_stale_executions_unknown(integer)'::regprocedure
-    ]
-    LOOP
-        EXECUTE format('ALTER FUNCTION %s OWNER TO %I', target_function, current_user);
-    END LOOP;
-END
-$paca_function_owners$;
-
 GRANT EXECUTE ON FUNCTION public.paca_context_is_valid() TO paca_runtime;
 GRANT EXECUTE ON FUNCTION public.paca_current_tenant_id() TO paca_runtime;
 GRANT EXECUTE ON FUNCTION public.paca_set_tenant_context(text, text, integer, text, bigint, bigint, text, text) TO paca_runtime;
@@ -116,6 +95,27 @@ BEGIN
     RETURN changed_count;
 END;
 $paca_recovery$;
+
+-- CREATE OR REPLACE preserves the existing function owner. On an upgraded
+-- database, explicitly move every SECURITY DEFINER entry point to the trusted
+-- migration administrator so a legacy runtime-owned function cannot retain
+-- owner privileges after its EXECUTE grant is revoked.
+DO $paca_function_owners$
+DECLARE
+    target_function regprocedure;
+BEGIN
+    FOREACH target_function IN ARRAY ARRAY[
+        'public.paca_context_is_valid()'::regprocedure,
+        'public.paca_current_tenant_id()'::regprocedure,
+        'public.paca_set_tenant_context(text, text, integer, text, bigint, bigint, text, text)'::regprocedure,
+        'public.paca_lock_resource_for_execution(text, text)'::regprocedure,
+        'public.paca_mark_stale_executions_unknown(integer)'::regprocedure
+    ]
+    LOOP
+        EXECUTE format('ALTER FUNCTION %s OWNER TO %I', target_function, current_user);
+    END LOOP;
+END
+$paca_function_owners$;
 
 REVOKE ALL ON FUNCTION public.paca_mark_stale_executions_unknown(integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.paca_mark_stale_executions_unknown(integer) FROM paca_runtime;
