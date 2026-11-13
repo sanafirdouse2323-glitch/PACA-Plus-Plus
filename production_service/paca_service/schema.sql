@@ -17,9 +17,7 @@ CREATE TABLE IF NOT EXISTS paca_private.tenant_context_keys (
 ALTER SCHEMA paca_private OWNER TO CURRENT_USER;
 ALTER TABLE paca_private.tenant_context_keys OWNER TO CURRENT_USER;
 REVOKE ALL ON SCHEMA paca_private FROM PUBLIC;
-REVOKE ALL ON SCHEMA paca_private FROM paca_runtime;
 REVOKE ALL ON TABLE paca_private.tenant_context_keys FROM PUBLIC;
-REVOKE ALL ON TABLE paca_private.tenant_context_keys FROM paca_runtime;
 
 CREATE OR REPLACE FUNCTION public.paca_constant_time_equal(
     p_expected BYTEA,
