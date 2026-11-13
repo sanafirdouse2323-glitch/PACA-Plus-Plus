@@ -82,9 +82,6 @@ class FakeStore:
     def ping(self) -> None:
         return None
 
-    def mark_stale_executions_unknown(self, stale_after_seconds: int) -> int:
-        return 0
-
     def fetch_resource(self, tenant_id: str, principal_id: str, resource_id: str) -> dict[str, Any] | None:
         row = self.resources.get((tenant_id, resource_id))
         return dict(row) if row else None
