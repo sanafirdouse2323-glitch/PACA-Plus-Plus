@@ -76,6 +76,7 @@ jobs:
           # remove the grant and restore trusted ownership before key provisioning.
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
           GRANT CREATE ON DATABASE paca_test TO paca_runtime;
+          GRANT CREATE ON DATABASE paca_test TO PUBLIC;
           ALTER SCHEMA paca_private OWNER TO paca_runtime;
           ALTER TABLE paca_private.tenant_context_keys OWNER TO paca_runtime;
           SQL
