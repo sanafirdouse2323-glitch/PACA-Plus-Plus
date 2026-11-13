@@ -95,7 +95,6 @@ class Settings:
     jwt_timeout_seconds: float
     permit_ttl_seconds: int
     execution_timeout_seconds: float
-    stale_execution_seconds: int
     api_base_url: str | None
     api_routes: dict[str, dict[str, Any]]
     api_bearer_token: str | None
@@ -159,12 +158,7 @@ class Settings:
         if base:
             base = _validate_service_url("PACA_API_BASE_URL", base, allow_http=True)
 
-        stale_seconds = _positive_int(env, "PACA_STALE_EXECUTION_SECONDS", "120", 86400)
         execution_timeout = _positive_float(env, "PACA_EXECUTION_TIMEOUT_SECONDS", "10", 120)
-        if stale_seconds <= execution_timeout:
-            raise ConfigurationError(
-                "PACA_STALE_EXECUTION_SECONDS must exceed the upstream execution timeout."
-            )
 
         return cls(
             database_url=database_url,
@@ -180,7 +174,6 @@ class Settings:
             jwt_timeout_seconds=_positive_float(env, "PACA_JWT_TIMEOUT_SECONDS", "5", 30),
             permit_ttl_seconds=_positive_int(env, "PACA_PERMIT_TTL_SECONDS", "30", 300),
             execution_timeout_seconds=execution_timeout,
-            stale_execution_seconds=stale_seconds,
             api_base_url=base,
             api_routes=routes,
             api_bearer_token=env.get("PACA_API_BEARER_TOKEN", "").strip() or None,
