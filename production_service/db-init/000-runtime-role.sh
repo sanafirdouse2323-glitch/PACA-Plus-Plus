@@ -44,7 +44,7 @@ $paca_revoke_memberships$;
 DO $paca_revoke_database_create$
 BEGIN
   EXECUTE format('REVOKE CREATE ON DATABASE %I FROM paca_runtime', current_database());
-  EXECUTE format('REVOKE CREATE ON DATABASE %I FROM PUBLIC', current_database());
+  EXECUTE 'REVOKE CREATE ON DATABASE ' || quote_ident(current_database()) || ' FROM PUBLIC';
 END
 $paca_revoke_database_create$;
 SQL
