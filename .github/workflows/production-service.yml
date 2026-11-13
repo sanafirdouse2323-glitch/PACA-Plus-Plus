@@ -71,6 +71,28 @@ jobs:
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 \
             -c "SELECT NOT pg_has_role('paca_runtime', 'paca_test_inherited', 'MEMBER') AS inherited_membership_revoked" \
             | grep -q t
+          # Simulate a legacy direct database grant and runtime ownership of the
+          # private signing-key objects. Bootstrap and schema reapplication must
+          # remove the grant and restore trusted ownership before key provisioning.
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT CREATE ON DATABASE paca_test TO paca_runtime;
+          ALTER SCHEMA paca_private OWNER TO paca_runtime;
+          ALTER TABLE paca_private.tenant_context_keys OWNER TO paca_runtime;
+          SQL
+          PGHOST=localhost PGPORT=5432 PGPASSWORD=postgres \
+            POSTGRES_USER=postgres POSTGRES_DB=paca_test \
+            PACA_RUNTIME_PASSWORD=paca_test_runtime_password \
+            bash production_service/db-init/000-runtime-role.sh
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -c "SELECT NOT has_database_privilege('paca_runtime', current_database(), 'CREATE') AS database_create_revoked" \
+            | grep -q t
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/schema.sql
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -c "SELECT r.rolname <> 'paca_runtime' FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner WHERE n.nspname = 'paca_private'" \
+            | grep -q t
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -c "SELECT r.rolname <> 'paca_runtime' FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_roles r ON r.oid = c.relowner WHERE n.nspname = 'paca_private' AND c.relname = 'tenant_context_keys'" \
+            | grep -q t
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/runtime_grants.sql
           # Simulate a legacy migration that left the recovery function owned
           # by the runtime role. Reapplying grants must transfer ownership back.
