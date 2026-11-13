@@ -473,21 +473,6 @@ class PostgresStore:
             "finished_at": row["finished_at"].isoformat() if row["finished_at"] else None,
         }
 
-    def mark_stale_executions_unknown(self, stale_after_seconds: int) -> int:
-        """Run the bounded, audited cross-tenant recovery database function."""
-        if (
-            isinstance(stale_after_seconds, bool)
-            or not isinstance(stale_after_seconds, int)
-            or not 1 <= stale_after_seconds <= 86400
-        ):
-            raise ValueError("stale_after_seconds must be an integer from 1 to 86400")
-        with self.pool.connection() as conn, conn.transaction():
-            row = conn.execute(
-                "SELECT public.paca_mark_stale_executions_unknown(%s) AS changed_count",
-                (stale_after_seconds,),
-            ).fetchone()
-        return int(row["changed_count"])
-
     @staticmethod
     def _existing_claim(existing: dict[str, Any], request_digest: str) -> ClaimResult:
         if existing["request_digest"].strip() != request_digest:
