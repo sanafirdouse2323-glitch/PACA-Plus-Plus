@@ -57,7 +57,20 @@ jobs:
         run: |
           set -euo pipefail
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/schema.sql
-          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE ROLE paca_runtime LOGIN PASSWORD 'paca_test_runtime_password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;"
+          # Seed an intentionally over-privileged membership to exercise the
+          # existing-role hardening performed by the real bootstrap script.
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE paca_test_inherited CREATEDB;
+          CREATE ROLE paca_runtime LOGIN PASSWORD 'temporary-test-password';
+          GRANT paca_test_inherited TO paca_runtime;
+          SQL
+          PGHOST=localhost PGPORT=5432 PGPASSWORD=postgres \
+            POSTGRES_USER=postgres POSTGRES_DB=paca_test \
+            PACA_RUNTIME_PASSWORD=paca_test_runtime_password \
+            bash production_service/db-init/000-runtime-role.sh
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -c "SELECT NOT pg_has_role('paca_runtime', 'paca_test_inherited', 'MEMBER') AS inherited_membership_revoked" \
+            | grep -q t
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/runtime_grants.sql
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 \
             -v context_key_id="$PACA_TENANT_CONTEXT_KEY_ID" \
