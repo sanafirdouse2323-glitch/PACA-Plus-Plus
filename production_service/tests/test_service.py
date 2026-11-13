@@ -235,7 +235,6 @@ def make_settings() -> Settings:
         jwt_timeout_seconds=5,
         permit_ttl_seconds=30,
         execution_timeout_seconds=10,
-        stale_execution_seconds=120,
         api_base_url=None,
         api_routes={},
         api_bearer_token=None,
