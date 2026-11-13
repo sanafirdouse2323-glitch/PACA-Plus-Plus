@@ -293,7 +293,14 @@ class TestPostgresStoreIntegration:
                    WHERE execution_id = %s AND tenant_id = %s AND principal_id = %s""",
                 (claim.execution_id, self.tenant_id, self.principal_id),
             )
-        assert self.store.mark_stale_executions_unknown(120) == 1
+        # Global recovery is an explicit administrator operation, never a
+        # call made with the application's restricted runtime connection.
+        with psycopg.connect(ADMIN_DATABASE_URL) as admin:
+            changed = admin.execute(
+                "SELECT public.paca_mark_stale_executions_unknown(%s)",
+                (120,),
+            ).fetchone()[0]
+        assert changed == 1
         status = self.store.get_execution_status(
             claim.execution_id, self.tenant_id, self.principal_id
         )
