@@ -63,6 +63,9 @@ jobs:
           CREATE ROLE paca_test_inherited CREATEDB;
           CREATE ROLE paca_runtime LOGIN PASSWORD 'temporary-test-password';
           GRANT paca_test_inherited TO paca_runtime;
+          GRANT CREATE ON SCHEMA public TO paca_runtime;
+          ALTER FUNCTION public.paca_mark_stale_executions_unknown(integer) OWNER TO paca_runtime;
+          REVOKE CREATE ON SCHEMA public FROM paca_runtime;
           SQL
           PGHOST=localhost PGPORT=5432 PGPASSWORD=postgres \
             POSTGRES_USER=postgres POSTGRES_DB=paca_test \
