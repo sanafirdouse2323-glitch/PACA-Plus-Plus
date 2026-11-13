@@ -158,7 +158,6 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
         jwt_timeout_seconds=5.0,
         permit_ttl_seconds=30,
         execution_timeout_seconds=10.0,
-        stale_execution_seconds=120,
         api_base_url=None,
         api_routes={},
         api_bearer_token=None,
