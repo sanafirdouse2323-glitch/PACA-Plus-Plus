@@ -409,20 +409,26 @@ class TestPostgresStoreIntegration:
             "paca_current_tenant_id",
             "paca_set_tenant_context",
         }
-        for row in by_name.values():
+        for name, row in by_name.items():
             assert row["prosecdef"] is True
             assert row["function_owner"] != "paca_runtime"
             assert any(
                 setting.replace(" ", "") == "search_path=pg_catalog,public"
                 for setting in (row["proconfig"] or [])
             )
-            assert row["runtime_can_execute"] is True
+            # The application role must never have global recovery authority.
+            assert row["runtime_can_execute"] is (name != "paca_mark_stale_executions_unknown")
 
-        # The cross-tenant recovery function is intentionally callable by the
-        # runtime role; reject out-of-range thresholds at the database boundary.
+        with pytest.raises(InsufficientPrivilege), self.store.pool.connection() as runtime:
+            runtime.execute("SELECT public.paca_mark_stale_executions_unknown(120)")
+
+        # The database owner retains the controlled operator recovery path and
+        # the database-side threshold validation is still enforced.
         for threshold in (0, 86401):
-            with pytest.raises(psycopg.errors.InvalidParameterValue), self.store.pool.connection() as conn:
-                conn.execute(
+            with pytest.raises(psycopg.errors.InvalidParameterValue), psycopg.connect(
+                ADMIN_DATABASE_URL
+            ) as admin:
+                admin.execute(
                     "SELECT public.paca_mark_stale_executions_unknown(%s)",
                     (threshold,),
                 )
