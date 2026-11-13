@@ -18,6 +18,8 @@ jobs:
     env:
       PACA_TEST_ADMIN_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/paca_test
       PACA_TEST_DATABASE_URL: postgresql://paca_runtime:paca_test_runtime_password@localhost:5432/paca_test
+      PACA_TENANT_CONTEXT_HMAC_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      PACA_TENANT_CONTEXT_KEY_ID: v1
     services:
       postgres:
         image: postgres:17-alpine
@@ -55,8 +57,81 @@ jobs:
         run: |
           set -euo pipefail
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/schema.sql
-          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE ROLE paca_runtime LOGIN PASSWORD 'paca_test_runtime_password' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;"
+          # Seed an intentionally over-privileged membership to exercise the
+          # existing-role hardening performed by the real bootstrap script.
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE paca_test_inherited CREATEDB;
+          CREATE ROLE paca_runtime LOGIN PASSWORD 'temporary-test-password';
+          GRANT paca_test_inherited TO paca_runtime;
+          SQL
+          PGHOST=localhost PGPORT=5432 PGPASSWORD=postgres \
+            POSTGRES_USER=postgres POSTGRES_DB=paca_test \
+            PACA_RUNTIME_PASSWORD=paca_test_runtime_password \
+            bash production_service/db-init/000-runtime-role.sh
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -Atq -v ON_ERROR_STOP=1 \
+            -c "SELECT NOT pg_has_role('paca_runtime', 'paca_test_inherited', 'MEMBER') AS inherited_membership_revoked" \
+            | grep -qx t
+          # Simulate a legacy direct database grant and runtime ownership of the
+          # private signing-key objects. Bootstrap and schema reapplication must
+          # remove the grant and restore trusted ownership before key provisioning.
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT CREATE ON DATABASE paca_test TO paca_runtime;
+          GRANT CREATE ON DATABASE paca_test TO PUBLIC;
+          ALTER SCHEMA paca_private OWNER TO paca_runtime;
+          ALTER TABLE paca_private.tenant_context_keys OWNER TO paca_runtime;
+          SQL
+          PGHOST=localhost PGPORT=5432 PGPASSWORD=postgres \
+            POSTGRES_USER=postgres POSTGRES_DB=paca_test \
+            PACA_RUNTIME_PASSWORD=paca_test_runtime_password \
+            bash production_service/db-init/000-runtime-role.sh
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -Atq -v ON_ERROR_STOP=1 \
+            -c "SELECT NOT has_database_privilege('paca_runtime', current_database(), 'CREATE') AS database_create_revoked" \
+            | grep -qx t
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/schema.sql
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -Atq -v ON_ERROR_STOP=1 \
+            -c "SELECT r.rolname <> 'paca_runtime' FROM pg_namespace n JOIN pg_roles r ON r.oid = n.nspowner WHERE n.nspname = 'paca_private'" \
+            | grep -qx t
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -Atq -v ON_ERROR_STOP=1 \
+            -c "SELECT r.rolname <> 'paca_runtime' FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_roles r ON r.oid = c.relowner WHERE n.nspname = 'paca_private' AND c.relname = 'tenant_context_keys'" \
+            | grep -qx t
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/runtime_grants.sql
+          # Simulate a legacy migration that left the recovery function owned
+          # by the runtime role. Reapplying grants must transfer ownership back.
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT CREATE ON SCHEMA public TO paca_runtime;
+          ALTER FUNCTION public.paca_mark_stale_executions_unknown(integer) OWNER TO paca_runtime;
+          REVOKE CREATE ON SCHEMA public FROM paca_runtime;
+          SQL
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/runtime_grants.sql
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -v context_key_id="$PACA_TENANT_CONTEXT_KEY_ID" \
+            -v context_key="$PACA_TENANT_CONTEXT_HMAC_KEY" <<'SQL'
+          INSERT INTO paca_private.tenant_context_keys (key_id, key_material, enabled)
+          VALUES (:'context_key_id', decode(:'context_key', 'hex'), TRUE)
+          ON CONFLICT (key_id) DO UPDATE
+          SET key_material = EXCLUDED.key_material, enabled = TRUE;
+          SQL
+      - name: Reapply schema, grants and key provisioning to exercise upgrade idempotency
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          # Simulate the database-upgrade path against an already initialized
+          # database. This must preserve existing data and restore the intended
+          # restricted runtime privileges on repeated application.
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/schema.sql
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/runtime_grants.sql
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -v context_key_id="$PACA_TENANT_CONTEXT_KEY_ID" \
+            -v context_key="$PACA_TENANT_CONTEXT_HMAC_KEY" <<'SQL'
+          INSERT INTO paca_private.tenant_context_keys (key_id, key_material, enabled)
+          VALUES (:'context_key_id', decode(:'context_key', 'hex'), TRUE)
+          ON CONFLICT (key_id) DO UPDATE
+          SET key_material = EXCLUDED.key_material, enabled = TRUE;
+          SQL
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -Atq -v ON_ERROR_STOP=1 \
+            -c "SELECT NOT has_function_privilege('paca_runtime', 'public.paca_mark_stale_executions_unknown(integer)', 'EXECUTE') AS runtime_recovery_denied" \
+            | grep -qx t
       - name: Lint service code
         run: ruff check production_service
       - name: Run service unit and least-privilege PostgreSQL integration tests

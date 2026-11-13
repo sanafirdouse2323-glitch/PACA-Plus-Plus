@@ -18,7 +18,7 @@ The gateway verifies RS256 tokens for one configured issuer/audience. In this im
 
 1. **Caller → API:** request data is untrusted. Validate request shape, authenticate the token, and never accept caller-selected callbacks or destination URLs.
 2. **API → OIDC provider:** trust only the configured issuer, audience, RS256 signing algorithm and HTTPS JWKS endpoint. Key rotation, revocation latency and provider availability remain deployment dependencies.
-3. **API → PostgreSQL:** trusted resource facts must be provisioned by an administrative process. Use a restricted runtime role, tenant-scoped queries/RLS where configured, TLS peer verification for remote databases, and separate migration/admin credentials.
+3. **API → PostgreSQL:** trusted resource facts must be provisioned by an administrative process. The API signs tenant context with a separate HMAC key; database RLS verifies it against a private key table and binds it to the current backend/transaction. Use a restricted runtime role, TLS peer verification for remote databases, and separate migration/admin credentials.
 4. **API → OPA:** require a well-formed decision and the expected policy revision on both allow and deny results. OPA failure/undefined result fails closed. Keep OPA private and coordinate policy rollout with the gateway.
 5. **Gateway → downstream effects:** destination/action are fixed by server configuration; the API cannot force a downstream service to implement idempotency.
 6. **Audit DB → independent storage:** an append-only trigger is defense-in-depth, not tamper-proof storage against an owner or superuser.
@@ -28,7 +28,7 @@ The gateway verifies RS256 tokens for one configured issuer/audience. In this im
 | Threat | Control and residual risk |
 |---|---|
 | Forged, expired, wrong-issuer/audience token | Verify signature and claims against one configured issuer/audience and HTTPS JWKS. Test rotation/revocation for the real deployment. |
-| Forged tenant, roles/scopes, ownership | Only trust claims set by the configured issuer; provision resource owners under the stated subject convention; enforce tenant equality in the policy and queries. |
+| Forged tenant, roles/scopes, ownership | Only trust claims set by the configured issuer; provision resource owners under the stated subject convention; bind the verified tenant/principal to a short-lived database HMAC context and enforce tenant RLS. OPA still makes the principal/resource decision. |
 | OPA outage, malformed result, stale policy | Fail closed; require and compare revision; test real OPA allow/deny/readiness and rollout behavior. |
 | Permit replay/idempotency collision | Bind durable execution state to principal/tenant/request digest; enforce uniqueness and test concurrent claims. Downstream idempotency still must be independently verified. |
 | Process crash or uncertain remote outcome | Record an explicit unknown outcome and do not blindly retry. Exercise downstream-specific crash-after-commit and reconciliation paths. |
@@ -41,8 +41,8 @@ The gateway verifies RS256 tokens for one configured issuer/audience. In this im
 ## Current safeguards checked into this repository
 
 - The local Compose API connects through `paca_runtime`, not the bootstrap/admin credential.
-- Runtime grants permit reading trusted resources, narrowly scoped permit/execution writes, and audit select/insert only. Row-level-security policies scope all four tenant-bearing tables to the transaction-local `paca.tenant_id`; execution rows are composite-FK-bound to their permit's tenant and principal.
-- Tenant-aware store methods set the RLS context in a transaction and finalization requires both tenant and principal. Global stale-execution recovery is exposed only through a fixed, bounded, audited `SECURITY DEFINER` function; the runtime role cannot issue the original unscoped sweep as direct table DML.
+- Runtime grants permit reading trusted resources, narrowly scoped permit/execution writes, and audit select/insert only. Row-level-security policies scope all four tenant-bearing tables through `paca_current_tenant_id()`, which validates an HMAC-SHA-256 context bound to tenant, verified principal, backend PID, transaction ID, and a short expiry. The HMAC key is held in an administrator-owned private schema inaccessible to the runtime role. Execution rows are composite-FK-bound to their permit's tenant and principal.
+- Tenant-aware store methods set the RLS context in a transaction and finalization requires both tenant and principal. Global stale-execution recovery is an administrator-only, audited `SECURITY DEFINER` operation; the runtime role cannot execute it, and the API does not trigger it at startup.
 - Rego decisions carry the policy revision on default-deny and allow paths; CI exercises the actual OPA client readiness and an allow/deny pair.
 - Configuration rejects plaintext HTTP to remote OPA/downstream endpoints and requires `sslmode=verify-full` for remote PostgreSQL URLs.
 - PostgreSQL tests use a separate admin DSN for fixture provisioning and run service operations through the restricted runtime DSN.
@@ -51,15 +51,17 @@ These are code-level checks, not independent deployment audit results. Existing 
 
 ## Runtime-credential compromise test and residual risk
 
-The PostgreSQL integration suite now checks the runtime role's DDL/table privileges, inability to assume the `paca` administrative role, fixed `search_path` on `SECURITY DEFINER` functions, and database-side bounds on the recovery threshold. It also contains an explicitly named adversarial test, `test_compromised_runtime_credential_can_change_rls_tenant_context`, that reproduces a known boundary: after switching the custom setting to another tenant, the runtime login can read that tenant's rows and update its permit state.
+The PostgreSQL integration suite now checks that the runtime role cannot read the private HMAC key table, cannot forge a different tenant context by changing custom GUCs, and cannot replay a captured signed context in a new transaction. The signed context includes the tenant, verified principal, backend PID, transaction ID, issue/expiry times, and key ID. These tests are designed to distinguish the database credential from the separately protected application signing key.
 
-That adversarial test is evidence of a residual risk, **not a passing tenant-isolation control**. A green CI result must not be interpreted as protection against stolen runtime database credentials or arbitrary SQL execution under that credential. The runtime role is least-privileged compared with the schema administrator, but it has write access to permit/execution state and permission to invoke the cross-tenant stale-execution recovery function. A compromised runtime credential can therefore affect authorization state across tenants.
+A successful result demonstrates the tested RLS boundary against a party holding only the restricted runtime database credential and attempting ordinary SQL under that role. It does **not** protect against compromise of the API process or its HMAC key, the database owner/superuser, the host, or an exploitable PostgreSQL server.
 
-For threat models that include runtime credential theft or SQL injection, move away from a freely settable tenant GUC as the security identity. Consider per-tenant database roles/databases or a narrowly scoped trusted database-access broker. Move global recovery into a separate narrowly authorized worker/role if the runtime credential should not be able to trigger cross-tenant state transitions. Add tests for the chosen architecture before treating this threat as mitigated.
+Global stale-execution recovery remains a cross-tenant state transition, but it is now executable only by the database owner/administrator. The API runtime role cannot invoke it, and API startup does not run it. An administrator-triggered invocation marks every execution older than the selected threshold as `unknown`; operators must first consider downstream reconciliation and the possibility of a long-running legitimate effect. This removes the global recovery function from the stolen-runtime-credential attack surface, but does not constrain a database administrator.
+
+The runtime role also has write access to permit and execution state within the signed tenant context. The HMAC key must be protected separately from the runtime database credential, and API/database clocks must remain synchronized because context expiry is time-checked. Stale-execution recovery requires a separately controlled administrator connection and is not performed automatically by the API.
 
 ## RLS limitation
 
-The `paca.tenant_id` value is a custom session setting supplied by the application, not an identity PostgreSQL authenticates independently. RLS catches missing tenant predicates and constrains ordinary app paths when the trusted application sets the context correctly. It does not protect against an attacker who has raw access to the runtime database credential and can set the custom setting to another tenant. Keep that credential server-side, and use separate database roles/databases or a trusted broker if malicious SQL under the runtime credential is in scope.
+PostgreSQL custom GUCs remain mutable by a session, so the RLS policies validate the signed context instead of trusting a tenant setting alone. The runtime role can alter GUC values but cannot forge the HMAC, read the private key table, or replay a captured signature in another backend or transaction. The API key and database key copy must be protected independently of the runtime database credential. This boundary is tenant-level: it does not replace principal/resource checks in OPA and application queries. The administrator-only stale-execution recovery function is a separate privileged operational capability.
 
 ## Deployment gates before sensitive workloads
 

@@ -82,10 +82,7 @@ class FakeStore:
     def ping(self) -> None:
         return None
 
-    def mark_stale_executions_unknown(self, stale_after_seconds: int) -> int:
-        return 0
-
-    def fetch_resource(self, tenant_id: str, resource_id: str) -> dict[str, Any] | None:
+    def fetch_resource(self, tenant_id: str, principal_id: str, resource_id: str) -> dict[str, Any] | None:
         row = self.resources.get((tenant_id, resource_id))
         return dict(row) if row else None
 
@@ -226,6 +223,8 @@ class RecordingAdapter:
 def make_settings() -> Settings:
     return Settings(
         database_url="postgresql://test:test@localhost/test",
+        tenant_context_hmac_key=bytes.fromhex("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
+        tenant_context_key_id="v1",
         opa_url="http://opa:8181",
         opa_decision_path="/v1/data/paca/authz/decision",
         opa_timeout_seconds=2,
@@ -236,7 +235,6 @@ def make_settings() -> Settings:
         jwt_timeout_seconds=5,
         permit_ttl_seconds=30,
         execution_timeout_seconds=10,
-        stale_execution_seconds=120,
         api_base_url=None,
         api_routes={},
         api_bearer_token=None,

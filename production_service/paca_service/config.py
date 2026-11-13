@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -82,6 +83,8 @@ def _validate_service_url(
 @dataclass(frozen=True)
 class Settings:
     database_url: str
+    tenant_context_hmac_key: bytes
+    tenant_context_key_id: str
     opa_url: str
     opa_decision_path: str
     opa_timeout_seconds: float
@@ -92,7 +95,6 @@ class Settings:
     jwt_timeout_seconds: float
     permit_ttl_seconds: int
     execution_timeout_seconds: float
-    stale_execution_seconds: int
     api_base_url: str | None
     api_routes: dict[str, dict[str, Any]]
     api_bearer_token: str | None
@@ -102,6 +104,16 @@ class Settings:
     def from_env(cls, environ: dict[str, str] | None = None) -> Settings:
         env = dict(os.environ if environ is None else environ)
         database_url = _validate_database_url(_required(env, "PACA_DATABASE_URL"))
+        raw_context_key = _required(env, "PACA_TENANT_CONTEXT_HMAC_KEY")
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", raw_context_key):
+            raise ConfigurationError(
+                "PACA_TENANT_CONTEXT_HMAC_KEY must be exactly 64 hexadecimal characters (32 bytes)."
+            )
+        context_key_id = env.get("PACA_TENANT_CONTEXT_KEY_ID", "v1").strip()
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", context_key_id):
+            raise ConfigurationError(
+                "PACA_TENANT_CONTEXT_KEY_ID must be 1-32 safe identifier characters."
+            )
 
         opa_url = _validate_service_url(
             "PACA_OPA_URL",
@@ -146,15 +158,12 @@ class Settings:
         if base:
             base = _validate_service_url("PACA_API_BASE_URL", base, allow_http=True)
 
-        stale_seconds = _positive_int(env, "PACA_STALE_EXECUTION_SECONDS", "120", 86400)
         execution_timeout = _positive_float(env, "PACA_EXECUTION_TIMEOUT_SECONDS", "10", 120)
-        if stale_seconds <= execution_timeout:
-            raise ConfigurationError(
-                "PACA_STALE_EXECUTION_SECONDS must exceed the upstream execution timeout."
-            )
 
         return cls(
             database_url=database_url,
+            tenant_context_hmac_key=bytes.fromhex(raw_context_key),
+            tenant_context_key_id=context_key_id,
             opa_url=opa_url,
             opa_decision_path=decision_path,
             opa_timeout_seconds=_positive_float(env, "PACA_OPA_TIMEOUT_SECONDS", "2", 30),
@@ -165,7 +174,6 @@ class Settings:
             jwt_timeout_seconds=_positive_float(env, "PACA_JWT_TIMEOUT_SECONDS", "5", 30),
             permit_ttl_seconds=_positive_int(env, "PACA_PERMIT_TTL_SECONDS", "30", 300),
             execution_timeout_seconds=execution_timeout,
-            stale_execution_seconds=stale_seconds,
             api_base_url=base,
             api_routes=routes,
             api_bearer_token=env.get("PACA_API_BEARER_TOKEN", "").strip() or None,

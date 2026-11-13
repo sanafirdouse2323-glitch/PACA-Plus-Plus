@@ -1,3 +1,17 @@
+-- Runtime can invoke the verifier/setter but cannot read the private HMAC key.
+REVOKE ALL ON SCHEMA paca_private FROM PUBLIC;
+REVOKE ALL ON SCHEMA paca_private FROM paca_runtime;
+REVOKE ALL ON TABLE paca_private.tenant_context_keys FROM PUBLIC;
+REVOKE ALL ON TABLE paca_private.tenant_context_keys FROM paca_runtime;
+REVOKE ALL ON FUNCTION public.paca_constant_time_equal(bytea, bytea) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.paca_context_is_valid() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.paca_current_tenant_id() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.paca_set_tenant_context(text, text, integer, text, bigint, bigint, text, text) FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION public.paca_context_is_valid() TO paca_runtime;
+GRANT EXECUTE ON FUNCTION public.paca_current_tenant_id() TO paca_runtime;
+GRANT EXECUTE ON FUNCTION public.paca_set_tenant_context(text, text, integer, text, bigint, bigint, text, text) TO paca_runtime;
+
 -- Apply as the schema owner / migration administrator after schema.sql.
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 REVOKE ALL ON protected_resources, authz_permits, authz_executions, audit_events FROM PUBLIC;
@@ -24,7 +38,7 @@ SET search_path = pg_catalog, public
 AS $paca_lock$
     SELECT pr.tenant_id, pr.resource_id, pr.owner_id, pr.kind, pr.status, pr.attributes
     FROM public.protected_resources AS pr
-    WHERE p_tenant_id = current_setting('paca.tenant_id', true)
+    WHERE p_tenant_id = public.paca_current_tenant_id()
       AND pr.tenant_id = p_tenant_id
       AND pr.resource_id = p_resource_id
     FOR SHARE
@@ -82,8 +96,30 @@ BEGIN
 END;
 $paca_recovery$;
 
+-- CREATE OR REPLACE preserves the existing function owner. On an upgraded
+-- database, explicitly move every SECURITY DEFINER entry point to the trusted
+-- migration administrator so a legacy runtime-owned function cannot retain
+-- owner privileges after its EXECUTE grant is revoked.
+DO $paca_function_owners$
+DECLARE
+    target_function regprocedure;
+BEGIN
+    FOREACH target_function IN ARRAY ARRAY[
+        'public.paca_context_is_valid()'::regprocedure,
+        'public.paca_current_tenant_id()'::regprocedure,
+        'public.paca_set_tenant_context(text, text, integer, text, bigint, bigint, text, text)'::regprocedure,
+        'public.paca_lock_resource_for_execution(text, text)'::regprocedure,
+        'public.paca_mark_stale_executions_unknown(integer)'::regprocedure
+    ]
+    LOOP
+        EXECUTE format('ALTER FUNCTION %s OWNER TO %I', target_function, current_user);
+    END LOOP;
+END
+$paca_function_owners$;
+
 REVOKE ALL ON FUNCTION public.paca_mark_stale_executions_unknown(integer) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.paca_mark_stale_executions_unknown(integer) TO paca_runtime;
+REVOKE ALL ON FUNCTION public.paca_mark_stale_executions_unknown(integer) FROM paca_runtime;
+-- Global stale-execution recovery is intentionally owner/admin-only.
 
 GRANT USAGE ON SCHEMA public TO paca_runtime;
 -- Resource records are provisioned by a trusted administrative process.
