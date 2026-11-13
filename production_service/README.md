@@ -102,7 +102,7 @@ docker compose exec database bash -lc 'source /docker-entrypoint-initdb.d/003-te
 docker compose up --build -d
 ```
 
-The role-creation script is idempotent so it can be rerun for a controlled upgrade. The schema migration replaces the old GUC-only RLS policies with signed-context verification. The grants migration exposes only the verifier/setter functions to the runtime role and explicitly revokes any legacy runtime grant on global recovery; the final command provisions the HMAC key. Do not start the updated API until the key row exists and the runtime grants are applied. If the old database administrator credential is unavailable, stop and recover access before changing roles. **Do not run `docker compose down -v`** to solve a permission error: that deletes persistent volumes.
+The role-creation script is idempotent so it can be rerun for a controlled upgrade; it also removes every direct role membership from an existing `paca_runtime` role, because `NOINHERIT` alone does not prevent `SET ROLE`. The schema migration replaces the old GUC-only RLS policies with signed-context verification. The grants migration exposes only the verifier/setter functions to the runtime role and explicitly revokes any legacy runtime grant on global recovery; the final command provisions the HMAC key. Do not start the updated API until the key row exists and the runtime grants are applied. If the old database administrator credential is unavailable, stop and recover access before changing roles. **Do not run `docker compose down -v`** to solve a permission error: that deletes persistent volumes.
 
 ## Test and lint
 
