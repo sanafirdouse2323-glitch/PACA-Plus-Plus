@@ -374,7 +374,7 @@ def test_opa_client_uses_automatically_refreshed_oauth_service_tokens():
     )
     try:
         assert client.evaluate({"action": "read"}).allowed is False
-        now[0] = 181.0
+        now[0] = 191.0
         assert client.evaluate({"action": "read"}).allowed is False
         assert token_calls == 2
         assert resource_authorizations == [
