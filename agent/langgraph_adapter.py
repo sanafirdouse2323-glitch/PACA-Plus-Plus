@@ -20,7 +20,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, ToolRuntime
 from langgraph.store.base import BaseStore
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from .paca_client import PACARequestError
 
@@ -218,6 +218,8 @@ def build_paca_tools(
 
     tools: list[StructuredTool] = []
     for operation in operations:
+        runtime_schema = _runtime_args_schema(operation)
+
         def make_invoke(configured_operation: PACAOperation):
             def invoke(runtime: ToolRuntime, **raw_arguments: Any) -> str:
                 if not isinstance(runtime, ToolRuntime):
@@ -237,12 +239,13 @@ def build_paca_tools(
                     raise PACAFrameworkError("durable_langgraph_store_required")
 
                 try:
-                    validated = configured_operation.args_schema.model_validate(
-                        raw_arguments, strict=True
+                    validation_input = {**raw_arguments, "runtime": runtime}
+                    validated = runtime_schema.model_validate(
+                        validation_input, strict=True
                     )
                 except Exception as exc:
                     raise PACAFrameworkError("paca_tool_arguments_invalid") from exc
-                payload = validated.model_dump(mode="json")
+                payload = validated.model_dump(mode="json", exclude={"runtime"})
                 resource_id = payload.pop(configured_operation.resource_id_field, None)
                 if (
                     not isinstance(resource_id, str)
@@ -308,7 +311,7 @@ def build_paca_tools(
                 func=make_invoke(operation),
                 name=operation.name,
                 description=operation.description,
-                args_schema=operation.args_schema,
+                args_schema=runtime_schema,
                 infer_schema=False,
                 handle_tool_error=False,
             )
