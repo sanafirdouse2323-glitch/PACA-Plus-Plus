@@ -169,7 +169,7 @@ def test_authenticator_pins_rs256_and_rejects_unsigned_or_hmac_tokens(rsa_keys):
             "iss": ISSUER, "aud": AUDIENCE, "sub": "alice", "tenant_id": "tenant-1",
             "iat": int(now.timestamp()), "exp": int((now + timedelta(minutes=5)).timestamp()),
         },
-        "not-a-real-rsa-key",
+        "not-a-real-rsa-key-for-negative-test-only-32-bytes",
         algorithm="HS256",
     )
     with pytest.raises(AuthenticationError):
