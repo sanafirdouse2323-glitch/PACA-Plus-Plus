@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sqlite3
+import stat
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -91,9 +92,13 @@ class SQLiteOperationLedger:
                 database_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 if database_path.parent.is_symlink() or database_path.is_symlink():
                     raise OperationLedgerError("operation_ledger_path_must_not_use_symlinks")
-                self.path = str(database_path)
                 if os.name == "posix":
-                    os.chmod(database_path.parent, 0o700)
+                    parent_mode = stat.S_IMODE(database_path.parent.stat().st_mode)
+                    if parent_mode & 0o077:
+                        raise OperationLedgerError(
+                            "operation_ledger_parent_directory_must_be_owner_only"
+                        )
+                self.path = str(database_path)
             self._connection = sqlite3.connect(
                 self.path,
                 timeout=float(timeout_seconds),
