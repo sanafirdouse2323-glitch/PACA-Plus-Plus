@@ -15,6 +15,7 @@ from .auth import JWTAuthenticator
 from .config import Settings
 from .opa import OPAClient
 from .store import PostgresStore
+from .service_tokens import ClientCredentialsTokenProvider
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
@@ -24,12 +25,24 @@ store = PostgresStore(
     settings.tenant_context_hmac_key,
     settings.tenant_context_key_id,
 )
+opa_token_provider = (
+    ClientCredentialsTokenProvider(
+        settings.opa_oauth_token_url or "",
+        settings.opa_oauth_client_id or "",
+        settings.opa_oauth_client_secret or "",
+        scope=settings.opa_oauth_scope,
+        timeout_seconds=settings.opa_timeout_seconds,
+    )
+    if settings.opa_oauth_token_url
+    else None
+)
 opa = OPAClient(
     settings.opa_url,
     settings.opa_decision_path,
     settings.expected_policy_revision,
     settings.opa_timeout_seconds,
     bearer_token=settings.opa_bearer_token,
+    token_provider=opa_token_provider,
 )
 authenticator = JWTAuthenticator(
     settings.jwt_issuer,
@@ -42,12 +55,24 @@ authenticator = JWTAuthenticator(
 
 adapters = []
 if settings.api_routes:
+    api_token_provider = (
+        ClientCredentialsTokenProvider(
+            settings.api_oauth_token_url or "",
+            settings.api_oauth_client_id or "",
+            settings.api_oauth_client_secret or "",
+            scope=settings.api_oauth_scope,
+            timeout_seconds=settings.execution_timeout_seconds,
+        )
+        if settings.api_oauth_token_url
+        else None
+    )
     adapters.append(
         HttpAPIAdapter(
             settings.api_base_url or "",
             settings.api_routes,
             settings.execution_timeout_seconds,
             bearer_token=settings.api_bearer_token,
+            token_provider=api_token_provider,
         )
     )
 
