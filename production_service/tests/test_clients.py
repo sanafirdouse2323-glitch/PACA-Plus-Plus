@@ -276,3 +276,19 @@ def test_remote_opa_requires_token_and_sends_bearer_header():
     assert decision.allowed is False
     assert observed == ["Bearer opa-service-token"]
     client.close()
+
+
+def test_opa_rejects_injected_http_client_that_enables_redirects():
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda req: httpx.Response(302, headers={"Location": "https://elsewhere.example"})),
+        follow_redirects=True,
+    )
+    with pytest.raises(ValueError, match="disable redirects"):
+        OPAClient(
+            "https://opa.example.org",
+            "/v1/data/paca/authz/decision",
+            "paca-dev-2026-10-23",
+            client=client,
+            bearer_token="opa-service-token",
+        )
+    client.close()
