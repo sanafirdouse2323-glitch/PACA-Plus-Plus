@@ -49,7 +49,7 @@ class PACAExecutionFailed(PACAFrameworkError):
 class PACAArgsModel(BaseModel):
     """Base for model-visible input schemas; unknown fields are rejected."""
 
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid", strict=True, arbitrary_types_allowed=True)
 
 
 @dataclass(frozen=True)
