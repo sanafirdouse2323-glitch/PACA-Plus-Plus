@@ -239,9 +239,11 @@ def test_postgres_checkpointer_and_operation_ledger_survive_process_reconstructi
     restarted_ledger = PostgresOperationLedger(DATABASE_URL, claim_ttl_seconds=60)
     restarted_ledger.open()
     try:
-        with PostgresSaver.from_conn_string(DATABASE_URL) as checkpointer:
-            with PostgresStore.from_conn_string(DATABASE_URL) as store:
-                graph = build_paca_langgraph_agent(
+        with (
+            PostgresSaver.from_conn_string(DATABASE_URL) as checkpointer,
+            PostgresStore.from_conn_string(DATABASE_URL) as store,
+        ):
+            graph = build_paca_langgraph_agent(
                     model=FakeModel([AIMessage(content="Recovered after restart.")]),
                     paca_client=RestartedProcessClient(),
                     operations=[operation()],

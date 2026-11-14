@@ -11,7 +11,6 @@ import re
 from dataclasses import dataclass
 from typing import Annotated, Any, TypedDict
 from uuid import UUID
-from uuid import UUID
 
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.runnables import RunnableConfig
@@ -23,6 +22,7 @@ from langgraph.prebuilt import ToolNode, ToolRuntime
 from langgraph.store.base import BaseStore
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
+from .operation_ledger import OperationInProgress, OperationLedgerError
 from .paca_client import PACARequestError
 
 _TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -110,27 +110,18 @@ def derive_idempotency_key(thread_id: str, tool_call_id: str) -> str:
     return "lg-" + _digest_text(material)
 
 
-def _journal_location(thread_id: str, tool_call_id: str) -> tuple[tuple[str, ...], str]:
-    # Do not put raw user-controlled thread or tool-call IDs in the store namespace.
-    return (
-        (_JOURNAL_NAMESPACE, _digest_text(thread_id)),
-        _digest_text(tool_call_id),
-    )
-
-
 def _load_or_create_permit(
     *,
     paca_client: Any,
-    store: BaseStore,
+    operation_ledger: Any,
     operation: PACAOperation,
     thread_id: str,
     tool_call_id: str,
     resource_id: str,
     arguments: dict[str, Any],
-) -> tuple[str, str]:
-    """Persist the permit before executing the effect, so graph replay reuses it."""
+):
+    """Return one durable authorization record for this thread/tool-call identity."""
     idempotency_key = derive_idempotency_key(thread_id, tool_call_id)
-    namespace, key = _journal_location(thread_id, tool_call_id)
     request_fingerprint = _digest_text(
         json.dumps(
             {
@@ -145,29 +136,19 @@ def _load_or_create_permit(
         )
     )
 
-    existing = store.get(namespace, key)
+    existing = operation_ledger.get(thread_id, tool_call_id)
     if existing is not None:
-        value = existing.value
         if (
-            not isinstance(value, dict)
-            or value.get("version") != 1
-            or value.get("tool") != operation.name
-            or value.get("action") != operation.action
-            or value.get("request_fingerprint") != request_fingerprint
-            or value.get("idempotency_key") != idempotency_key
-            or not isinstance(value.get("permit_id"), str)
+            existing.tool_name != operation.name
+            or existing.action != operation.action
+            or existing.request_fingerprint != request_fingerprint
+            or existing.idempotency_key != idempotency_key
         ):
             raise PACAFrameworkError("paca_execution_journal_conflict")
-        permit_id = value["permit_id"]
-        try:
-            permit_id = str(UUID(permit_id))
-        except (ValueError, TypeError, AttributeError) as exc:
-            raise PACAFrameworkError("paca_execution_journal_has_invalid_permit") from exc
-        return permit_id, idempotency_key
+        return existing
 
-    # Authorization issuance is non-effecting. If its response is lost before the
-    # permit reaches the journal, re-authorization is safe; protected execution has
-    # not yet been attempted.
+    # Authorization issuance is non-effecting. If its response is lost before
+    # persistence, a replacement permit is safe because execution has not begun.
     permit = paca_client.authorize(
         action=operation.action,
         resource_id=resource_id,
@@ -181,22 +162,17 @@ def _load_or_create_permit(
     except (ValueError, TypeError, AttributeError) as exc:
         raise PACAFrameworkError("paca_authorization_response_invalid_permit") from exc
 
-    # This write must complete before the first protected execution request.
-    # Production deployments must use a durable, access-controlled BaseStore.
-    store.put(
-        namespace,
-        key,
-        {
-            "version": 1,
-            "tool": operation.name,
-            "action": operation.action,
-            "request_fingerprint": request_fingerprint,
-            "permit_id": permit_id,
-            "idempotency_key": idempotency_key,
-        },
-        index=False,
+    # INSERT .. ON CONFLICT in the PostgreSQL ledger arbitrates concurrent
+    # authorizers. All workers then receive the same committed permit and key.
+    return operation_ledger.save_authorization(
+        thread_id=thread_id,
+        tool_call_id=tool_call_id,
+        tool_name=operation.name,
+        action=operation.action,
+        request_fingerprint=request_fingerprint,
+        permit_id=permit_id,
+        idempotency_key=idempotency_key,
     )
-    return permit_id, idempotency_key
 
 
 def _runtime_args_schema(operation: PACAOperation) -> type[BaseModel]:
@@ -211,12 +187,19 @@ def _runtime_args_schema(operation: PACAOperation) -> type[BaseModel]:
 def build_paca_tools(
     paca_client: Any,
     operations: list[PACAOperation] | tuple[PACAOperation, ...],
+    operation_ledger: Any,
 ) -> list[StructuredTool]:
     """Build only host-allowlisted tools; every tool performs authorize then execute."""
     if not callable(getattr(paca_client, "authorize", None)) or not callable(
         getattr(paca_client, "execute", None)
     ):
         raise TypeError("paca_client_must_expose_authorize_and_execute")
+    required_ledger_methods = (
+        "get", "save_authorization", "claim_execution",
+        "complete_execution", "release_execution",
+    )
+    if any(not callable(getattr(operation_ledger, name, None)) for name in required_ledger_methods):
+        raise TypeError("operation_ledger_does_not_implement_required_contract")
     if not isinstance(operations, (list, tuple)) or not operations:
         raise ValueError("at_least_one_paca_operation_required")
     if any(not isinstance(item, PACAOperation) for item in operations):
@@ -247,9 +230,6 @@ def build_paca_tools(
                     raise PACAFrameworkError("langgraph_thread_id_required")
                 if not isinstance(tool_call_id, str) or not tool_call_id:
                     raise PACAFrameworkError("langgraph_tool_call_id_required")
-                if runtime.store is None:
-                    raise PACAFrameworkError("durable_langgraph_store_required")
-
                 try:
                     validation_input = {**raw_arguments, "runtime": runtime}
                     validated = configured_runtime_schema.model_validate(
@@ -271,43 +251,101 @@ def build_paca_tools(
                 except (TypeError, ValueError) as exc:
                     raise PACAFrameworkError("paca_arguments_not_finite_json") from exc
 
-                permit_id, idempotency_key = _load_or_create_permit(
+                record = _load_or_create_permit(
                     paca_client=paca_client,
-                    store=runtime.store,
+                    operation_ledger=operation_ledger,
                     operation=configured_operation,
                     thread_id=thread_id,
                     tool_call_id=tool_call_id,
                     resource_id=resource_id,
                     arguments=payload,
                 )
+                if record.status == "succeeded":
+                    if record.result is None:
+                        raise PACAFrameworkError("paca_execution_journal_success_result_missing")
+                    return json.dumps(
+                        record.result, allow_nan=False, sort_keys=True, separators=(",", ":")
+                    )
+                if record.status == "unknown":
+                    raise PACAExecutionOutcomeUnknown(record.execution_id)
+                if record.status == "failed":
+                    raise PACAExecutionFailed("paca_execution_failed")
+
+                claim = operation_ledger.claim_execution(
+                    thread_id=thread_id,
+                    tool_call_id=tool_call_id,
+                    tool_name=configured_operation.name,
+                    action=configured_operation.action,
+                    request_fingerprint=record.request_fingerprint,
+                    idempotency_key=record.idempotency_key,
+                )
+                if claim.token is None:
+                    if claim.record.status == "succeeded" and claim.record.result is not None:
+                        return json.dumps(
+                            claim.record.result, allow_nan=False, sort_keys=True, separators=(",", ":")
+                        )
+                    if claim.record.status == "unknown":
+                        raise PACAExecutionOutcomeUnknown(claim.record.execution_id)
+                    if claim.record.status == "failed":
+                        raise PACAExecutionFailed("paca_execution_failed")
+                    raise OperationInProgress("paca_operation_in_progress")
+
                 try:
                     result = paca_client.execute(
                         action=configured_operation.action,
                         resource_id=resource_id,
                         arguments=payload,
-                        permit_id=permit_id,
-                        idempotency_key=idempotency_key,
+                        permit_id=record.permit_id,
+                        idempotency_key=record.idempotency_key,
+                    )
+                    if not isinstance(result, dict):
+                        raise PACAFrameworkError("paca_execution_response_invalid")
+                    status = result.get("status")
+                    if status not in {"succeeded", "failed", "unknown"}:
+                        raise PACAFrameworkError("paca_execution_status_not_terminal")
+                    execution_id = result.get("execution_id")
+                    completed = operation_ledger.complete_execution(
+                        thread_id=thread_id,
+                        tool_call_id=tool_call_id,
+                        claim_token=claim.token,
+                        status=status,
+                        result=result,
+                        execution_id=execution_id if isinstance(execution_id, str) else None,
                     )
                 except PACARequestError as exc:
-                    # The journal retains the permit and key across LangGraph resume.
-                    exc.permit_id = permit_id
+                    # Leave the durable permit/key in place. Replaying the same
+                    # gateway idempotency key is the safe recovery path after a
+                    # transport failure; release only this worker's short lease.
+                    exc.permit_id = record.permit_id
+                    try:
+                        operation_ledger.release_execution(
+                            thread_id=thread_id,
+                            tool_call_id=tool_call_id,
+                            claim_token=claim.token,
+                        )
+                    except OperationLedgerError:
+                        pass  # Lease expiry is the crash-recovery fallback.
+                    raise
+                except Exception:
+                    try:
+                        operation_ledger.release_execution(
+                            thread_id=thread_id,
+                            tool_call_id=tool_call_id,
+                            claim_token=claim.token,
+                        )
+                    except OperationLedgerError:
+                        pass
                     raise
 
-                if not isinstance(result, dict):
-                    raise PACAFrameworkError("paca_execution_response_invalid")
-                status = result.get("status")
-                if status == "unknown":
-                    execution_id = result.get("execution_id")
-                    raise PACAExecutionOutcomeUnknown(
-                        execution_id if isinstance(execution_id, str) else None
-                    )
-                if status == "failed":
+                if completed.status == "unknown":
+                    raise PACAExecutionOutcomeUnknown(completed.execution_id)
+                if completed.status == "failed":
                     raise PACAExecutionFailed("paca_execution_failed")
-                if status != "succeeded":
-                    raise PACAFrameworkError("paca_execution_status_not_terminal_success")
+                if completed.result is None:
+                    raise PACAFrameworkError("paca_execution_journal_success_result_missing")
                 try:
                     return json.dumps(
-                        result, allow_nan=False, sort_keys=True, separators=(",", ":")
+                        completed.result, allow_nan=False, sort_keys=True, separators=(",", ":")
                     )
                 except (TypeError, ValueError) as exc:
                     raise PACAFrameworkError(
@@ -338,14 +376,15 @@ def build_paca_langgraph_agent(
     operations: list[PACAOperation] | tuple[PACAOperation, ...],
     checkpointer: BaseCheckpointSaver,
     store: BaseStore,
+    operation_ledger: Any,
 ):
     """Compile a serial-tool LangGraph agent with only PACA-backed effect tools.
 
-    A durable checkpointer and durable BaseStore are mandatory. The checkpointer
-    preserves unfinished tool calls; the store persists the permit ID before the
-    first execution attempt. Use a persistent PostgreSQL-backed implementation in
-    deployment, not InMemorySaver/InMemoryStore. Serialize active invocations for
-    each thread_id; the BaseStore get/put API is not a cross-process lock.
+    A durable checkpointer, BaseStore, and transactional operation ledger are
+    mandatory. The checkpointer preserves unfinished tool calls; the PostgreSQL
+    operation ledger stores the permit/key and serializes active effects across
+    workers. The BaseStore remains LangGraph's separate long-term store and is not
+    used as a compare-and-set journal.
     """
     if checkpointer is None:
         raise ValueError("langgraph_checkpointer_required")
@@ -358,7 +397,7 @@ def build_paca_langgraph_agent(
     ):
         raise TypeError("model_must_support_bind_tools_and_invoke")
 
-    tools = build_paca_tools(paca_client, operations)
+    tools = build_paca_tools(paca_client, operations, operation_ledger)
     allowed_names = {tool.name for tool in tools}
     try:
         bound_model = model.bind_tools(tools)
