@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -32,11 +33,31 @@ class OPAClient:
         expected_policy_revision: str,
         timeout_seconds: float = 2.0,
         client: httpx.Client | None = None,
+        bearer_token: str | None = None,
     ) -> None:
-        if not decision_path.startswith("/v1/data/"):
-            raise ValueError("OPA decision path must use the OPA Data API.")
+        parts = urlsplit(base_url)
+        if parts.scheme not in {"http", "https"} or not parts.hostname:
+            raise ValueError("OPA base URL must be absolute HTTP(S).")
+        if parts.username or parts.password or parts.query or parts.fragment:
+            raise ValueError("OPA base URL must not contain credentials, query or fragment.")
+        host = parts.hostname.lower().rstrip(".")
+        local_hosts = {"localhost", "127.0.0.1", "::1", "opa"}
+        if parts.scheme == "http" and host not in local_hosts:
+            raise ValueError("remote OPA must use HTTPS.")
+        if host not in local_hosts and not bearer_token:
+            raise ValueError("remote OPA requires a configured bearer token.")
+        if bearer_token is not None and (
+            not isinstance(bearer_token, str)
+            or not bearer_token
+            or bearer_token.strip() != bearer_token
+            or any(ch.isspace() for ch in bearer_token)
+        ):
+            raise ValueError("OPA bearer token must be a non-whitespace string.")
+        if not decision_path.startswith("/v1/data/") or "?" in decision_path or "#" in decision_path:
+            raise ValueError("OPA decision path must use the OPA Data API without query or fragment.")
         self.url = base_url.rstrip("/") + decision_path
         self.expected_policy_revision = expected_policy_revision
+        self.bearer_token = bearer_token
         self.client = client or httpx.Client(
             timeout=httpx.Timeout(timeout_seconds),
             follow_redirects=False,
@@ -44,8 +65,9 @@ class OPAClient:
         )
 
     def evaluate(self, input_document: dict[str, Any]) -> PolicyDecision:
+        headers = {"Authorization": f"Bearer {self.bearer_token}"} if self.bearer_token else {}
         try:
-            response = self.client.post(self.url, json={"input": input_document})
+            response = self.client.post(self.url, json={"input": input_document}, headers=headers)
         except httpx.RequestError as exc:
             raise PolicyEngineUnavailable("opa_unavailable") from exc
         if response.status_code != 200:
