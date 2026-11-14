@@ -17,7 +17,6 @@ from agent.langgraph_adapter import (
 )
 from agent.paca_client import PACARequestError
 
-
 PERMIT_ID = "00000000-0000-0000-0000-000000000123"
 
 
