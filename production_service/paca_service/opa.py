@@ -55,6 +55,8 @@ class OPAClient:
             raise ValueError("OPA bearer token must be a non-whitespace string.")
         if not decision_path.startswith("/v1/data/") or "?" in decision_path or "#" in decision_path:
             raise ValueError("OPA decision path must use the OPA Data API without query or fragment.")
+        if client is not None and client.follow_redirects:
+            raise ValueError("OPA HTTP client must disable redirects.")
         self.url = base_url.rstrip("/") + decision_path
         self.expected_policy_revision = expected_policy_revision
         self.bearer_token = bearer_token
