@@ -229,7 +229,10 @@ def build_paca_tools(
     for operation in operations:
         runtime_schema = _runtime_args_schema(operation)
 
-        def make_invoke(configured_operation: PACAOperation):
+        def make_invoke(
+            configured_operation: PACAOperation,
+            configured_runtime_schema: type[BaseModel],
+        ):
             def invoke(runtime: ToolRuntime, **raw_arguments: Any) -> str:
                 if not isinstance(runtime, ToolRuntime):
                     raise PACAFrameworkError("langgraph_tool_runtime_missing")
@@ -249,7 +252,7 @@ def build_paca_tools(
 
                 try:
                     validation_input = {**raw_arguments, "runtime": runtime}
-                    validated = runtime_schema.model_validate(
+                    validated = configured_runtime_schema.model_validate(
                         validation_input, strict=True
                     )
                 except Exception as exc:
@@ -317,7 +320,7 @@ def build_paca_tools(
 
         tools.append(
             StructuredTool.from_function(
-                func=make_invoke(operation),
+                func=make_invoke(operation, runtime_schema),
                 name=operation.name,
                 description=operation.description,
                 args_schema=runtime_schema,
