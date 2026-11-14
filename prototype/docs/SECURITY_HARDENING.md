@@ -4,7 +4,7 @@ For the additional LLM tool-call layer, see [Agent attack boundary](AGENT_ATTACK
 
 ## What this branch adds
 
-The legacy **AuthorizationEngine** remains an in-memory, single-process research MVP. This branch adds a separate integration path and a runnable ASGI endpoint for a single, allowlisted `ticket.create` action, without silently rewriting the original ALFA/UCON+ compiler work:
+The legacy **AuthorizationEngine** remains an in-memory, single-process research MVP. The separate hardening layer adds an integration path and a runnable ASGI endpoint for a single, allowlisted `ticket.create` action, without silently rewriting the original ALFA/UCON+ compiler work:
 
 - **Policy decision point:** **OPAClient** calls a named Open Policy Agent (OPA) Data API decision. An absent/malformed decision, missing permit version, timeout, HTTP error, or transport failure raises an error; the gateway does not treat that as permission.
 - **Final authorization recheck:** immediately before a protected effect, the gateway re-authenticates the original credential (so token expiry/signature checks run again), verifies the stable identity/claims have not changed, re-fetches current authorization context (roles, capability, tenant, owner, activation and suspension), re-runs OPA, and checks the policy version. Context or identity changes invalidate the permit rather than executing under a stale decision; callers must submit a new request to obtain a fresh permit. Failures remain fail-closed and distinguish authentication/context/policy outages from an explicit denial.
