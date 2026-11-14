@@ -241,7 +241,10 @@ def test_http_adapter_rejects_unsafe_transport_and_bad_no_effect_contract():
     with pytest.raises(ValueError, match="upstream_bearer_token_required"):
         HttpAPIAdapter("https://api.example", routes, timeout_seconds=1)
     with pytest.raises(ValueError, match="timeout_must_be_positive"):
-        HttpAPIAdapter("https://api.example", routes, timeout_seconds=0)
+        HttpAPIAdapter(
+            "https://api.example", routes, bearer_token="test-service-token",
+            timeout_seconds=0,
+        )
     with pytest.raises(ValueError, match="effect_not_applied_statuses"):
         HttpAPIAdapter(
             "https://api.example",
