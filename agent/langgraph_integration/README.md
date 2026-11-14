@@ -20,7 +20,7 @@ Install the optional dependency set:
 python -m pip install -r agent/requirements-langgraph.txt
 ```
 
-Configure a `PACAClient` with the access token supplied by the host's trusted identity-provider integration. Token acquisition and refresh are deliberately outside this stage.
+Configure a `PACAClient` with the access token supplied by the host's trusted identity-provider integration. Token acquisition and refresh are deliberately outside this stage. Pass an unbound base chat model to the builder; do not pass a model already configured with other tools. The builder binds only the PACA++-guarded tools to that model.
 
 ```python
 from agent.paca_client import PACAClient
@@ -61,7 +61,7 @@ Use a persistent, access-controlled ledger path. Back up and monitor it. The bun
 
 The ledger uses the LangGraph thread and tool-call IDs to derive a stable PACA++ idempotency key. It stores the permit before sending execution. For a timeout, lost response or unexpected status, the operation is recorded as unknown and the graph raises to the host. Reconciliation is required before a new logical tool call can duplicate the same request in that thread. Replaying the original tool-call identity uses the original permit and idempotency key; the downstream API must honor its idempotency contract.
 
-A local ledger cannot make a remote API side effect exactly-once. Do not automatically rerun an unresolved operation after a process restart. Query PACA++ execution status and reconcile with the downstream system first.
+A local ledger cannot make a remote API side effect exactly-once. The integration does not configure a LangGraph checkpointer: for recovery after a process restart, the host must persist the graph state/transcript and replay the original assistant tool call with the same `tool_call_id`. A `thread_id` by itself does not recreate that call identity. Do not automatically rerun an unresolved operation after a restart. Query PACA++ execution status and reconcile with the downstream system first.
 
 ## Tests
 
