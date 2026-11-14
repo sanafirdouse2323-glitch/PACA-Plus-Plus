@@ -11,6 +11,12 @@ from urllib.parse import urljoin
 import httpx
 import psycopg
 import pytest
+from agent.langgraph_adapter import (
+    PACAArgsModel,
+    PACAOperation,
+    build_paca_langgraph_agent,
+)
+from agent.paca_client import PACAClient
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
@@ -19,12 +25,6 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from pydantic import Field
 
-from agent.langgraph_adapter import (
-    PACAArgsModel,
-    PACAOperation,
-    build_paca_langgraph_agent,
-)
-from agent.paca_client import PACAClient
 from paca_service.adapters import AdapterRouter, SandboxedFileAdapter
 from paca_service.app import create_app
 from paca_service.auth import AuthenticationError, JWTAuthenticator
