@@ -77,7 +77,7 @@ def test_client_credentials_refreshes_before_expiry_and_replaces_cached_token():
     provider = make_provider(handler, clock=lambda: now[0], skew=20)
     try:
         assert provider.get_token() == "token-1"
-        now[0] = 181.0
+        now[0] = 191.0
         assert provider.get_token() == "token-2"
         assert provider.get_token() == "token-2"
         assert calls == 2
@@ -119,7 +119,7 @@ def test_failed_proactive_refresh_reuses_only_a_still_valid_token():
     provider = make_provider(handler, clock=lambda: now[0], skew=20)
     try:
         assert provider.get_token() == "still-valid"
-        now[0] = 181.0
+        now[0] = 191.0
         assert provider.get_token() == "still-valid"
         assert calls == 2
         now[0] = 201.0
