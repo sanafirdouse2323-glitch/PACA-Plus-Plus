@@ -32,7 +32,7 @@ For configured HTTP effect routes, every non-2xx upstream response is treated as
 
 The API rejects duplicate `Authorization`, `Idempotency-Key`, `Content-Length`, `Transfer-Encoding`, `Host`, and `Content-Type` headers, rejects conflicting request framing, and limits request bodies to 1 MiB. The downstream HTTP adapter streams response bodies and stops reading after its configured response-size limit. These application checks supplement rather than replace ingress-level body, concurrency, and rate limits.
 
-The API binds to loopback on port 8000. Do not expose it externally before configuring and validating TLS ingress, rate/request limits, secrets management, egress controls, backups/restore, audit retention, monitoring, and incident response.
+The API binds to loopback on port 8000. OPA is private on the Compose control-plane network; if configuring a remote OPA endpoint, use HTTPS and set a dedicated `PACA_OPA_BEARER_TOKEN` for the gateway. Do not reuse an end-user token. Configured remote effect routes likewise require HTTPS and a dedicated `PACA_API_BEARER_TOKEN`. Do not expose the API externally before configuring and validating TLS ingress, rate/request limits, secrets management, egress controls, backups/restore, audit retention, monitoring, and incident response.
 
 ## Real OIDC provider configuration
 
