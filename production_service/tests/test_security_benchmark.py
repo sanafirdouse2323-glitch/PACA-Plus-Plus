@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from paca_service.benchmarks.security_benchmark import SecurityBenchmarkRecorder
 import pytest
+from paca_service.benchmarks.security_benchmark import SecurityBenchmarkRecorder
 
 
 def test_benchmark_reports_measured_rates_and_labeled_reference_controls():
