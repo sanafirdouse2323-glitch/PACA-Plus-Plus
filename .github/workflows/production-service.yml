@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - audit/paca-consistency-runtime-safety
+      - security/postgres-langgraph-ledger
   pull_request:
     branches:
       - main

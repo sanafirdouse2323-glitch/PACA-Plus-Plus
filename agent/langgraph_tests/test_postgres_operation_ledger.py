@@ -178,8 +178,8 @@ def test_postgres_ledger_rejects_rebinding_of_a_tool_call(postgres_ledgers):
 
 
 def test_postgres_checkpointer_and_operation_ledger_survive_process_reconstruction():
-    if not DATABASE_URL:
-        pytest.skip("PACA_AGENT_TEST_DATABASE_URL is not configured")
+    if not DATABASE_URL or not LEDGER_DATABASE_URL:
+        pytest.skip("PACA_AGENT_TEST_DATABASE_URL and PACA_AGENT_LEDGER_DATABASE_URL are required")
 
     # LangGraph checkpoint payloads must use the strict serializer in deployment.
     os.environ["LANGGRAPH_STRICT_MSGPACK"] = "true"
