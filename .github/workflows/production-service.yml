@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - audit/paca-consistency-runtime-safety
+      - security/audit-worm-export
   pull_request:
     branches:
       - main
@@ -18,6 +19,7 @@ jobs:
     env:
       PACA_TEST_ADMIN_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/paca_test
       PACA_TEST_DATABASE_URL: postgresql://paca_runtime:paca_test_runtime_password@localhost:5432/paca_test
+      PACA_TEST_AUDIT_EXPORT_DATABASE_URL: postgresql://paca_audit_exporter_ci:paca_audit_exporter_ci_password@localhost:5432/paca_test
       PACA_TENANT_CONTEXT_HMAC_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       PACA_TENANT_CONTEXT_KEY_ID: v1
     services:
@@ -46,7 +48,7 @@ jobs:
       - name: Install service and LangGraph integration test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e "production_service[dev]"
+          python -m pip install -e "production_service[dev,audit-export]"
           python -m pip install -r agent/requirements-langgraph.txt
       - name: Test the host-side PACA++ client
         run: python -m pytest agent/tests -q
@@ -100,6 +102,11 @@ jobs:
             -c "SELECT r.rolname <> 'paca_runtime' FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_roles r ON r.oid = c.relowner WHERE n.nspname = 'paca_private' AND c.relname = 'tenant_context_keys'" \
             | grep -qx t
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/runtime_grants.sql
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/audit_export.sql
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE paca_audit_exporter_ci LOGIN PASSWORD 'paca_audit_exporter_ci_password';
+          GRANT paca_audit_exporter TO paca_audit_exporter_ci;
+          SQL
           # Simulate a legacy migration that left the recovery function owned
           # by the runtime role. Reapplying grants must transfer ownership back.
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
