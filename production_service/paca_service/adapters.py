@@ -16,6 +16,7 @@ from urllib.parse import quote, urlsplit
 import httpx
 
 from .auth import Principal
+from .service_tokens import ClientCredentialsTokenProvider, TokenProviderUnavailable
 
 
 class AdapterNotFound(LookupError):
@@ -78,6 +79,7 @@ class HttpAPIAdapter(ExecutionAdapter):
         bearer_token: str | None = None,
         client: httpx.Client | None = None,
         max_response_bytes: int = 1_000_000,
+        token_provider: ClientCredentialsTokenProvider | None = None,
     ) -> None:
         parts = urlsplit(base_url)
         if parts.scheme not in {"http", "https"} or not parts.hostname:
@@ -98,14 +100,17 @@ class HttpAPIAdapter(ExecutionAdapter):
             or any(ch.isspace() for ch in bearer_token)
         ):
             raise ValueError("invalid_upstream_bearer_token")
-        if not loopback and not bearer_token:
-            raise ValueError("upstream_bearer_token_required_for_remote_hosts")
+        if bearer_token is not None and token_provider is not None:
+            raise ValueError("configure either a static upstream bearer token or an OAuth token provider, not both")
+        if not loopback and not bearer_token and token_provider is None:
+            raise ValueError("upstream_service_credential_required_for_remote_hosts")
         if not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool) or timeout_seconds <= 0:
             raise ValueError("upstream_timeout_must_be_positive")
         if not isinstance(max_response_bytes, int) or isinstance(max_response_bytes, bool) or max_response_bytes < 1:
             raise ValueError("max_response_bytes_must_be_positive")
         self.base_url = base_url.rstrip("/")
         self.bearer_token = bearer_token
+        self.token_provider = token_provider
         self.max_response_bytes = max_response_bytes
         self._routes: dict[str, dict[str, Any]] = {}
         for action, raw in routes.items():
@@ -170,8 +175,15 @@ class HttpAPIAdapter(ExecutionAdapter):
             "Idempotency-Key": request.execution_id,
             "X-PACA-Tenant-ID": request.principal.tenant_id,
         }
-        if self.bearer_token:
-            headers["Authorization"] = f"Bearer {self.bearer_token}"
+        try:
+            access_token = self.bearer_token
+            if self.token_provider is not None:
+                access_token = self.token_provider.get_token()
+        except TokenProviderUnavailable as exc:
+            # The downstream request has not been sent; no remote effect occurred.
+            raise EffectRejected("upstream_credentials_unavailable") from exc
+        if access_token:
+            headers["Authorization"] = f"Bearer {access_token}"
         kwargs: dict[str, Any] = {"headers": headers}
         if route["args_mode"] == "json":
             kwargs["json"] = request.arguments
@@ -224,6 +236,8 @@ class HttpAPIAdapter(ExecutionAdapter):
 
     def close(self) -> None:
         self.client.close()
+        if self.token_provider is not None:
+            self.token_provider.close()
 
 
 class ToolRegistryAdapter(ExecutionAdapter):
