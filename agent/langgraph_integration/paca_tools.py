@@ -13,9 +13,10 @@ import re
 import sqlite3
 import stat
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
@@ -156,7 +157,7 @@ class SQLiteOperationLedger:
 
     @staticmethod
     def _key(thread_id: str, tool_call_id: str) -> str:
-        digest = hashlib.sha256(f"{thread_id}\x00{tool_call_id}".encode("utf-8")).hexdigest()
+        digest = hashlib.sha256(f"{thread_id}\x00{tool_call_id}".encode()).hexdigest()
         # Valid for PACAClient's Idempotency-Key syntax (max 128 chars).
         return f"lg-{digest}"
 
