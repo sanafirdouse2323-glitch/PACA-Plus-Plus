@@ -4,7 +4,7 @@ PACA++ is an **enterprise authorization research and engineering project**. Its 
 
 Its primary scope is **authorization enforcement at the protected-action boundary**, including controlled execution for AI-agent tools. It is not a complete identity and access management (IAM) suite, a general-purpose database security product, or a universal prompt-injection detector.
 
-> **Repository lineage:** This is the earlier service/compiler-oriented PACA++ codebase. The separate [PACA-Plus-Plus-New repository](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus-New) is the successor project for the provenance-anchored continuous-authorization research line focused on autonomous systems and LLM agents. The two repositories have different implementations, tests and evidence. Do not attribute this repository's FastAPI/PostgreSQL features to the newer repository, or transfer the newer repository's agent mechanisms and benchmark results to this one. In this codebase, AI-agent integration remains a limited reference/integration area rather than a complete production agent-security product.
+> **Repository lineage:** In this repository, PACA++ means **Policy-Aware Authorization and Controlled Action** and refers to the earlier service/compiler-oriented codebase. The separate [PACA-Plus-Plus-New repository](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus-New) reuses the PACA++ name for **Provenance-Anchored Continuous Authorization for LLM agents**. It is a distinct successor research line, not a continuation of this repository's implementation. The two repositories have different implementations, tests and evidence. Do not attribute this repository's FastAPI/PostgreSQL features to the newer repository, or transfer the newer repository's agent mechanisms and benchmark results to this one. In this codebase, AI-agent integration remains a limited reference/integration area rather than a complete production agent-security product.
 
 ## Positioning and target applications
 
@@ -27,7 +27,7 @@ These areas are related but distinct: enterprise authorization is the primary ar
 | `compiler/` and root `tests/` | Experimental parser/emitter for a limited policy subset | Not a complete or standards-compatible ALFA/UCON+ compiler. Tests do not prove ASP/Cedar semantic equivalence. |
 | `legacy_policy_engine/` | Older policy parser, compiler/evaluator and engine package | Separate historical implementation; not part of the production-service API and not covered by the current root CI workflow. |
 | `archive/paca-plus-plus-new/` | Text-only snapshot and recovery notes for the separate newer repository | Read-only archival material; several source entries are embedded in text filenames and are not an importable or runnable copy. Use the linked standalone repository for its current code. |
-| `agent/` | Thin standard-library HTTP client for the production service's authorize/execute API, with tests and a small placeholder file | Not an LLM agent, not a LangChain/LangGraph/AutoGen adapter, and not proof that every host action is routed through the gateway. |
+| `agent/` | Thin standard-library HTTP client for the production service's authorize/execute API, with tests; `mock_agent.py` is an empty scaffold | Not an LLM agent, not a LangChain/LangGraph/AutoGen adapter, and not proof that every host action is routed through the gateway. |
 
 Do not infer that a feature in one path is automatically present in another. In particular, the prototype PostgreSQL store is not the production service's tenant-RLS boundary.
 
