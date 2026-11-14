@@ -8,7 +8,7 @@ PACA++ investigates and implements **policy-aware authorization at the protected
 
 The central enforcement sequence is:
 
-1. Authenticate the caller using a configured trusted identity provider.
+1. Authenticate the caller using a configured trusted identity provider; the production service requires an access-only token-purpose claim (`token_use=access` by default) in addition to signature, issuer and audience validation.
 2. Obtain authorization facts from a trusted server-side source.
 3. Evaluate the request against a policy decision point.
 4. Issue a short-lived permit bound to the request and decision.
@@ -39,7 +39,7 @@ The production service validates tokens from one configured OIDC issuer/audience
 
 | Component | Owns | Does not imply |
 |---|---|---|
-| `production_service/` | FastAPI gateway, JWT validation, OPA decisions, PostgreSQL permits/executions, signed tenant context/RLS, configured adapters | Features from the prototype, complete IAM, arbitrary agent-framework integration |
+| `production_service/` | FastAPI gateway, RS256 access-token validation including access-only token-purpose claim, OPA decisions, PostgreSQL permits/executions, signed tenant context/RLS, configured adapters | Features from the prototype, complete IAM, arbitrary agent-framework integration, DPoP/mTLS sender-constrained tokens |
 | `prototype/` | Research prototype, legacy in-memory example, separate OPA/OIDC hardening path, agent boundaries/reference runtime and prototype stores | Same schema, same identity model or same RLS guarantees as production_service |
 | `compiler/` | Experimental parser/emitter for an explicitly limited policy subset | Complete ALFA/UCON+ support or semantic equivalence between ASP and Cedar |
 | `legacy_policy_engine/` | Preserved historical implementation | Supported production API or root-CI coverage unless explicitly wired into CI |
@@ -65,6 +65,10 @@ For ambiguous timeouts, connection loss or process crashes, the safe state may b
 The prototype reference runtime and boundary modules can constrain configured retrieval, tool invocation, inter-agent messages and output release. They do not understand every prompt injection, guarantee that all host paths are guarded, or make untrusted retrieved/tool content safe. A real deployment must integrate its actual model and tool adapters, authenticate the host/agent identity, bind tools and resources server-side, and ensure there is no alternate path to protected effects.
 
 The production-service gateway is an authorization/effect service; it is not by itself a full autonomous-agent runtime.
+
+## Security baseline
+
+See [the current standards mapping, implemented controls and prioritized gaps](SECURITY_BASELINE.md). It is an engineering checklist, not a certification or claim of complete standards conformance.
 
 ## 7. Evidence standard
 
