@@ -2,15 +2,14 @@
 
 ## Status and evidence already collected
 
-The repository CI has one completed PR-event real-service integration benchmark run:
+The repository CI has a completed real-service integration benchmark run:
 
-- Workflow run: [43651201550](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus/actions/runs/43651201550)
-- PR branch head: `6cb749b4e91758114933f22f68bcb5800f665217`
-- Artifact: `paca-real-service-security-benchmark` (artifact ID `14136062846`)
+- Workflow run: [43651616889](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus/actions/runs/43651616889)
+- Branch head: 9948f08e02b77e2d2f0cfd9d19dfc9d5093cb242
+- Tested merge-ref commit: 95788d688bf4aa04e51a28c97600abfd5dc1d719
+- Artifact: paca-real-service-security-benchmark (artifact ID 14136755694)
 - Observed: 0 successful attacks in 8 attempted scenarios; 2/2 authorized tasks completed; 1/1 same-key replay check passed.
-- Combined request/task latency in this one run: p50 10.042 ms, p95 52.678 ms.
-- The artifact's `source_revision` is `9d81f73f144ca01fc73f9e6b6a7a941b6265c413`, GitHub's synthetic merge-ref commit for the `pull_request` event; `ci_run_id` is `43651201550`.
-
+- Combined request/task latency in this one run: p50 8.402 ms, p95 50.150 ms.
 
 The run exercised the repository's FastAPI authorization/effect gateway, signed tokens from a real Keycloak test container, a pinned OPA server, a PostgreSQL service container, the sandboxed file adapter, the host-side PACA client and a LangGraph StateGraph/ToolNode integration.
 
