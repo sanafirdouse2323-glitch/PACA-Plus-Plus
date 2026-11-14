@@ -4,7 +4,7 @@ import hmac
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -129,8 +129,8 @@ def _oauth_client_configuration(
 
 @dataclass(frozen=True)
 class Settings:
-    database_url: str
-    tenant_context_hmac_key: bytes
+    database_url: str = field(repr=False)
+    tenant_context_hmac_key: bytes = field(repr=False)
     tenant_context_key_id: str
     opa_url: str
     opa_decision_path: str
@@ -144,18 +144,18 @@ class Settings:
     execution_timeout_seconds: float
     api_base_url: str | None
     api_routes: dict[str, dict[str, Any]]
-    api_bearer_token: str | None
+    api_bearer_token: str | None = field(repr=False)
     file_root: str | None
     jwt_token_use_claim: str = "token_use"
     jwt_expected_token_use: str = "access"
-    opa_bearer_token: str | None = None
+    opa_bearer_token: str | None = field(default=None, repr=False)
     opa_oauth_token_url: str | None = None
     opa_oauth_client_id: str | None = None
-    opa_oauth_client_secret: str | None = None
+    opa_oauth_client_secret: str | None = field(default=None, repr=False)
     opa_oauth_scope: str | None = None
     api_oauth_token_url: str | None = None
     api_oauth_client_id: str | None = None
-    api_oauth_client_secret: str | None = None
+    api_oauth_client_secret: str | None = field(default=None, repr=False)
     api_oauth_scope: str | None = None
 
     @classmethod
