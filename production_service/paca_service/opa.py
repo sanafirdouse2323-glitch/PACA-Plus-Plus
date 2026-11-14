@@ -7,6 +7,8 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from .service_tokens import ClientCredentialsTokenProvider, TokenProviderUnavailable
+
 
 class PolicyEngineUnavailable(RuntimeError):
     """OPA could not return a well-formed, expected-revision decision."""
@@ -36,6 +38,7 @@ class OPAClient:
         client: httpx.Client | None = None,
         bearer_token: str | None = None,
         max_response_bytes: int = 1_000_000,
+        token_provider: ClientCredentialsTokenProvider | None = None,
     ) -> None:
         parts = urlsplit(base_url)
         if parts.scheme not in {"http", "https"} or not parts.hostname:
@@ -46,8 +49,10 @@ class OPAClient:
         local_hosts = {"localhost", "127.0.0.1", "::1", "opa"}
         if parts.scheme == "http" and host not in local_hosts:
             raise ValueError("remote OPA must use HTTPS.")
-        if host not in local_hosts and not bearer_token:
-            raise ValueError("remote OPA requires a configured bearer token.")
+        if bearer_token is not None and token_provider is not None:
+            raise ValueError("configure either a static OPA bearer token or an OAuth token provider, not both.")
+        if host not in local_hosts and not bearer_token and token_provider is None:
+            raise ValueError("remote OPA requires a configured service credential.")
         if bearer_token is not None and (
             not isinstance(bearer_token, str)
             or not bearer_token
@@ -64,6 +69,7 @@ class OPAClient:
         self.url = base_url.rstrip("/") + decision_path
         self.expected_policy_revision = expected_policy_revision
         self.bearer_token = bearer_token
+        self.token_provider = token_provider
         self.max_response_bytes = max_response_bytes
         self.client = client or httpx.Client(
             timeout=httpx.Timeout(timeout_seconds),
@@ -72,8 +78,13 @@ class OPAClient:
         )
 
     def evaluate(self, input_document: dict[str, Any]) -> PolicyDecision:
-        headers = {"Authorization": f"Bearer {self.bearer_token}"} if self.bearer_token else {}
+        headers = {}
         try:
+            access_token = self.bearer_token
+            if self.token_provider is not None:
+                access_token = self.token_provider.get_token()
+            if access_token:
+                headers["Authorization"] = f"Bearer {access_token}"
             with self.client.stream("POST", self.url, json={"input": input_document}, headers=headers) as response:
                 if response.status_code != 200:
                     raise PolicyEngineUnavailable(f"opa_http_{response.status_code}")
@@ -82,6 +93,8 @@ class OPAClient:
                     if len(body) + len(chunk) > self.max_response_bytes:
                         raise PolicyEngineUnavailable("opa_response_too_large")
                     body.extend(chunk)
+        except TokenProviderUnavailable as exc:
+            raise PolicyEngineUnavailable("opa_credentials_unavailable") from exc
         except httpx.RequestError as exc:
             raise PolicyEngineUnavailable("opa_unavailable") from exc
         try:
@@ -124,3 +137,5 @@ class OPAClient:
 
     def close(self) -> None:
         self.client.close()
+        if self.token_provider is not None:
+            self.token_provider.close()
