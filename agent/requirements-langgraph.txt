@@ -1,0 +1,6 @@
+# Versions verified against the LangGraph 1.2 / LangChain Core 1.8 API.
+langgraph==1.2.21
+langchain-core==1.8.0
+langgraph-checkpoint-postgres==3.2.0
+pytest>=8,<10
+ruff>=0.8,<1

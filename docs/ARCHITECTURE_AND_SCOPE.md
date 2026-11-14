@@ -39,11 +39,11 @@ The production service validates tokens from one configured OIDC issuer/audience
 
 | Component | Owns | Does not imply |
 |---|---|---|
-| `production_service/` | FastAPI gateway, RS256 access-token validation including access-only token-purpose claim, OPA decisions, PostgreSQL permits/executions, signed tenant context/RLS, configured adapters | Features from the prototype, complete IAM, arbitrary agent-framework integration, DPoP/mTLS sender-constrained tokens |
+| `production_service/` | FastAPI gateway, RS256 access-token validation including access-only token-purpose claim, OPA decisions, PostgreSQL permits/executions, signed tenant context/RLS, configured adapters, OAuth client-credentials renewal for separate outbound OPA/API clients | Features from the prototype, complete IAM, deployment-specific sender-constrained tokens, arbitrary agent-framework execution inside the service |
 | `prototype/` | Research prototype, legacy in-memory example, separate OPA/OIDC hardening path, agent boundaries/reference runtime and prototype stores | Same schema, same identity model or same RLS guarantees as production_service |
 | `compiler/` | Experimental parser/emitter for an explicitly limited policy subset | Complete ALFA/UCON+ support or semantic equivalence between ASP and Cedar |
 | `legacy_policy_engine/` | Preserved historical implementation | Supported production API or root-CI coverage unless explicitly wired into CI |
-| `agent/` | Thin standard-library client for the production-service authorize/execute API, plus tests | A full LLM agent, framework adapter, or proof that all host effects use the gateway |
+| `agent/` | Thin standard-library client plus a LangGraph `StateGraph`/`ToolNode` reference adapter; registered side-effecting tools use PACA authorize/execute | A complete LLM agent, adapters for every framework, persistent-store deployment validation, or proof that all host effects use the gateway |
 | `archive/paca-plus-plus-new/` | Text snapshot and recovery notes from the separate newer repository | Current source, importable modules, runnable package, or evidence for this repository |
 
 A test result belongs to the component and exact commit that ran it. Never transfer a passing result from one component to another.
@@ -62,7 +62,7 @@ For ambiguous timeouts, connection loss or process crashes, the safe state may b
 
 ## 6. AI-agent security boundary
 
-The prototype reference runtime and boundary modules can constrain configured retrieval, tool invocation, inter-agent messages and output release. They do not understand every prompt injection, guarantee that all host paths are guarded, or make untrusted retrieved/tool content safe. A real deployment must integrate its actual model and tool adapters, authenticate the host/agent identity, bind tools and resources server-side, and ensure there is no alternate path to protected effects.
+The prototype reference runtime and boundary modules can constrain configured retrieval, tool invocation, inter-agent messages and output release. Separately, `agent/langgraph_adapter.py` provides a LangGraph `StateGraph`/`ToolNode` path in which the declared side-effecting tools route through the production PACA API and journal the permit/idempotency key before execution. The LangGraph tests use in-memory checkpoint/store components; the documented PostgreSQL-backed LangGraph persistence path has not been validated end-to-end. Neither implementation understands every prompt injection, guarantees all host paths are guarded, or makes untrusted retrieved/tool content safe. A real deployment must integrate its actual model and tool adapters, authenticate the host/agent identity, bind tools and resources server-side, and ensure there is no alternate path to protected effects.
 
 The production-service gateway is an authorization/effect service; it is not by itself a full autonomous-agent runtime.
 
