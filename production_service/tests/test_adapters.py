@@ -238,6 +238,16 @@ def test_http_adapter_rejects_unsafe_transport_and_bad_no_effect_contract():
     }
     with pytest.raises(ValueError, match="https_required"):
         HttpAPIAdapter("http://api.example", routes, timeout_seconds=1)
+    redirecting_client = httpx.Client(
+        transport=httpx.MockTransport(lambda req: httpx.Response(302, headers={"Location": "https://elsewhere.example"})),
+        follow_redirects=True,
+    )
+    with pytest.raises(ValueError, match="disable redirects"):
+        HttpAPIAdapter(
+            "https://api.example", routes, bearer_token="test-service-token",
+            timeout_seconds=1, client=redirecting_client,
+        )
+    redirecting_client.close()
     with pytest.raises(ValueError, match="upstream_bearer_token_required"):
         HttpAPIAdapter("https://api.example", routes, timeout_seconds=1)
     with pytest.raises(ValueError, match="timeout_must_be_positive"):
