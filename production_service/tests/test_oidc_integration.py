@@ -24,7 +24,6 @@ DATABASE_URL = os.getenv("PACA_TEST_DATABASE_URL", "")
 ADMIN_DATABASE_URL = os.getenv("PACA_TEST_ADMIN_DATABASE_URL", "")
 OPA_URL = os.getenv("PACA_TEST_OPA_URL", "http://127.0.0.1:8181").rstrip("/")
 POLICY_REVISION = "paca-dev-2026-10-23"
-CLIENT_ID = "paca-api"
 CLIENT_ID = "paca-e2e-client"
 CLIENT_SECRET = "paca-e2e-only-client-secret"
 OTHER_CLIENT_ID = "paca-other-e2e-client"
