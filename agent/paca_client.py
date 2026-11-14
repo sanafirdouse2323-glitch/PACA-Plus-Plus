@@ -218,6 +218,8 @@ class PACAClient:
         carries that permit_id so the caller can retry execute() with the same
         permit and idempotency key rather than accidentally obtaining a new permit.
         """
+        if not isinstance(idempotency_key, str) or not _IDEMPOTENCY_RE.fullmatch(idempotency_key):
+            raise ValueError("invalid_idempotency_key")
         permit = self.authorize(
             action=action, resource_id=resource_id, arguments=arguments
         )
