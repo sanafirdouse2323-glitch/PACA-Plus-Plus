@@ -241,6 +241,7 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
             assert status.status_code == 200, status.text
             assert status.json()["status"] == "succeeded"
 
+            started = perf_counter()
             cross_tenant_status = client.get(
                 f"/v1/executions/{execution_id}",
                 headers={"Authorization": f"Bearer {other_tenant_token}"},
