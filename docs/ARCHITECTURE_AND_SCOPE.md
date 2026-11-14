@@ -84,7 +84,7 @@ CI success alone does not establish comparative effectiveness, research novelty,
 
 ## 8. Required deployment gates
 
-Before sensitive workloads: deployment-specific threat model and independent review; real OIDC/JWKS configuration and claim governance; separate secrets and database roles; backup/restore and migration rehearsal; private OPA with controlled policy rollout; TLS ingress and database verification; network/egress controls; rate/concurrency limits; monitoring and incident response; audit export to independently controlled storage; and downstream idempotency/reconciliation tests.
+Before sensitive workloads: deployment-specific threat model and independent review; real OIDC/JWKS configuration and claim governance; separate secrets and database roles; backup/restore and migration rehearsal; private OPA with a dedicated service credential for remote endpoints and controlled policy rollout; TLS ingress and database verification; authenticated remote effect routes; network/egress controls; rate/concurrency limits; monitoring and incident response; audit export to independently controlled storage; and downstream idempotency/reconciliation tests.
 
 ## 9. Research evaluation required to substantiate effectiveness
 
