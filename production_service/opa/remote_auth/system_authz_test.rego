@@ -1,7 +1,7 @@
 package system.authz_test
 
 import rego.v1
-import data.system.authz
+import data.system.authz as authz
 
 mock_decode_verify(token, constraints) := [true, {"typ": "at+JWT", "alg": "RS256"}, {
     "client_id": "paca-opa-client",
@@ -56,7 +56,7 @@ authz_data := {
 }
 
 test_allows_only_valid_jwt_for_decision_endpoint if {
-    system.authz.allow
+    authz.allow
         with input as {
             "identity": "valid-token",
             "method": "POST",
@@ -68,7 +68,7 @@ test_allows_only_valid_jwt_for_decision_endpoint if {
 }
 
 test_denies_wrong_client_even_with_valid_signature if {
-    not system.authz.allow
+    not authz.allow
         with input as {
             "identity": "wrong-client-token",
             "method": "POST",
@@ -80,7 +80,7 @@ test_denies_wrong_client_even_with_valid_signature if {
 }
 
 test_denies_wrong_scope_even_with_valid_signature if {
-    not system.authz.allow
+    not authz.allow
         with input as {
             "identity": "wrong-scope-token",
             "method": "POST",
@@ -92,7 +92,7 @@ test_denies_wrong_scope_even_with_valid_signature if {
 }
 
 test_denies_wrong_method_and_path_by_default if {
-    not system.authz.allow
+    not authz.allow
         with input as {
             "identity": "valid-token",
             "method": "GET",
@@ -106,7 +106,7 @@ test_denies_wrong_method_and_path_by_default if {
 
 
 test_denies_wrong_audience_even_when_presented_as_bearer_token if {
-    not system.authz.allow
+    not authz.allow
         with input as {
             "identity": "wrong-audience-token",
             "method": "POST",
