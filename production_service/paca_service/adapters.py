@@ -85,13 +85,21 @@ class HttpAPIAdapter(ExecutionAdapter):
         if parts.username or parts.password or parts.query or parts.fragment:
             raise ValueError("upstream_base_url_must_not_contain_credentials_query_or_fragment")
         host = parts.hostname.lower().rstrip(".")
-        if parts.scheme == "http":
-            try:
-                loopback = ipaddress.ip_address(host).is_loopback
-            except ValueError:
-                loopback = host == "localhost"
-            if not loopback:
-                raise ValueError("https_required_for_non_loopback_upstreams")
+        try:
+            loopback = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            loopback = host == "localhost"
+        if parts.scheme == "http" and not loopback:
+            raise ValueError("https_required_for_non_loopback_upstreams")
+        if bearer_token is not None and (
+            not isinstance(bearer_token, str)
+            or not bearer_token
+            or bearer_token.strip() != bearer_token
+            or any(ch.isspace() for ch in bearer_token)
+        ):
+            raise ValueError("invalid_upstream_bearer_token")
+        if not loopback and not bearer_token:
+            raise ValueError("upstream_bearer_token_required_for_remote_hosts")
         if not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool) or timeout_seconds <= 0:
             raise ValueError("upstream_timeout_must_be_positive")
         if not isinstance(max_response_bytes, int) or isinstance(max_response_bytes, bool) or max_response_bytes < 1:
