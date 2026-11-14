@@ -15,6 +15,8 @@ from paca_service.adapters import (
     ToolRegistryAdapter,
 )
 from paca_service.auth import Principal
+
+
 def request(
     action: str,
     resource_id: str,
