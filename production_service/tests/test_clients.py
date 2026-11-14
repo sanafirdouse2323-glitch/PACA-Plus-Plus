@@ -36,6 +36,7 @@ def signed_token(private_key, kid: str = "test-key", omit_claim: str | None = No
         "aud": AUDIENCE,
         "sub": "alice",
         "tenant_id": "tenant-1",
+        "token_use": "access",
         "roles": ["analyst"],
         "scope": "file:read tool:invoke",
         "tools": ["text.word_count"],
@@ -184,14 +185,15 @@ def test_authenticator_fails_with_service_unavailable_when_jwks_is_unreachable()
         auth.authenticate("a.valid-looking-but-unchecked.token")
 
 
-def opa_client(handler, expected="paca-dev-2026-10-23"):
+def opa_client(handler, expected="paca-dev-2026-10-23", base_url="http://opa:8181", bearer_token=None):
     client = httpx.Client(transport=httpx.MockTransport(handler))
     return OPAClient(
-        "http://opa:8181",
+        base_url,
         "/v1/data/paca/authz/decision",
         expected,
         timeout_seconds=1,
         client=client,
+        bearer_token=bearer_token,
     )
 
 
@@ -235,3 +237,89 @@ def test_opa_http_error_and_network_error_fail_closed():
     with pytest.raises(PolicyEngineUnavailable):
         client.evaluate({"action": "document.read"})
     client.close()
+
+
+def test_authenticator_rejects_id_tokens_and_tokens_without_access_use_marker(rsa_keys):
+    private, public = rsa_keys
+    auth = JWTAuthenticator(
+        ISSUER, AUDIENCE, "https://identity.example.org/jwks",
+        jwks_client=FakeJWKS(public),
+    )
+    with pytest.raises(AuthenticationError, match="wrong_token_use"):
+        auth.authenticate(signed_token(private, token_use="id"))
+    with pytest.raises(AuthenticationError):
+        auth.authenticate(signed_token(private, omit_claim="token_use"))
+
+
+def test_remote_opa_requires_token_and_sends_bearer_header():
+    with pytest.raises(ValueError, match="bearer token"):
+        OPAClient(
+            "https://opa.example.org",
+            "/v1/data/paca/authz/decision",
+            "paca-dev-2026-10-23",
+        )
+
+    observed = []
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.append(request.headers.get("authorization"))
+        return httpx.Response(
+            200,
+            json={"result": {"allow": False, "reason": "default_deny",
+                             "policy_revision": "paca-dev-2026-10-23"}},
+        )
+    client = opa_client(
+        handler,
+        base_url="https://opa.example.org",
+        bearer_token="opa-service-token",
+    )
+    decision = client.evaluate({"action": "document.read"})
+    assert decision.allowed is False
+    assert observed == ["Bearer opa-service-token"]
+    client.close()
+
+
+def test_opa_rejects_injected_http_client_that_enables_redirects():
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda req: httpx.Response(302, headers={"Location": "https://elsewhere.example"})),
+        follow_redirects=True,
+    )
+    with pytest.raises(ValueError, match="disable redirects"):
+        OPAClient(
+            "https://opa.example.org",
+            "/v1/data/paca/authz/decision",
+            "paca-dev-2026-10-23",
+            client=client,
+            bearer_token="opa-service-token",
+        )
+    client.close()
+
+
+def test_opa_response_size_limit_fails_closed():
+    oversized = (
+        b'{"result":{"allow":false,"policy_revision":"paca-dev-2026-10-23","padding":"'
+        + (b"x" * 256)
+        + b'"}}'
+    )
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, content=oversized))
+    )
+    opa = OPAClient(
+        "http://opa:8181",
+        "/v1/data/paca/authz/decision",
+        "paca-dev-2026-10-23",
+        client=client,
+        max_response_bytes=128,
+    )
+    with pytest.raises(PolicyEngineUnavailable, match="opa_response_too_large"):
+        opa.evaluate({"action": "document.read"})
+    opa.close()
+
+
+def test_opa_response_size_limit_must_be_positive():
+    with pytest.raises(ValueError, match="max_response_bytes"):
+        OPAClient(
+            "http://opa:8181",
+            "/v1/data/paca/authz/decision",
+            "paca-dev-2026-10-23",
+            max_response_bytes=0,
+        )

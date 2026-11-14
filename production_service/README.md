@@ -2,7 +2,7 @@
 
 This directory contains a separate FastAPI authorization gateway that combines RS256 JWT verification, resource-context lookup, OPA/Rego policy decisions, PostgreSQL-backed permits and execution state, and configured file/tool/API adapters.
 
-**Status:** controlled-evaluation scaffold. It is not production-certified and the setup instructions are not a substitute for a deployment-specific security review.
+**Status:** controlled-evaluation scaffold. It is not production-certified and the setup instructions are not a substitute for a deployment-specific security review. For repository-wide positioning and the boundaries between this service, the prototype, compiler and agent integration, see [the architecture and scope contract](../docs/ARCHITECTURE_AND_SCOPE.md).
 
 ## Fresh local setup
 
@@ -28,9 +28,11 @@ All tenant-scoped tables (`protected_resources`, `authz_permits`, `authz_executi
 
 **Signed-context trust boundary:** PostgreSQL custom GUCs remain mutable by a session, so the policies validate the complete signed context rather than trusting those settings. A party holding only the `paca_runtime` database credential can alter the GUC values but cannot forge a valid HMAC, read the key table, or replay a captured context in another backend/transaction. The HMAC key must be independently protected and must never be placed in SQL accessible to the runtime role, logs, tenant input, or plugins. Compromise of the API process/key, database owner/superuser, or host remains outside this control's protection. This does not provide per-principal row isolation within a tenant; application queries and OPA still enforce principal/resource authorization. Keep the runtime credential and signing key in a secrets manager in deployed environments.
 
+For configured HTTP effect routes, every non-2xx upstream response is treated as **outcome unknown** by default, including 4xx responses. Remote upstreams must use HTTPS and a dedicated pre-provisioned `PACA_API_BEARER_TOKEN`; remote OPA endpoints must use HTTPS and a separate `PACA_OPA_BEARER_TOKEN`. These tokens are injected credentials, not tokens automatically obtained or refreshed by PACA++. A 4xx response is not proof that no side effect occurred. A route may set `effect_not_applied_statuses` to a unique list of 400–499 status codes only when that specific upstream endpoint contract explicitly guarantees those responses are returned before any effect is applied. Review and test that contract before using the option. Do not set it merely because an error is in the 4xx range. Unknown outcomes must be reconciled with the downstream system; PACA does not automatically retry them.
+
 The API rejects duplicate `Authorization`, `Idempotency-Key`, `Content-Length`, `Transfer-Encoding`, `Host`, and `Content-Type` headers, rejects conflicting request framing, and limits request bodies to 1 MiB. The downstream HTTP adapter streams response bodies and stops reading after its configured response-size limit. These application checks supplement rather than replace ingress-level body, concurrency, and rate limits.
 
-The API binds to loopback on port 8000. Do not expose it externally before configuring and validating TLS ingress, rate/request limits, secrets management, egress controls, backups/restore, audit retention, monitoring, and incident response.
+The API binds to loopback on port 8000. OPA is private on the Compose control-plane network; if configuring a remote OPA endpoint, use HTTPS and set a dedicated `PACA_OPA_BEARER_TOKEN` for the gateway. Do not reuse an end-user token. Configured remote effect routes likewise require HTTPS and a dedicated `PACA_API_BEARER_TOKEN`. Do not expose the API externally before configuring and validating TLS ingress, rate/request limits, secrets management, egress controls, backups/restore, audit retention, monitoring, and incident response.
 
 ## Real OIDC provider configuration
 
@@ -47,7 +49,7 @@ Set:
 - `PACA_JWT_JWKS_URL` to the exact `jwks_uri` value in that document.
 - `PACA_JWT_AUDIENCE` to the API audience configured in the access token; in the example below this is `paca-api`.
 
-The provider must issue **RS256-signed access tokens** with `sub`, `iss`, `aud`, `exp`, `iat`, and a trusted `tenant_id` claim. The service also reads optional string-list `roles` and `tools` claims, and authorization scopes from a string-list `scopes` claim or the standard space-delimited `scope` claim. Do not accept tenant membership or privileged roles from user-editable profile fields. Provision/map them through administrator-controlled identity attributes, groups, app roles, or an equivalent trusted authorization source. The OPA policy in this repository currently expects the resource owner to equal the verified token's `sub` (unless a trusted `admin` role applies).
+The provider must issue **RS256-signed access tokens** with `sub`, `iss`, `aud`, `exp`, `iat`, a trusted `tenant_id` claim, and the configured access-only marker (by default `token_use=access`). The marker must not appear in ID tokens. The service also reads optional string-list `roles` and `tools` claims, and authorization scopes from a string-list `scopes` claim or the standard space-delimited `scope` claim. Do not accept tenant membership or privileged roles from user-editable profile fields. Provision/map them through administrator-controlled identity attributes, groups, app roles, or an equivalent trusted authorization source. The OPA policy in this repository currently expects the resource owner to equal the verified token's `sub` (unless a trusted `admin` role applies).
 
 See [IDENTITY_PROVIDER.md](IDENTITY_PROVIDER.md) for the provider claim contract, production client setup guidance, and the end-to-end verification performed against Keycloak.
 
@@ -69,7 +71,7 @@ pytest tests/test_oidc_integration.py -q
 
 Replace the quoted DSN examples with valid connection URLs; do not point this test at a production database. Provision the same HMAC key into `paca_private.tenant_context_keys` through the administrative connection before running the PostgreSQL tests. The CI workflow provisions an isolated PostgreSQL service with the separate administrative and restricted runtime credentials and runs this end-to-end test explicitly.
 
-The committed test realm is **for automated local/CI testing only**. It uses HTTP, a test user/password, password-grant authentication, and a hard-coded demonstration scope claim. Do not reuse those credentials, password grant, or hard-coded permissions in production. For production, deploy Keycloak in a supported secure mode behind HTTPS, use a public client with Authorization Code + PKCE for interactive applications, configure the API audience mapper and administrator-controlled tenant/role/scope mappings, and use short-lived access tokens. A successful local/CI flow is integration evidence, not proof that an external organization's tenant has been provisioned or that its policies are correct.
+The committed test realm is **for automated local/CI testing only**. It uses HTTP, test-only confidential client secrets, service-account identities, client-credentials tokens, and hard-coded demonstration claims. Do not reuse those credentials or hard-coded permissions in production. For production, deploy Keycloak in a supported secure mode behind HTTPS, use a public client with Authorization Code + PKCE for interactive applications, configure the API audience mapper and administrator-controlled tenant/role/scope mappings, and issue the required access-only `token_use=access` marker. Use short-lived access tokens. A successful local/CI flow is integration evidence, not proof that an external organization's tenant has been provisioned or that its policies are correct.
 
 ## Stale execution recovery (administrator-only)
 

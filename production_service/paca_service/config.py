@@ -99,6 +99,9 @@ class Settings:
     api_routes: dict[str, dict[str, Any]]
     api_bearer_token: str | None
     file_root: str | None
+    jwt_token_use_claim: str = "token_use"
+    jwt_expected_token_use: str = "access"
+    opa_bearer_token: str | None = None
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> Settings:
@@ -124,6 +127,18 @@ class Settings:
         decision_path = env.get("PACA_OPA_DECISION_PATH", "/v1/data/paca/authz/decision")
         if not decision_path.startswith("/v1/data/") or "?" in decision_path or "#" in decision_path:
             raise ConfigurationError("PACA_OPA_DECISION_PATH must be a fixed OPA Data API path.")
+        raw_opa_bearer_token = env.get("PACA_OPA_BEARER_TOKEN", "")
+        opa_bearer_token = raw_opa_bearer_token or None
+        opa_host = urlsplit(opa_url).hostname.lower().rstrip(".")
+        if opa_host not in _LOOPBACK_HOSTS | {"opa"} and not opa_bearer_token:
+            raise ConfigurationError(
+                "PACA_OPA_BEARER_TOKEN is required for remote OPA endpoints."
+            )
+        if opa_bearer_token and (
+            opa_bearer_token.strip() != opa_bearer_token
+            or any(ch.isspace() for ch in opa_bearer_token)
+        ):
+            raise ConfigurationError("PACA_OPA_BEARER_TOKEN must be a non-whitespace token.")
 
         issuer = _required(env, "PACA_JWT_ISSUER")
         issuer_parts = urlsplit(issuer)
@@ -137,6 +152,16 @@ class Settings:
         ):
             raise ConfigurationError("PACA_JWT_ISSUER must be an absolute HTTPS URL without credentials/query/fragment.")
         audience = _required(env, "PACA_JWT_AUDIENCE")
+        token_use_claim = env.get("PACA_JWT_TOKEN_USE_CLAIM", "token_use").strip()
+        expected_token_use = env.get("PACA_JWT_EXPECTED_TOKEN_USE", "access").strip()
+        if (
+            not token_use_claim
+            or not token_use_claim.replace("_", "").isalnum()
+            or not expected_token_use
+        ):
+            raise ConfigurationError(
+                "PACA_JWT_TOKEN_USE_CLAIM and PACA_JWT_EXPECTED_TOKEN_USE must be non-empty safe values."
+            )
         jwks_url = _validate_service_url(
             "PACA_JWT_JWKS_URL", _required(env, "PACA_JWT_JWKS_URL"), allow_http=False
         )
@@ -157,6 +182,19 @@ class Settings:
             raise ConfigurationError("PACA_API_BASE_URL is required when API routes are configured.")
         if base:
             base = _validate_service_url("PACA_API_BASE_URL", base, allow_http=True)
+        api_bearer_token = env.get("PACA_API_BEARER_TOKEN", "")
+        if api_bearer_token and (
+            api_bearer_token.strip() != api_bearer_token
+            or any(ch.isspace() for ch in api_bearer_token)
+        ):
+            raise ConfigurationError("PACA_API_BEARER_TOKEN must be a non-whitespace token.")
+        if base and routes:
+            api_host = urlsplit(base).hostname.lower().rstrip(".")
+            if api_host not in _LOOPBACK_HOSTS and not api_bearer_token:
+                raise ConfigurationError(
+                    "PACA_API_BEARER_TOKEN is required for remote downstream API routes."
+                )
+        api_bearer_token = api_bearer_token or None
 
         execution_timeout = _positive_float(env, "PACA_EXECUTION_TIMEOUT_SECONDS", "10", 120)
 
@@ -176,6 +214,9 @@ class Settings:
             execution_timeout_seconds=execution_timeout,
             api_base_url=base,
             api_routes=routes,
-            api_bearer_token=env.get("PACA_API_BEARER_TOKEN", "").strip() or None,
+            api_bearer_token=api_bearer_token,
             file_root=env.get("PACA_FILE_ROOT", "").strip() or None,
+            jwt_token_use_claim=token_use_claim,
+            jwt_expected_token_use=expected_token_use,
+            opa_bearer_token=opa_bearer_token,
         )

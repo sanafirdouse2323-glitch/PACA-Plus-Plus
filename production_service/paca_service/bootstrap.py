@@ -29,12 +29,15 @@ opa = OPAClient(
     settings.opa_decision_path,
     settings.expected_policy_revision,
     settings.opa_timeout_seconds,
+    bearer_token=settings.opa_bearer_token,
 )
 authenticator = JWTAuthenticator(
     settings.jwt_issuer,
     settings.jwt_audience,
     settings.jwt_jwks_url,
     settings.jwt_timeout_seconds,
+    token_use_claim=settings.jwt_token_use_claim,
+    expected_token_use=settings.jwt_expected_token_use,
 )
 
 adapters = []

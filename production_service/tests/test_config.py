@@ -73,3 +73,80 @@ def test_tenant_context_key_must_be_256_bit_hex():
 def test_tenant_context_key_id_is_strictly_validated():
     with pytest.raises(ConfigurationError, match="KEY_ID"):
         Settings.from_env(base_env(PACA_TENANT_CONTEXT_KEY_ID="bad key id"))
+
+
+def test_access_token_purpose_claim_is_configurable_and_defaults_to_access():
+    settings = Settings.from_env(base_env())
+    assert settings.jwt_token_use_claim == "token_use"
+    assert settings.jwt_expected_token_use == "access"
+
+    custom = Settings.from_env(
+        base_env(
+            PACA_JWT_TOKEN_USE_CLAIM="paca_token_type",
+            PACA_JWT_EXPECTED_TOKEN_USE="api_access",
+        )
+    )
+    assert custom.jwt_token_use_claim == "paca_token_type"
+    assert custom.jwt_expected_token_use == "api_access"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"PACA_JWT_TOKEN_USE_CLAIM": ""},
+        {"PACA_JWT_TOKEN_USE_CLAIM": "bad claim name"},
+        {"PACA_JWT_EXPECTED_TOKEN_USE": ""},
+    ],
+)
+def test_invalid_access_token_purpose_configuration_is_rejected(overrides):
+    with pytest.raises(ConfigurationError, match="TOKEN_USE"):
+        Settings.from_env(base_env(**overrides))
+
+
+def test_remote_opa_requires_bearer_credential():
+    with pytest.raises(ConfigurationError, match="PACA_OPA_BEARER_TOKEN"):
+        Settings.from_env(base_env(PACA_OPA_URL="https://opa.example.org:8181"))
+    settings = Settings.from_env(
+        base_env(
+            PACA_OPA_URL="https://opa.example.org:8181",
+            PACA_OPA_BEARER_TOKEN="opa-service-token",
+        )
+    )
+    assert settings.opa_bearer_token == "opa-service-token"
+
+
+@pytest.mark.parametrize("token", ["has spaces", "bad\ntoken"])
+def test_opa_bearer_credential_rejects_whitespace(token: str):
+    with pytest.raises(ConfigurationError, match="PACA_OPA_BEARER_TOKEN"):
+        Settings.from_env(base_env(PACA_OPA_BEARER_TOKEN=token))
+
+
+def test_remote_downstream_routes_require_a_service_credential():
+    routes = '{"document.update":{"method":"PATCH","path":"/v1/documents/{resource_id}","args_mode":"json"}}'
+    with pytest.raises(ConfigurationError, match="PACA_API_BEARER_TOKEN"):
+        Settings.from_env(
+            base_env(
+                PACA_API_BASE_URL="https://api.example.org",
+                PACA_API_ROUTES_JSON=routes,
+            )
+        )
+    settings = Settings.from_env(
+        base_env(
+            PACA_API_BASE_URL="https://api.example.org",
+            PACA_API_ROUTES_JSON=routes,
+            PACA_API_BEARER_TOKEN="downstream-service-token",
+        )
+    )
+    assert settings.api_bearer_token == "downstream-service-token"
+
+
+def test_loopback_downstream_route_can_use_local_development_without_service_token():
+    routes = '{"document.update":{"method":"PATCH","path":"/v1/documents/{resource_id}","args_mode":"json"}}'
+    settings = Settings.from_env(
+        base_env(
+            PACA_API_BASE_URL="http://127.0.0.1:9010",
+            PACA_API_ROUTES_JSON=routes,
+        )
+    )
+    assert settings.api_base_url == "http://127.0.0.1:9010"
+    assert settings.api_bearer_token is None

@@ -25,6 +25,10 @@ docker compose down
 
 The legacy demonstration uses simulated effects. The OPA/PostgreSQL commands exercise the configured integration path; they require the relevant containers and test configuration.
 
+## Which prototype security document applies?
+
+`THREAT_MODEL.md` covers only the legacy in-memory `AuthorizationEngine`; it does **not** cover the OPA/OIDC hardening path or the agent runtime. For the hardened gateway and integration controls, read [Security hardening](docs/SECURITY_HARDENING.md). For agent-specific coverage and unimplemented areas, read [Agent runtime](docs/AGENT_RUNTIME.md) and the [threat coverage matrix](docs/THREAT_COVERAGE.md).
+
 ## Components
 
 ### Legacy MVP

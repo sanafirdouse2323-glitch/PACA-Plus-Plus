@@ -5,7 +5,7 @@ This document describes how to reproduce verification. It is not a live dashboar
 ## Verification layers
 
 - **Root compiler tests:** run `PYTHONPATH=. python -m unittest discover -s tests -p "test_fuzzer.py" -v` from repository root. These test the supported parser/emitter subset only.
-- **Legacy prototype:** run `python -m unittest discover -s tests -v`, `python examples/demo.py`, and `python experiments/run_experiments.py` from `prototype/`.
+- **Prototype suite:** run `python -m unittest discover -s tests -v`, `python examples/demo.py`, and `python experiments/run_experiments.py` from `prototype/`. The suite includes the legacy demo and the separate hardening path.
 - **Production service:** run `pytest -q` and `ruff check .` from `production_service/`; database-specific tests require a restricted runtime DSN and a separate admin DSN for fixture/schema setup.
 - **CI:** [open the repository Actions history](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus/actions) and confirm required workflows passed on the exact candidate commit. A green run on another SHA or branch does not verify this revision.
 

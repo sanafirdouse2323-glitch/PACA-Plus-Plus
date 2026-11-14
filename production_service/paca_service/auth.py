@@ -39,9 +39,21 @@ class JWTAuthenticator:
         jwks_url: str,
         timeout_seconds: float = 5.0,
         jwks_client: Any | None = None,
+        token_use_claim: str = "token_use",
+        expected_token_use: str = "access",
     ) -> None:
+        if (
+            not isinstance(token_use_claim, str)
+            or not token_use_claim
+            or not token_use_claim.replace("_", "").isalnum()
+            or not isinstance(expected_token_use, str)
+            or not expected_token_use.strip()
+        ):
+            raise ValueError("invalid_access_token_profile_configuration")
         self.issuer = issuer
         self.audience = audience
+        self.token_use_claim = token_use_claim
+        self.expected_token_use = expected_token_use
         self.jwks_client = jwks_client or jwt.PyJWKClient(
             jwks_url,
             cache_jwk_set=True,
@@ -62,12 +74,18 @@ class JWTAuthenticator:
                 issuer=self.issuer,
                 audience=self.audience,
                 leeway=2,
-                options={"require": ["sub", "exp", "iat", "iss", "aud", "tenant_id"]},
+                options={"require": [
+                    "sub", "exp", "iat", "iss", "aud", "tenant_id",
+                    self.token_use_claim,
+                ]},
             )
         except PyJWKClientConnectionError as exc:
             raise IdentityProviderUnavailable("jwks_unavailable") from exc
         except (InvalidTokenError, PyJWKClientError, TypeError, ValueError) as exc:
             raise AuthenticationError("invalid_bearer_token") from exc
+
+        if claims.get(self.token_use_claim) != self.expected_token_use:
+            raise AuthenticationError("wrong_token_use")
 
         subject = claims.get("sub")
         tenant_id = claims.get("tenant_id")

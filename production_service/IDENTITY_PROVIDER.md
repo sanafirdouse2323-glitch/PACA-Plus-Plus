@@ -18,6 +18,8 @@ From the returned JSON, copy the `issuer` and `jwks_uri` values **verbatim**. Do
 PACA_JWT_ISSUER=<exact issuer value from discovery>
 PACA_JWT_AUDIENCE=paca-api
 PACA_JWT_JWKS_URL=<exact jwks_uri value from discovery>
+PACA_JWT_TOKEN_USE_CLAIM=token_use
+PACA_JWT_EXPECTED_TOKEN_USE=access
 PACA_JWT_TIMEOUT_SECONDS=5
 ```
 
@@ -25,8 +27,9 @@ The angle-bracket values above are instructions, not valid dotenv values; replac
 
 ## 2. Required and optional access-token claims
 
-The authenticator pins the signature algorithm to **RS256**. It requires `sub`, `iss`, `aud`, `exp`, `iat`, and `tenant_id`, and verifies issuer, audience, expiry, and issue time before using the identity. It reads:
-- `tenant_id`: a non-empty trusted string identifying the tenant.
+The authenticator pins the signature algorithm to **RS256**. It requires `sub`, `iss`, `aud`, `exp`, `iat`, `tenant_id`, and the configured access-token purpose claim (default `token_use=access`). The token-purpose claim must be issued in access tokens only, not ID tokens. This creates an explicit token-use boundary for this service; it is a provider claim contract and is not a claim that every OIDC provider emits it by default. The authenticator verifies issuer, audience, expiry, issue time and the access-token marker before using the identity. It reads:
+- `tenant_id`: a non-empty trusted string identifying the tenant; include it in access tokens only.
+- `token_use` (or the configured claim name): the exact configured value `access`; never include the access marker in ID tokens.
 - `roles`: optional list of strings, such as `["admin"]`.
 - `tools`: optional list of strings identifying tools available to the principal.
 - `scopes`: preferably a list of strings; otherwise the standard `scope` string is split on spaces.
@@ -35,7 +38,7 @@ For the checked-in Rego policy, `file.read` requires `file:read`, `file.create` 
 
 ## 3. Keycloak mapper design for an organization
 
-Configure the **API audience** as `paca-api` and ensure it is present in the access token's `aud` claim; the verified `azp` claim alone does not satisfy this service's audience check. Configure a user-attribute mapper for `tenant_id` with access-token inclusion enabled. Map only trusted administrator-provisioned tenant membership.
+Configure the **API audience** as `paca-api` and ensure it is present in the access token's `aud` claim; the verified `azp` claim alone does not satisfy this service's audience check. Configure a user-attribute mapper for `tenant_id` with access-token inclusion enabled. Map only trusted administrator-provisioned tenant membership. Map `token_use=access` to access tokens only (`access.token.claim=true`, `id.token.claim=false`); this marker is required by PACA to reject ID-token substitution.
 
 Map application permissions to the claim contract used by the API and Rego policy. Suitable designs include:
 - client scopes/roles assigned and controlled by administrators, emitted into a space-delimited `scope` claim; or
@@ -70,7 +73,7 @@ The expected behaviors include:
 
 The focused authenticator tests additionally verify rejection of missing or malformed subject, tenant, role, tool, and scope claims, and exercise JWKS refresh when the provider publishes a new signing-key ID.
 
-The test realm's HTTP endpoint, test-only password, and demonstration scope mapper are intentionally not production-safe configuration. The test does not create or configure an external identity-provider tenant on your behalf. Production must use your actual HTTPS issuer, audience, JWKS endpoint, identity lifecycle and claim-mapping setup.
+The test realm's HTTP endpoint, test-only confidential client secrets, service-account identities, and demonstration claim mappers are intentionally for automated local/CI testing only. The test obtains tokens with the OAuth client-credentials grant; it does not use the deprecated Resource Owner Password Credentials grant. These credentials and claims are not production configuration. The test does not create or configure an external identity-provider tenant on your behalf. Production must use your actual HTTPS issuer, audience, JWKS endpoint, access-token-only purpose marker, identity lifecycle and trusted claim-mapping setup.
 
 ## References
 
