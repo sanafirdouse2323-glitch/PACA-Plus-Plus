@@ -9,10 +9,12 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.tools import StructuredTool
+
+from .paca_client import PACARequestError
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
@@ -90,7 +92,7 @@ class PACAOperation:
 
 
 class _AgentState(TypedDict):
-    messages: list[BaseMessage]
+    messages: Annotated[list[BaseMessage], add_messages]
 
 
 def _digest_text(value: str) -> str:
@@ -391,4 +393,3 @@ def build_paca_langgraph_agent(
 
 # Imported at the end to keep the gateway client dependency explicit and avoid
 # coupling LangGraph consumers to the production service package.
-from .paca_client import PACARequestError  # noqa: E402
