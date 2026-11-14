@@ -196,7 +196,6 @@ def test_authorization_denial_stops_before_protected_execution(tmp_path: Path) -
 
 
 def test_unknown_execution_replay_reuses_same_permit_and_idempotency_key(tmp_path: Path) -> None:
-    paca = LocalPACAService()
     paca = LocalPACAService(next_execution_status=503)
     model = ScriptedToolModel("read_document", "call-replay")
     ledger_path = tmp_path / "replay.sqlite3"
