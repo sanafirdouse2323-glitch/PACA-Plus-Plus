@@ -225,6 +225,7 @@ jobs:
             -addext "subjectAltName=DNS:localhost" \
             -addext "basicConstraints=critical,CA:TRUE" \
             -addext "extendedKeyUsage=serverAuth"
+          chmod 644 "$PACA_REMOTE_OPA_AUTH_ROOT/server.key"  # Ephemeral CI-only test key for the OPA container.
           cp production_service/opa/policies/authz.rego "$PACA_REMOTE_OPA_AUTH_ROOT/bundle/policies/authz.rego"
           cp production_service/opa/remote_auth/system_authz.rego "$PACA_REMOTE_OPA_AUTH_ROOT/bundle/policies/system_authz.rego"
           python - <<'PY'
