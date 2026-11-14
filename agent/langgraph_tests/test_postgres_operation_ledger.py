@@ -4,7 +4,6 @@ import os
 from uuid import uuid4
 
 import psycopg
-
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.store.postgres import PostgresStore
