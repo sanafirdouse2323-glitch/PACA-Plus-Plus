@@ -254,7 +254,7 @@ def test_http_adapter_rejects_unsafe_transport_and_bad_no_effect_contract():
             timeout_seconds=1, client=redirecting_client,
         )
     redirecting_client.close()
-    with pytest.raises(ValueError, match="upstream_bearer_token_required"):
+    with pytest.raises(ValueError, match="service_credential_required"):
         HttpAPIAdapter("https://api.example", routes, timeout_seconds=1)
     with pytest.raises(ValueError, match="timeout_must_be_positive"):
         HttpAPIAdapter(
