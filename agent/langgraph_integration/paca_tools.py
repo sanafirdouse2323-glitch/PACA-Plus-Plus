@@ -308,14 +308,14 @@ def build_paca_tools(
     specs = tuple(actions)
     if not specs:
         raise ValueError("at_least_one_paca_action_is_required")
+    if any(not isinstance(spec, ActionSpec) for spec in specs):
+        raise TypeError("actions_must_contain_only_ActionSpec")
     names = [spec.tool_name for spec in specs]
     if len(set(names)) != len(names):
         raise ValueError("langgraph_tool_names_must_be_unique")
 
     tools: list[Any] = []
     for spec in specs:
-        if not isinstance(spec, ActionSpec):
-            raise TypeError("actions_must_contain_only_ActionSpec")
         fixed_action = spec.action
         allowed_resource_ids = frozenset(spec.allowed_resource_ids)
 
@@ -405,7 +405,24 @@ def build_paca_tools(
                         "PACA++ did not confirm execution success; reconcile before retrying"
                     )
 
-                ledger.mark_succeeded(record.idempotency_key, permit_id, result)
+                try:
+                    ledger.mark_succeeded(record.idempotency_key, permit_id, result)
+                except Exception as exc:
+                    # The remote effect is confirmed successful, but its result
+                    # was not durably recorded. Keep the original permit/key so
+                    # a replay is idempotent at the downstream service.
+                    try:
+                        ledger.mark_unknown(
+                            record.idempotency_key, permit_id,
+                            "execution_succeeded_but_result_persistence_failed",
+                        )
+                    except Exception as ledger_exc:
+                        raise OperationLedgerError(
+                            "execution_succeeded_but_ledger_recovery_failed"
+                        ) from ledger_exc
+                    raise PACALangGraphError(
+                        "execution succeeded but the result was not durably recorded; reconcile before replay"
+                    ) from exc
                 return json.dumps(result, sort_keys=True, separators=(",", ":"))
 
             return guarded_paca_action
