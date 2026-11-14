@@ -62,12 +62,18 @@ class JWTAuthenticator:
                 issuer=self.issuer,
                 audience=self.audience,
                 leeway=2,
-                options={"require": ["sub", "exp", "iat", "iss", "aud", "tenant_id"]},
+                options={"require": [
+                    "sub", "exp", "iat", "iss", "aud", "tenant_id",
+                    self.token_use_claim,
+                ]},
             )
         except PyJWKClientConnectionError as exc:
             raise IdentityProviderUnavailable("jwks_unavailable") from exc
         except (InvalidTokenError, PyJWKClientError, TypeError, ValueError) as exc:
             raise AuthenticationError("invalid_bearer_token") from exc
+
+        if claims.get(self.token_use_claim) != self.expected_token_use:
+            raise AuthenticationError("wrong_token_use")
 
         subject = claims.get("sub")
         tenant_id = claims.get("tenant_id")
