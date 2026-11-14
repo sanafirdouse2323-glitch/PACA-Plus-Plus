@@ -101,3 +101,21 @@ def test_access_token_purpose_claim_is_configurable_and_defaults_to_access():
 def test_invalid_access_token_purpose_configuration_is_rejected(overrides):
     with pytest.raises(ConfigurationError, match="TOKEN_USE"):
         Settings.from_env(base_env(**overrides))
+
+
+def test_remote_opa_requires_bearer_credential():
+    with pytest.raises(ConfigurationError, match="PACA_OPA_BEARER_TOKEN"):
+        Settings.from_env(base_env(PACA_OPA_URL="https://opa.example.org:8181"))
+    settings = Settings.from_env(
+        base_env(
+            PACA_OPA_URL="https://opa.example.org:8181",
+            PACA_OPA_BEARER_TOKEN="opa-service-token",
+        )
+    )
+    assert settings.opa_bearer_token == "opa-service-token"
+
+
+@pytest.mark.parametrize("token", ["has spaces", "bad\\ntoken"])
+def test_opa_bearer_credential_rejects_whitespace(token: str):
+    with pytest.raises(ConfigurationError, match="PACA_OPA_BEARER_TOKEN"):
+        Settings.from_env(base_env(PACA_OPA_BEARER_TOKEN=token))
