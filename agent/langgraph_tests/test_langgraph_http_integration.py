@@ -7,12 +7,14 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
-
 from pydantic import Field
 
-from agent.langgraph_adapter import PACAArgsModel, PACAOperation, build_paca_langgraph_agent
+from agent.langgraph_adapter import (
+    PACAArgsModel,
+    PACAOperation,
+    build_paca_langgraph_agent,
+)
 from agent.paca_client import PACAClient
-
 
 PERMIT_ID = "00000000-0000-0000-0000-000000000123"
 EXECUTION_ID = "00000000-0000-0000-0000-000000000456"
