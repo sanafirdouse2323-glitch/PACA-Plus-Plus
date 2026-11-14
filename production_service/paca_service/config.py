@@ -99,6 +99,8 @@ class Settings:
     api_routes: dict[str, dict[str, Any]]
     api_bearer_token: str | None
     file_root: str | None
+    jwt_token_use_claim: str = "token_use"
+    jwt_expected_token_use: str = "access"
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> Settings:
@@ -137,6 +139,16 @@ class Settings:
         ):
             raise ConfigurationError("PACA_JWT_ISSUER must be an absolute HTTPS URL without credentials/query/fragment.")
         audience = _required(env, "PACA_JWT_AUDIENCE")
+        token_use_claim = env.get("PACA_JWT_TOKEN_USE_CLAIM", "token_use").strip()
+        expected_token_use = env.get("PACA_JWT_EXPECTED_TOKEN_USE", "access").strip()
+        if (
+            not token_use_claim
+            or not token_use_claim.replace("_", "").isalnum()
+            or not expected_token_use
+        ):
+            raise ConfigurationError(
+                "PACA_JWT_TOKEN_USE_CLAIM and PACA_JWT_EXPECTED_TOKEN_USE must be non-empty safe values."
+            )
         jwks_url = _validate_service_url(
             "PACA_JWT_JWKS_URL", _required(env, "PACA_JWT_JWKS_URL"), allow_http=False
         )
@@ -178,4 +190,6 @@ class Settings:
             api_routes=routes,
             api_bearer_token=env.get("PACA_API_BEARER_TOKEN", "").strip() or None,
             file_root=env.get("PACA_FILE_ROOT", "").strip() or None,
+            jwt_token_use_claim=token_use_claim,
+            jwt_expected_token_use=expected_token_use,
         )
