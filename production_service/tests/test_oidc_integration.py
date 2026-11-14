@@ -8,29 +8,27 @@ import uuid
 from pathlib import Path
 from urllib.parse import urljoin
 
-import uvicorn
-
 import httpx
 import psycopg
 import pytest
+import uvicorn
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from paca_service.adapters import AdapterRouter, SandboxedFileAdapter
-from paca_service.app import create_app
-from paca_service.auth import AuthenticationError, JWTAuthenticator
-from paca_service.config import Settings
-from paca_service.opa import OPAClient
-from paca_service.store import PostgresStore
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-
-from agent.paca_client import PACAClient
 from agent.langgraph_integration.paca_tools import (
     ActionSpec,
     PACALangGraphError,
     SQLiteOperationLedger,
     build_paca_langgraph_agent,
 )
+from agent.paca_client import PACAClient
+from paca_service.adapters import AdapterRouter, SandboxedFileAdapter
+from paca_service.app import create_app
+from paca_service.auth import AuthenticationError, JWTAuthenticator
+from paca_service.config import Settings
+from paca_service.opa import OPAClient
+from paca_service.store import PostgresStore
 
 REALM_URL = os.getenv("PACA_TEST_OIDC_REALM_URL", "").rstrip("/")
 DATABASE_URL = os.getenv("PACA_TEST_DATABASE_URL", "")
