@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+import socket
+import threading
+import time
 import uuid
 from pathlib import Path
 from urllib.parse import urljoin
@@ -8,7 +11,15 @@ from urllib.parse import urljoin
 import httpx
 import psycopg
 import pytest
-from fastapi.testclient import TestClient
+import uvicorn
+from agent.langgraph_integration.paca_tools import (
+    ActionSpec,
+    PACALangGraphError,
+    SQLiteOperationLedger,
+    build_paca_langgraph_agent,
+)
+from agent.paca_client import PACAClient
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
@@ -176,87 +187,212 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
     )
 
     try:
-        with TestClient(app) as client:
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(128)
+        port = listener.getsockname()[1]
+        server = uvicorn.Server(
+            uvicorn.Config(
+                app,
+                host="127.0.0.1",
+                port=port,
+                log_level="critical",
+                lifespan="on",
+            )
+        )
+        server_thread = threading.Thread(
+            target=server.run,
+            kwargs={"sockets": [listener]},
+            daemon=True,
+        )
+        server_thread.start()
+        try:
+            deadline = time.monotonic() + 15.0
+            while not server.started and server_thread.is_alive() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert server.started, "PACA++ ASGI test server did not start"
+
+            base_url = f"http://127.0.0.1:{port}"
             auth_headers = {"Authorization": f"Bearer {token}"}
+            with httpx.Client(
+                base_url=base_url,
+                timeout=10.0,
+                follow_redirects=False,
+                trust_env=False,
+            ) as api_client:
+                unauthorized = api_client.post(
+                    "/v1/authorizations",
+                    headers={"Authorization": f"Bearer {wrong_audience_token}"},
+                    json={"action": "file.read", "resource_id": resource_id, "arguments": {}},
+                )
+                assert unauthorized.status_code == 401, unauthorized.text
 
-            unauthorized = client.post(
-                "/v1/authorizations",
-                headers={"Authorization": f"Bearer {wrong_audience_token}"},
-                json={"action": "file.read", "resource_id": resource_id, "arguments": {}},
-            )
-            assert unauthorized.status_code == 401, unauthorized.text
+                cross_tenant = api_client.post(
+                    "/v1/authorizations",
+                    headers={"Authorization": f"Bearer {other_tenant_token}"},
+                    json={"action": "file.read", "resource_id": resource_id, "arguments": {}},
+                )
+                assert cross_tenant.status_code == 404, cross_tenant.text
 
-            cross_tenant = client.post(
-                "/v1/authorizations",
-                headers={"Authorization": f"Bearer {other_tenant_token}"},
-                json={"action": "file.read", "resource_id": resource_id, "arguments": {}},
-            )
-            assert cross_tenant.status_code == 404, cross_tenant.text
+                # Real provider token -> trusted PostgreSQL resource -> live OPA decision -> permit.
+                authorization = api_client.post(
+                    "/v1/authorizations",
+                    headers=auth_headers,
+                    json={"action": "file.read", "resource_id": resource_id, "arguments": {}},
+                )
+                assert authorization.status_code == 201, authorization.text
+                permit_id = authorization.json()["permit_id"]
+                assert authorization.json()["policy_revision"] == POLICY_REVISION
 
-            # Real provider token -> trusted PostgreSQL resource -> live OPA decision -> permit.
-            authorization = client.post(
-                "/v1/authorizations",
-                headers=auth_headers,
-                json={"action": "file.read", "resource_id": resource_id, "arguments": {}},
-            )
-            assert authorization.status_code == 201, authorization.text
-            permit_id = authorization.json()["permit_id"]
-            assert authorization.json()["policy_revision"] == POLICY_REVISION
+                # Execute the permit against the real sandboxed file adapter and persistent PostgreSQL store.
+                execution = api_client.post(
+                    "/v1/executions",
+                    headers={**auth_headers, "Idempotency-Key": "oidc-e2e-" + uuid.uuid4().hex},
+                    json={
+                        "permit_id": permit_id,
+                        "action": "file.read",
+                        "resource_id": resource_id,
+                        "arguments": {},
+                    },
+                )
+                assert execution.status_code == 200, execution.text
+                result = execution.json()
+                assert result["status"] == "succeeded"
+                assert result["result"]["content"] == content
+                execution_id = result["execution_id"]
 
-            # Execute the permit against the real sandboxed file adapter and persistent PostgreSQL store.
-            execution = client.post(
-                "/v1/executions",
-                headers={**auth_headers, "Idempotency-Key": "oidc-e2e-" + uuid.uuid4().hex},
-                json={
-                    "permit_id": permit_id,
-                    "action": "file.read",
-                    "resource_id": resource_id,
-                    "arguments": {},
-                },
-            )
-            assert execution.status_code == 200, execution.text
-            result = execution.json()
-            assert result["status"] == "succeeded"
-            assert result["result"]["content"] == content
-            execution_id = result["execution_id"]
+                # The persistent execution status route uses the same real authenticated identity.
+                status = api_client.get(
+                    f"/v1/executions/{execution_id}",
+                    headers=auth_headers,
+                )
+                assert status.status_code == 200, status.text
+                assert status.json()["status"] == "succeeded"
 
-            # The persistent execution status route uses the same real authenticated identity.
-            status = client.get(
-                f"/v1/executions/{execution_id}",
-                headers=auth_headers,
-            )
-            assert status.status_code == 200, status.text
-            assert status.json()["status"] == "succeeded"
+                cross_tenant_status = api_client.get(
+                    f"/v1/executions/{execution_id}",
+                    headers={"Authorization": f"Bearer {other_tenant_token}"},
+                )
+                assert cross_tenant_status.status_code == 404, cross_tenant_status.text
 
-            cross_tenant_status = client.get(
-                f"/v1/executions/{execution_id}",
-                headers={"Authorization": f"Bearer {other_tenant_token}"},
-            )
-            assert cross_tenant_status.status_code == 404, cross_tenant_status.text
+                # Now drive the same real service through LangGraph, rather than calling
+                # the API routes directly. The model double proposes only the registered tool.
+                class RealServiceToolModel:
+                    def __init__(self, target_resource_id: str, call_id: str) -> None:
+                        self.target_resource_id = target_resource_id
+                        self.call_id = call_id
+                        self.calls = 0
+                        self.bound_tool_names: list[str] = []
 
-            # A valid identity cannot read another principal's resource just because it shares a tenant.
-            denied = client.post(
-                "/v1/authorizations",
-                headers=auth_headers,
-                json={
-                    "action": "file.read",
-                    "resource_id": denied_resource_id,
-                    "arguments": {},
-                },
-            )
-            assert denied.status_code == 403, denied.text
+                    def bind_tools(self, tools: list[object]) -> RealServiceToolModel:
+                        self.bound_tool_names = [item.name for item in tools]
+                        return self
 
-            # Tenant is derived from the signed provider claim; an unknown tenant-scoped resource stays hidden.
-            wrong_tenant = client.post(
-                "/v1/authorizations",
-                headers=auth_headers,
-                json={
-                    "action": "file.read",
-                    "resource_id": "resource-in-another-tenant",
-                    "arguments": {},
-                },
-            )
-            assert wrong_tenant.status_code == 404, wrong_tenant.text
+                    def invoke(self, messages: list[object]) -> AIMessage:
+                        self.calls += 1
+                        if self.calls == 1:
+                            return AIMessage(
+                                content="",
+                                tool_calls=[{
+                                    "name": "read_document",
+                                    "args": {
+                                        "resource_id": self.target_resource_id,
+                                        "arguments": {},
+                                    },
+                                    "id": self.call_id,
+                                    "type": "tool_call",
+                                }],
+                            )
+                        return AIMessage(content="The protected document read completed.")
+
+                operation_ledger = SQLiteOperationLedger(
+                    tmp_path / "langgraph-operations.sqlite3"
+                )
+                try:
+                    paca_client = PACAClient(base_url, token)
+                    allowed_model = RealServiceToolModel(resource_id, "oidc-lg-allowed-1")
+                    graph = build_paca_langgraph_agent(
+                        model=allowed_model,
+                        client=paca_client,
+                        ledger=operation_ledger,
+                        actions=[
+                            ActionSpec(
+                                tool_name="read_document",
+                                action="file.read",
+                                description="Read a document through the PACA++ protected gateway.",
+                                allowed_resource_ids=(resource_id,),
+                            )
+                        ],
+                    )
+                    graph_result = graph.invoke(
+                        {"messages": [HumanMessage(content="Read the protected document.")]},
+                        config={"configurable": {"thread_id": "oidc-langgraph-thread"}},
+                    )
+                    assert allowed_model.bound_tool_names == ["read_document"]
+                    assert graph_result["messages"][-1].content == (
+                        "The protected document read completed."
+                    )
+                    tool_messages = [
+                        message for message in graph_result["messages"]
+                        if isinstance(message, ToolMessage)
+                    ]
+                    assert len(tool_messages) == 1
+                    assert content in tool_messages[0].content
+
+                    # A server-side policy denial through the graph must stop before
+                    # the execute endpoint; no direct adapter call is exposed to the model.
+                    denied_model = RealServiceToolModel(
+                        denied_resource_id, "oidc-lg-denied-1"
+                    )
+                    denied_graph = build_paca_langgraph_agent(
+                        model=denied_model,
+                        client=paca_client,
+                        ledger=operation_ledger,
+                        actions=[
+                            ActionSpec(
+                                tool_name="read_document",
+                                action="file.read",
+                                description="Read a document through the PACA++ protected gateway.",
+                            )
+                        ],
+                    )
+                    with pytest.raises(PACALangGraphError, match="denied protected action"):
+                        denied_graph.invoke(
+                            {"messages": [HumanMessage(content="Read the other owner's document.")]},
+                            config={"configurable": {"thread_id": "oidc-langgraph-denied-thread"}},
+                        )
+                finally:
+                    operation_ledger.close()
+
+                # A valid identity cannot read another principal's resource just because it shares a tenant.
+                denied = api_client.post(
+                    "/v1/authorizations",
+                    headers=auth_headers,
+                    json={
+                        "action": "file.read",
+                        "resource_id": denied_resource_id,
+                        "arguments": {},
+                    },
+                )
+                assert denied.status_code == 403, denied.text
+
+                # Tenant is derived from the signed provider claim; an unknown tenant-scoped resource stays hidden.
+                wrong_tenant = api_client.post(
+                    "/v1/authorizations",
+                    headers=auth_headers,
+                    json={
+                        "action": "file.read",
+                        "resource_id": "resource-in-another-tenant",
+                        "arguments": {},
+                    },
+                )
+                assert wrong_tenant.status_code == 404, wrong_tenant.text
+        finally:
+            server.should_exit = True
+            server_thread.join(timeout=15.0)
+            listener.close()
+            assert not server_thread.is_alive(), "PACA++ ASGI test server did not stop cleanly"
     finally:
         # Audit events are append-only by design, including for the runtime role.
         # Preserve those evidence records; clean only the FK-linked mutable test rows.
