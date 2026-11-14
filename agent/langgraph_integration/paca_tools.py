@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import threading
@@ -85,6 +86,14 @@ class SQLiteOperationLedger:
         self.path = str(path)
         self._lock = threading.RLock()
         try:
+            if self.path != ":memory:":
+                database_path = Path(self.path).expanduser()
+                database_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                if database_path.parent.is_symlink() or database_path.is_symlink():
+                    raise OperationLedgerError("operation_ledger_path_must_not_use_symlinks")
+                self.path = str(database_path)
+                if os.name == "posix":
+                    os.chmod(database_path.parent, 0o700)
             self._connection = sqlite3.connect(
                 self.path,
                 timeout=float(timeout_seconds),
@@ -125,7 +134,9 @@ class SQLiteOperationLedger:
                 ON paca_langgraph_operations(thread_id, request_digest, status)
                 """
             )
-        except sqlite3.Error as exc:
+            if self.path != ":memory:" and os.name == "posix":
+                os.chmod(self.path, 0o600)
+        except (sqlite3.Error, OSError) as exc:
             raise OperationLedgerError("operation_ledger_initialization_failed") from exc
 
     @staticmethod
