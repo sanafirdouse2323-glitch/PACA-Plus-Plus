@@ -4,7 +4,7 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -24,8 +24,8 @@ EXECUTION_ID = "00000000-0000-0000-0000-000000000456"
 
 
 class FakePACAHandler(BaseHTTPRequestHandler):
-    requests_seen: list[dict[str, Any]] = []
-    execution_statuses: list[int] = []
+    requests_seen: ClassVar[list[dict[str, Any]]] = []
+    execution_statuses: ClassVar[list[int]] = []
     next_execution_status = 200
 
     def _respond(self, status: int, body: dict[str, Any]) -> None:
@@ -101,7 +101,7 @@ class ScriptedToolModel:
         self.bound_tool_names: list[str] = []
         self.calls = 0
 
-    def bind_tools(self, tools: list[Any]) -> "ScriptedToolModel":
+    def bind_tools(self, tools: list[Any]) -> ScriptedToolModel:
         self.bound_tool_names = [item.name for item in tools]
         return self
 
@@ -285,21 +285,14 @@ def test_model_cannot_invoke_undeclared_direct_effect_tool(tmp_path: Path) -> No
     try:
         graph, ledger = _build(paca, tmp_path / "bypass.sqlite3", model)
         assert model.bound_tool_names == ["read_document"]
-        result = None
-        try:
-            result = graph.invoke(
-                {"messages": [HumanMessage(content="Write directly to the database.")]},
-                config={"configurable": {"thread_id": "thread-bypass"}},
-            )
-        except Exception:
-            # Depending on LangGraph release internals, an unknown tool may be
-            # rejected as an exception or returned as an error ToolMessage.
-            pass
-        if result is not None:
-            assert any(
-                isinstance(message, ToolMessage) and message.status == "error"
-                for message in result["messages"]
-            )
+        result = graph.invoke(
+            {"messages": [HumanMessage(content="Write directly to the database.")]},
+            config={"configurable": {"thread_id": "thread-bypass"}},
+        )
+        assert any(
+            isinstance(message, ToolMessage) and message.status == "error"
+            for message in result["messages"]
+        )
         assert paca.requests == []
         ledger.close()
     finally:
