@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from uuid import uuid4
 
+import psycopg
+
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.store.postgres import PostgresStore
@@ -20,6 +22,7 @@ from agent.operation_ledger import (
 from agent.paca_client import PACARequestError
 
 DATABASE_URL = os.environ.get("PACA_AGENT_TEST_DATABASE_URL")
+LEDGER_DATABASE_URL = os.environ.get("PACA_AGENT_LEDGER_DATABASE_URL")
 
 
 class ReadArgs(PACAArgsModel):
@@ -67,10 +70,10 @@ def tool_call(call_id: str) -> AIMessage:
 
 @pytest.fixture
 def postgres_ledgers():
-    if not DATABASE_URL:
-        pytest.skip("PACA_AGENT_TEST_DATABASE_URL is not configured")
-    first = PostgresOperationLedger(DATABASE_URL, claim_ttl_seconds=60)
-    second = PostgresOperationLedger(DATABASE_URL, claim_ttl_seconds=60)
+    if not LEDGER_DATABASE_URL:
+        pytest.skip("PACA_AGENT_LEDGER_DATABASE_URL is not configured")
+    first = PostgresOperationLedger(LEDGER_DATABASE_URL, claim_ttl_seconds=60)
+    second = PostgresOperationLedger(LEDGER_DATABASE_URL, claim_ttl_seconds=60)
     first.open()
     second.open()
     first.ping()
@@ -210,7 +213,7 @@ def test_postgres_checkpointer_and_operation_ledger_survive_process_reconstructi
                 "result": {"content": "recovered"},
             }
 
-    first_ledger = PostgresOperationLedger(DATABASE_URL, claim_ttl_seconds=60)
+    first_ledger = PostgresOperationLedger(LEDGER_DATABASE_URL, claim_ttl_seconds=60)
     first_ledger.open()
     try:
         with PostgresSaver.from_conn_string(DATABASE_URL) as checkpointer:
@@ -236,7 +239,7 @@ def test_postgres_checkpointer_and_operation_ledger_survive_process_reconstructi
     # A fresh process constructs new checkpoint/store/ledger/client objects. The
     # persisted checkpoint resumes the unfinished ToolNode and the transactional
     # ledger supplies the original permit and idempotency key without re-authorizing.
-    restarted_ledger = PostgresOperationLedger(DATABASE_URL, claim_ttl_seconds=60)
+    restarted_ledger = PostgresOperationLedger(LEDGER_DATABASE_URL, claim_ttl_seconds=60)
     restarted_ledger.open()
     try:
         with (
@@ -262,3 +265,22 @@ def test_postgres_checkpointer_and_operation_ledger_survive_process_reconstructi
     assert executions[0][1] == executions[1][1]
     assert executions[0][2] == "first"
     assert executions[1][2] == "restarted"
+
+
+
+def test_operation_ledger_runtime_database_role_has_only_required_privileges():
+    if not LEDGER_DATABASE_URL:
+        pytest.skip("PACA_AGENT_LEDGER_DATABASE_URL is not configured")
+    with psycopg.connect(LEDGER_DATABASE_URL) as conn:
+        row = conn.execute(
+            """
+            SELECT
+                has_schema_privilege(current_user, 'paca_langgraph', 'USAGE') AS can_use_schema,
+                has_schema_privilege(current_user, 'paca_langgraph', 'CREATE') AS can_create_in_schema,
+                has_table_privilege(current_user, 'paca_langgraph.execution_journal', 'SELECT') AS can_select,
+                has_table_privilege(current_user, 'paca_langgraph.execution_journal', 'INSERT') AS can_insert,
+                has_table_privilege(current_user, 'paca_langgraph.execution_journal', 'UPDATE') AS can_update,
+                has_table_privilege(current_user, 'paca_langgraph.execution_journal', 'DELETE') AS can_delete
+            """
+        ).fetchone()
+    assert row == (True, False, True, True, True, False)

@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PACA_AGENT_TEST_DATABASE_URL: postgresql://paca_agent_test:paca_agent_test_password@localhost:5432/paca_langgraph_test
+      PACA_AGENT_LEDGER_DATABASE_URL: postgresql://paca_agent_ledger_runtime:paca_agent_ledger_runtime_password@localhost:5432/paca_agent_ledger
     services:
       postgres:
         image: postgres:17-alpine
@@ -52,9 +53,20 @@ jobs:
           PGPASSWORD: postgres
         run: |
           set -euo pipefail
-          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE paca_agent_test LOGIN PASSWORD 'paca_agent_test_password'"
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE paca_agent_test LOGIN PASSWORD 'paca_agent_test_password';
+          CREATE ROLE paca_agent_ledger_owner LOGIN PASSWORD 'paca_agent_ledger_owner_password';
+          CREATE ROLE paca_agent_ledger_runtime LOGIN PASSWORD 'paca_agent_ledger_runtime_password';
+          SQL
           createdb -h localhost -U postgres -O paca_agent_test paca_langgraph_test
-          psql "$PACA_AGENT_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f agent/migrations/0001-operation-ledger.sql
+          createdb -h localhost -U postgres -O paca_agent_ledger_owner paca_agent_ledger
+          PGPASSWORD=paca_agent_ledger_owner_password psql -h localhost -U paca_agent_ledger_owner -d paca_agent_ledger -v ON_ERROR_STOP=1 -f agent/migrations/0001-operation-ledger.sql
+          psql -h localhost -U postgres -d paca_agent_ledger -v ON_ERROR_STOP=1 <<'SQL'
+          REVOKE ALL ON DATABASE paca_agent_ledger FROM PUBLIC;
+          GRANT CONNECT ON DATABASE paca_agent_ledger TO paca_agent_ledger_runtime;
+          GRANT USAGE ON SCHEMA paca_langgraph TO paca_agent_ledger_runtime;
+          GRANT SELECT, INSERT, UPDATE ON TABLE paca_langgraph.execution_journal TO paca_agent_ledger_runtime;
+          SQL
       - name: Compile the agent package
         run: python -m compileall -q agent
       - name: Lint the adapter, ledger and tests
