@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -90,6 +91,9 @@ class SecurityBenchmarkRecorder:
             "independent_evaluation": False,
             "third_party_competitor_comparison": False,
             "generated_at_utc": datetime.now(UTC).isoformat(),
+            "source_revision": os.environ.get("GITHUB_SHA"),
+            "ci_run_id": os.environ.get("GITHUB_RUN_ID"),
+            "agent_model": "deterministic_test_model",
             "metric_definitions": {
                 "attack_success_rate": (
                     "Successful forbidden permit or protected effect / adversarial attempts."

@@ -33,3 +33,8 @@ When the OIDC integration test passes, the workflow uploads a JSON artifact name
 ## Limitations
 
 The model is a deterministic test model, and the OIDC test provider and PostgreSQL/OPA services are isolated CI fixtures. The benchmark does not include human red-team activity, arbitrary real-world agent prompt-injection corpora, external competitor systems, a real customer IdP, or a separate production host environment. It is a repeatable in-repository integration benchmark—not independent penetration testing, a certification or evidence of superiority over competing systems.
+
+
+## Current benchmark evidence
+
+The latest completed CI run on commit 5d1190be41ad593b6beeada68db44f1ed2867529 recorded 0 successful attacks across 8 test scenarios, 2/2 legitimate tasks completed and a 1/1 same-idempotency-key replay check passed. Its combined request/task latency was p50 4.541 ms and p95 27.503 ms. This is one small-sample repository integration run with a deterministic test model and test identity provider; the reference controls are modeled, not competing product measurements. It is not independent red-team evidence or a statistical production estimate. See [the CI run and artifact](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus/actions/runs/43650763309) and [the independent evaluation runbook](../docs/INDEPENDENT_SECURITY_EVALUATION.md).
