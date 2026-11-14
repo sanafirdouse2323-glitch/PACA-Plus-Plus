@@ -147,6 +147,8 @@ class HttpAPIAdapter(ExecutionAdapter):
                 "args_mode": args_mode,
                 "effect_not_applied_statuses": frozenset(no_effect_statuses),
             }
+        if client is not None and client.follow_redirects:
+            raise ValueError("upstream HTTP client must disable redirects")
         self.client = client or httpx.Client(
             timeout=httpx.Timeout(timeout_seconds),
             follow_redirects=False,
