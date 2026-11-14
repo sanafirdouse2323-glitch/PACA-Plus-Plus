@@ -19,7 +19,7 @@ The gateway verifies RS256 tokens for one configured issuer/audience. In this im
 1. **Caller → API:** request data is untrusted. Validate request shape, authenticate the token, and never accept caller-selected callbacks or destination URLs.
 2. **API → OIDC provider:** trust only the configured issuer, audience, RS256 signing algorithm and HTTPS JWKS endpoint. Key rotation, revocation latency and provider availability remain deployment dependencies.
 3. **API → PostgreSQL:** trusted resource facts must be provisioned by an administrative process. The API signs tenant context with a separate HMAC key; database RLS verifies it against a private key table and binds it to the current backend/transaction. Use a restricted runtime role, TLS peer verification for remote databases, and separate migration/admin credentials.
-4. **API → OPA:** require a well-formed decision and the expected policy revision on both allow and deny results. OPA failure/undefined result fails closed. Keep OPA private and coordinate policy rollout with the gateway.
+4. **API → OPA:** require a well-formed decision and the expected policy revision on both allow and deny results. OPA failure/undefined result fails closed. Keep OPA private on the control-plane network; when using a remote OPA endpoint, require HTTPS and a dedicated gateway bearer credential. Do not reuse an end-user token. Coordinate policy rollout with the gateway.
 5. **Gateway → downstream effects:** destination/action are fixed by server configuration; the API cannot force a downstream service to implement idempotency.
 6. **Audit DB → independent storage:** an append-only trigger is defense-in-depth, not tamper-proof storage against an owner or superuser.
 
