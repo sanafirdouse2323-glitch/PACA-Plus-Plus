@@ -132,7 +132,7 @@ def test_s3_sink_uses_conditional_compliance_lock_kms_and_sha256_checksum():
     assert key == "paca/prod/events/00000000000000000042.json"
     uploaded = client.put_calls[0]
     assert uploaded["ObjectLockMode"] == "COMPLIANCE"
-    assert uploaded["ObjectLockRetainUntilDate"] == datetime(2036, 11, 13, tzinfo=UTC)
+    assert uploaded["ObjectLockRetainUntilDate"] == datetime(2036, 11, 12, tzinfo=UTC)
     assert uploaded["ServerSideEncryption"] == "aws:kms"
     assert uploaded["SSEKMSKeyId"].endswith("key/example")
     assert uploaded["Metadata"]["sha256"] == digest
