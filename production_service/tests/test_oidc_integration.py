@@ -25,26 +25,31 @@ ADMIN_DATABASE_URL = os.getenv("PACA_TEST_ADMIN_DATABASE_URL", "")
 OPA_URL = os.getenv("PACA_TEST_OPA_URL", "http://127.0.0.1:8181").rstrip("/")
 POLICY_REVISION = "paca-dev-2026-10-23"
 CLIENT_ID = "paca-api"
-USERNAME = "paca-e2e-user"
-PASSWORD = "paca-e2e-only-password"
+CLIENT_ID = "paca-e2e-client"
+CLIENT_SECRET = "paca-e2e-only-client-secret"
+OTHER_CLIENT_ID = "paca-other-e2e-client"
+OTHER_CLIENT_SECRET = "paca-other-e2e-only-client-secret"
+WRONG_AUDIENCE_CLIENT_ID = "wrong-audience-client"
+WRONG_AUDIENCE_CLIENT_SECRET = "wrong-audience-only-client-secret"
+API_AUDIENCE = "paca-api"
 
 
-def _password_token(token_endpoint: str, client_id: str, username: str) -> str:
+def _client_credentials_token(
+    token_endpoint: str, client_id: str, client_secret: str
+) -> str:
     response = httpx.post(
         token_endpoint,
         data={
-            "grant_type": "password",
+            "grant_type": "client_credentials",
             "client_id": client_id,
-            "username": username,
-            "password": PASSWORD,
-            "scope": "openid",
+            "client_secret": client_secret,
         },
         timeout=10.0,
         follow_redirects=False,
         trust_env=False,
     )
     assert response.status_code == 200, (
-        f"OIDC token endpoint rejected the integration test client/user: "
+        f"OIDC token endpoint rejected the integration test service client: "
         f"HTTP {response.status_code}: {response.text}"
     )
     token = response.json().get("access_token")
@@ -79,10 +84,10 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
     assert isinstance(token_endpoint, str) and token_endpoint
     assert isinstance(jwks_uri, str) and jwks_uri
 
-    token = _password_token(token_endpoint, CLIENT_ID, USERNAME)
+    token = _client_credentials_token(token_endpoint, CLIENT_ID, CLIENT_SECRET)
     authenticator = JWTAuthenticator(
         issuer=metadata["issuer"],
-        audience=CLIENT_ID,
+        audience=API_AUDIENCE,
         jwks_url=jwks_uri,
         timeout_seconds=5.0,
     )
@@ -92,14 +97,14 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
     assert principal.subject
 
     # A real token from a different client audience must not authenticate to PACA.
-    wrong_audience_token = _password_token(
-        token_endpoint, "wrong-audience-client", USERNAME
+    wrong_audience_token = _client_credentials_token(
+        token_endpoint, WRONG_AUDIENCE_CLIENT_ID, WRONG_AUDIENCE_CLIENT_SECRET
     )
     with pytest.raises(AuthenticationError):
         authenticator.authenticate(wrong_audience_token)
 
-    other_tenant_token = _password_token(
-        token_endpoint, CLIENT_ID, "paca-other-user"
+    other_tenant_token = _client_credentials_token(
+        token_endpoint, OTHER_CLIENT_ID, OTHER_CLIENT_SECRET
     )
     other_principal = authenticator.authenticate(other_tenant_token)
     assert other_principal.tenant_id == "tenant-other"
@@ -153,7 +158,7 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
         opa_timeout_seconds=2.0,
         expected_policy_revision=POLICY_REVISION,
         jwt_issuer=metadata["issuer"],
-        jwt_audience=CLIENT_ID,
+        jwt_audience=API_AUDIENCE,
         jwt_jwks_url=jwks_uri,
         jwt_timeout_seconds=5.0,
         permit_ttl_seconds=30,
