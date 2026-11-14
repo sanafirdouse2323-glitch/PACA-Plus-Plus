@@ -291,3 +291,30 @@ def test_opa_and_api_static_bearer_tokens_must_be_distinct():
                 PACA_API_BEARER_TOKEN="shared-static-token",
             )
         )
+
+
+def test_settings_repr_does_not_expose_database_or_service_credentials():
+    routes = '{"document.update":{"method":"PATCH","path":"/v1/documents/{resource_id}","args_mode":"json"}}'
+    settings = Settings.from_env(
+        base_env(
+            PACA_DATABASE_URL="postgresql://paca_runtime:db-secret-not-for-repr@database:5432/paca",
+            PACA_TENANT_CONTEXT_HMAC_KEY="abcdef0123456789" * 4,
+            PACA_OPA_URL="https://opa.example.org",
+            PACA_OPA_OAUTH_TOKEN_URL="https://identity.example.org/oauth/token",
+            PACA_OPA_OAUTH_CLIENT_ID="paca-opa-client",
+            PACA_OPA_OAUTH_CLIENT_SECRET="opa-secret-not-for-repr",
+            PACA_API_BASE_URL="https://api.example.org",
+            PACA_API_ROUTES_JSON=routes,
+            PACA_API_OAUTH_TOKEN_URL="https://identity.example.org/oauth/token",
+            PACA_API_OAUTH_CLIENT_ID="paca-api-client",
+            PACA_API_OAUTH_CLIENT_SECRET="api-secret-not-for-repr",
+        )
+    )
+    rendered = repr(settings)
+    for secret in (
+        "db-secret-not-for-repr",
+        "abcdef0123456789" * 4,
+        "opa-secret-not-for-repr",
+        "api-secret-not-for-repr",
+    ):
+        assert secret not in rendered
