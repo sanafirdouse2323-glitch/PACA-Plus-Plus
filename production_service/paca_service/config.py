@@ -102,7 +102,6 @@ class Settings:
     jwt_token_use_claim: str = "token_use"
     jwt_expected_token_use: str = "access"
     opa_bearer_token: str | None = None
-    opa_bearer_token: str | None = None
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> Settings:
