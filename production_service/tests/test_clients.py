@@ -185,14 +185,15 @@ def test_authenticator_fails_with_service_unavailable_when_jwks_is_unreachable()
         auth.authenticate("a.valid-looking-but-unchecked.token")
 
 
-def opa_client(handler, expected="paca-dev-2026-10-23"):
+def opa_client(handler, expected="paca-dev-2026-10-23", base_url="http://opa:8181", bearer_token=None):
     client = httpx.Client(transport=httpx.MockTransport(handler))
     return OPAClient(
-        "http://opa:8181",
+        base_url,
         "/v1/data/paca/authz/decision",
         expected,
         timeout_seconds=1,
         client=client,
+        bearer_token=bearer_token,
     )
 
 
@@ -248,3 +249,30 @@ def test_authenticator_rejects_id_tokens_and_tokens_without_access_use_marker(rs
         auth.authenticate(signed_token(private, token_use="id"))
     with pytest.raises(AuthenticationError):
         auth.authenticate(signed_token(private, omit_claim="token_use"))
+
+
+def test_remote_opa_requires_token_and_sends_bearer_header():
+    with pytest.raises(ValueError, match="bearer token"):
+        OPAClient(
+            "https://opa.example.org",
+            "/v1/data/paca/authz/decision",
+            "paca-dev-2026-10-23",
+        )
+
+    observed = []
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.append(request.headers.get("authorization"))
+        return httpx.Response(
+            200,
+            json={"result": {"allow": False, "reason": "default_deny",
+                             "policy_revision": "paca-dev-2026-10-23"}},
+        )
+    client = opa_client(
+        handler,
+        base_url="https://opa.example.org",
+        bearer_token="opa-service-token",
+    )
+    decision = client.evaluate({"action": "document.read"})
+    assert decision.allowed is False
+    assert observed == ["Bearer opa-service-token"]
+    client.close()
