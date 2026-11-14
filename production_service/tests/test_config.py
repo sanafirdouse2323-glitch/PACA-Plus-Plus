@@ -241,3 +241,53 @@ def test_api_oauth_settings_require_configured_downstream_routes():
                 PACA_API_OAUTH_CLIENT_SECRET="secret",
             )
         )
+
+
+def test_opa_and_api_oauth_clients_must_have_distinct_client_ids():
+    routes = '{"document.update":{"method":"PATCH","path":"/v1/documents/{resource_id}","args_mode":"json"}}'
+    with pytest.raises(ConfigurationError, match="different client IDs"):
+        Settings.from_env(
+            base_env(
+                PACA_OPA_URL="https://opa.example.org",
+                PACA_OPA_OAUTH_TOKEN_URL="https://identity.example.org/token",
+                PACA_OPA_OAUTH_CLIENT_ID="shared-client",
+                PACA_OPA_OAUTH_CLIENT_SECRET="opa-secret",
+                PACA_API_BASE_URL="https://api.example.org",
+                PACA_API_ROUTES_JSON=routes,
+                PACA_API_OAUTH_TOKEN_URL="https://identity.example.org/token",
+                PACA_API_OAUTH_CLIENT_ID="shared-client",
+                PACA_API_OAUTH_CLIENT_SECRET="api-secret",
+            )
+        )
+
+
+def test_opa_and_api_oauth_clients_must_have_distinct_client_secrets():
+    routes = '{"document.update":{"method":"PATCH","path":"/v1/documents/{resource_id}","args_mode":"json"}}'
+    with pytest.raises(ConfigurationError, match="different client secrets"):
+        Settings.from_env(
+            base_env(
+                PACA_OPA_URL="https://opa.example.org",
+                PACA_OPA_OAUTH_TOKEN_URL="https://identity.example.org/token",
+                PACA_OPA_OAUTH_CLIENT_ID="paca-opa-client",
+                PACA_OPA_OAUTH_CLIENT_SECRET="shared-secret",
+                PACA_API_BASE_URL="https://api.example.org",
+                PACA_API_ROUTES_JSON=routes,
+                PACA_API_OAUTH_TOKEN_URL="https://identity.example.org/token",
+                PACA_API_OAUTH_CLIENT_ID="paca-api-client",
+                PACA_API_OAUTH_CLIENT_SECRET="shared-secret",
+            )
+        )
+
+
+def test_opa_and_api_static_bearer_tokens_must_be_distinct():
+    routes = '{"document.update":{"method":"PATCH","path":"/v1/documents/{resource_id}","args_mode":"json"}}'
+    with pytest.raises(ConfigurationError, match="static bearer tokens must be different"):
+        Settings.from_env(
+            base_env(
+                PACA_OPA_URL="https://opa.example.org",
+                PACA_OPA_BEARER_TOKEN="shared-static-token",
+                PACA_API_BASE_URL="https://api.example.org",
+                PACA_API_ROUTES_JSON=routes,
+                PACA_API_BEARER_TOKEN="shared-static-token",
+            )
+        )
