@@ -10,7 +10,14 @@ import json
 from typing import Any
 from urllib.parse import urlsplit
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    """Do not forward bearer credentials or effects across redirects."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 class PACARequestError(RuntimeError):
@@ -67,7 +74,8 @@ class PACAClient:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=self.timeout) as response:
+            opener = build_opener(_NoRedirectHandler)
+            with opener.open(request, timeout=self.timeout) as response:
                 raw = response.read(1_000_001)
                 if len(raw) > 1_000_000:
                     raise PACARequestError(response.status, "response_body_too_large")
