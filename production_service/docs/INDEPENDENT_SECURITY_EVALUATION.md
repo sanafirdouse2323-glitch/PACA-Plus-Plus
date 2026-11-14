@@ -2,13 +2,15 @@
 
 ## Status and evidence already collected
 
-The repository CI has one completed real-service integration benchmark run:
+The repository CI has one completed PR-event real-service integration benchmark run:
 
-- Workflow run: [43650763309](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus/actions/runs/43650763309)
-- Commit: 5d1190be41ad593b6beeada68db44f1ed2867529
-- Artifact: paca-real-service-security-benchmark
+- Workflow run: [43651201550](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus/actions/runs/43651201550)
+- PR branch head: `6cb749b4e91758114933f22f68bcb5800f665217`
+- Artifact: `paca-real-service-security-benchmark` (artifact ID `14136062846`)
 - Observed: 0 successful attacks in 8 attempted scenarios; 2/2 authorized tasks completed; 1/1 same-key replay check passed.
-- Combined request/task latency in this one run: p50 4.541 ms, p95 27.503 ms.
+- Combined request/task latency in this one run: p50 10.042 ms, p95 52.678 ms.
+- The artifact's `source_revision` is `9d81f73f144ca01fc73f9e6b6a7a941b6265c413`, GitHub's synthetic merge-ref commit for the `pull_request` event; `ci_run_id` is `43651201550`.
+
 
 The run exercised the repository's FastAPI authorization/effect gateway, signed tokens from a real Keycloak test container, a pinned OPA server, a PostgreSQL service container, the sandboxed file adapter, the host-side PACA client and a LangGraph StateGraph/ToolNode integration.
 
