@@ -43,23 +43,29 @@ The production service validates tokens from one configured OIDC issuer/audience
 | `prototype/` | Research prototype, legacy in-memory example, separate OPA/OIDC hardening path, agent boundaries/reference runtime and prototype stores | Same schema, same identity model or same RLS guarantees as production_service |
 | `compiler/` | Experimental parser/emitter for an explicitly limited policy subset | Complete ALFA/UCON+ support or semantic equivalence between ASP and Cedar |
 | `legacy_policy_engine/` | Preserved historical implementation | Supported production API or root-CI coverage unless explicitly wired into CI |
-| `agent/` | Mock/placeholder area | Real framework integration or proof that a host cannot bypass the guarded runtime |
+| `agent/` | Thin standard-library client for the production-service authorize/execute API, plus tests | A full LLM agent, framework adapter, or proof that all host effects use the gateway |\n| `archive/paca-plus-plus-new/` | Text snapshot and recovery notes from the separate newer repository | Current source, importable modules, runnable package, or evidence for this repository |
 
 A test result belongs to the component and exact commit that ran it. Never transfer a passing result from one component to another.
 
-## 4. Effect semantics and distributed-systems limit
+## 4. Separate successor repository and archival snapshot
+
+[\u200bPACA-Plus-Plus-New](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus-New) is a separate, provenance-focused LLM-agent reference-monitor project. Its in-process monitor, author-written simulation, optional AgentDojo integration and benchmark evidence are not the implementation or test suite of this repository's FastAPI/PostgreSQL service. Do not transfer feature claims, test results or benchmark numbers between the repositories.
+
+The `archive/paca-plus-plus-new/` directory in this repository is a text-only historical snapshot with recovery notes. It is not a working copy of the newer repository and must not be imported as application code. Use the standalone repository for its current source.
+
+## 5. Effect semantics and distributed-systems limit
 
 A local database transaction cannot atomically commit an arbitrary remote HTTP/API effect. PACA++ can create durable local permits, atomically claim local execution state, pass a stable execution idempotency key downstream, and record an uncertain outcome. It cannot guarantee exactly-once remote execution unless the downstream system supplies a compatible durable idempotency and reconciliation contract.
 
 For ambiguous timeouts, connection loss or process crashes, the safe state may be `unknown`. Do not automatically retry an effect whose completion is uncertain. Reconcile with the downstream system before deciding whether a retry is safe.
 
-## 5. AI-agent security boundary
+## 6. AI-agent security boundary
 
 The prototype reference runtime and boundary modules can constrain configured retrieval, tool invocation, inter-agent messages and output release. They do not understand every prompt injection, guarantee that all host paths are guarded, or make untrusted retrieved/tool content safe. A real deployment must integrate its actual model and tool adapters, authenticate the host/agent identity, bind tools and resources server-side, and ensure there is no alternate path to protected effects.
 
 The production-service gateway is an authorization/effect service; it is not by itself a full autonomous-agent runtime.
 
-## 6. Evidence standard
+## 7. Evidence standard
 
 Claims must be labelled by evidence type:
 
@@ -71,10 +77,10 @@ Claims must be labelled by evidence type:
 
 CI success alone does not establish comparative effectiveness, research novelty, production readiness, standards compliance or universal security.
 
-## 7. Required deployment gates
+## 8. Required deployment gates
 
 Before sensitive workloads: deployment-specific threat model and independent review; real OIDC/JWKS configuration and claim governance; separate secrets and database roles; backup/restore and migration rehearsal; private OPA with controlled policy rollout; TLS ingress and database verification; network/egress controls; rate/concurrency limits; monitoring and incident response; audit export to independently controlled storage; and downstream idempotency/reconciliation tests.
 
-## 8. Research evaluation required to substantiate effectiveness
+## 9. Research evaluation required to substantiate effectiveness
 
 Compare at least: (a) agent/application without PACA++; (b) a clearly specified conventional authorization baseline; and (c) PACA++ under the same agent, tools, policies and workloads. Report attack success rate, legitimate-task success/utility, false-denial rate, authorization bypasses, latency overhead, throughput, recovery correctness and resource consumption. Publish scenarios, seeds, configurations, raw results and analysis. Do not claim superiority until the comparison is completed and independently reproducible.
