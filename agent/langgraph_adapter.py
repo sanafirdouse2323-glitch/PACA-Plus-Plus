@@ -9,7 +9,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.tools import StructuredTool
@@ -86,7 +86,7 @@ class PACAOperation:
 
 
 class _AgentState(TypedDict):
-    messages: list[BaseMessage]
+    messages: Annotated[list[BaseMessage], add_messages]
 
 
 def derive_idempotency_key(thread_id: str, tool_call_id: str) -> str:
@@ -130,7 +130,12 @@ def build_paca_tools(
     for operation in operations:
         runtime_schema = _runtime_args_schema(operation)
 
-        def invoke(runtime: ToolRuntime, **raw_arguments: Any) -> str:
+        def invoke(
+            runtime: ToolRuntime,
+            _operation: PACAOperation = operation,
+            **raw_arguments: Any,
+        ) -> str:
+            operation = _operation
             if not isinstance(runtime, ToolRuntime):
                 raise PACAFrameworkError("langgraph_tool_runtime_missing")
             if not isinstance(runtime.config, dict):
