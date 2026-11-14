@@ -309,14 +309,13 @@ class Settings:
 
         # OPA and downstream APIs are separate service identities. Refuse
         # accidental credential reuse rather than relying only on documentation.
-        if opa_oauth_resource and api_oauth_resource:
-            if hmac.compare_digest(
-                opa_oauth_resource.encode("utf-8"),
-                api_oauth_resource.encode("utf-8"),
-            ):
-                raise ConfigurationError(
-                    "OPA and downstream API OAuth resource indicators must be different."
-                )
+        if opa_oauth_resource and api_oauth_resource and hmac.compare_digest(
+            opa_oauth_resource.encode("utf-8"),
+            api_oauth_resource.encode("utf-8"),
+        ):
+            raise ConfigurationError(
+                "OPA and downstream API OAuth resource indicators must be different."
+            )
         if opa_oauth_client_id and api_oauth_client_id:
             if opa_oauth_client_id == api_oauth_client_id:
                 raise ConfigurationError(

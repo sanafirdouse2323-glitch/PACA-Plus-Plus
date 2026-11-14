@@ -1,7 +1,7 @@
 package system.authz_test
 
 import rego.v1
-import data.system.authz
+import data.system.authz as authz
 
 mock_verify(token, constraints) := [true, {"typ": "at+JWT"}, {
     "client_id": "paca-opa-client",
@@ -16,7 +16,7 @@ mock_verify(token, constraints) := [true, {"typ": "at+JWT"}, {
 mock_verify(_, _) := [false, {}, {}]
 
 test_allows_only_valid_jwt_for_decision_endpoint if {
-    system.authz.allow
+    authz.allow
         with input as {
             "identity": "valid-token",
             "method": "POST",
