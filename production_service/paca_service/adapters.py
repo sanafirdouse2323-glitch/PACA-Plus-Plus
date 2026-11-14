@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -82,11 +83,23 @@ class HttpAPIAdapter(ExecutionAdapter):
         if parts.scheme not in {"http", "https"} or not parts.hostname:
             raise ValueError("upstream_base_url_must_be_absolute_http_url")
         if parts.username or parts.password or parts.query or parts.fragment:
-            raise ValueError("upstream_base_url_must_not_contain_credentials_or_query")
+            raise ValueError("upstream_base_url_must_not_contain_credentials_query_or_fragment")
+        host = parts.hostname.lower().rstrip(".")
+        if parts.scheme == "http":
+            try:
+                loopback = ipaddress.ip_address(host).is_loopback
+            except ValueError:
+                loopback = host == "localhost"
+            if not loopback:
+                raise ValueError("https_required_for_non_loopback_upstreams")
+        if not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool) or timeout_seconds <= 0:
+            raise ValueError("upstream_timeout_must_be_positive")
+        if not isinstance(max_response_bytes, int) or isinstance(max_response_bytes, bool) or max_response_bytes < 1:
+            raise ValueError("max_response_bytes_must_be_positive")
         self.base_url = base_url.rstrip("/")
         self.bearer_token = bearer_token
         self.max_response_bytes = max_response_bytes
-        self._routes: dict[str, dict[str, str]] = {}
+        self._routes: dict[str, dict[str, Any]] = {}
         for action, raw in routes.items():
             if not self._ACTION_RE.fullmatch(action):
                 raise ValueError("invalid_upstream_action")
@@ -109,7 +122,23 @@ class HttpAPIAdapter(ExecutionAdapter):
                 raise ValueError(f"invalid_args_mode_for_{action}")
             if method != "GET" and args_mode == "query":
                 raise ValueError(f"mutating_route_cannot_use_query_arguments_for_{action}")
-            self._routes[action] = {"method": method, "path": path, "args_mode": args_mode}
+            # An upstream status is a definitive no-effect rejection only when
+            # that upstream's documented contract explicitly guarantees it.
+            # By default every non-2xx result is ambiguous and must be reconciled.
+            no_effect_statuses = raw.get("effect_not_applied_statuses", [])
+            if (
+                not isinstance(no_effect_statuses, list)
+                or any(type(status) is not int or status < 400 or status > 499
+                       for status in no_effect_statuses)
+                or len(set(no_effect_statuses)) != len(no_effect_statuses)
+            ):
+                raise ValueError(f"effect_not_applied_statuses_must_be_unique_4xx_codes_for_{action}")
+            self._routes[action] = {
+                "method": method,
+                "path": path,
+                "args_mode": args_mode,
+                "effect_not_applied_statuses": frozenset(no_effect_statuses),
+            }
         self.client = client or httpx.Client(
             timeout=httpx.Timeout(timeout_seconds),
             follow_redirects=False,
@@ -141,13 +170,15 @@ class HttpAPIAdapter(ExecutionAdapter):
 
         try:
             with self.client.stream(route["method"], url, **kwargs) as response:
-                if response.status_code >= 500:
-                    raise EffectOutcomeUnknown("upstream_server_outcome_unknown")
-                if response.status_code >= 400:
-                    # This assumes the upstream's 4xx contract means the operation was not applied.
-                    raise EffectRejected("upstream_rejected", status_code=response.status_code)
                 if not 200 <= response.status_code < 300:
-                    raise EffectOutcomeUnknown("upstream_non_success_response")
+                    if response.status_code in route["effect_not_applied_statuses"]:
+                        raise EffectRejected(
+                            "upstream_rejected_with_documented_no_effect_status",
+                            status_code=response.status_code,
+                        )
+                    # Do not assume a 4xx or 5xx proves that a remote effect did
+                    # not happen. Gateways and applications can fail after commit.
+                    raise EffectOutcomeUnknown("upstream_non_success_outcome_unknown")
 
                 summary: dict[str, Any] = {"status_code": response.status_code}
                 content_type = response.headers.get("content-type", "").lower()
