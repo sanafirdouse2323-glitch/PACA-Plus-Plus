@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import Annotated, Any, TypedDict
 from uuid import UUID
+from uuid import UUID
 
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.runnables import RunnableConfig
@@ -26,7 +27,6 @@ from .paca_client import PACARequestError
 
 _TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _ACTION_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
-_JOURNAL_NAMESPACE = "paca_execution_journal_v1"
 
 
 class PACAFrameworkError(RuntimeError):

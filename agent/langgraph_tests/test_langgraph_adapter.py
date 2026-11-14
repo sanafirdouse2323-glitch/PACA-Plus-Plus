@@ -17,6 +17,7 @@ from agent.langgraph_adapter import (
     build_paca_langgraph_agent,
 )
 from agent.paca_client import PACARequestError
+from agent.operation_ledger import InMemoryOperationLedger, OperationInProgress
 
 PERMIT_ID = "00000000-0000-0000-0000-000000000123"
 
@@ -72,13 +73,14 @@ def operation():
     )
 
 
-def build_graph(model, client, *, checkpointer=None, store=None):
+def build_graph(model, client, *, checkpointer=None, store=None, operation_ledger=None):
     return build_paca_langgraph_agent(
         model=model,
         paca_client=client,
         operations=[operation()],
         checkpointer=checkpointer or InMemorySaver(),
         store=store or InMemoryStore(),
+        operation_ledger=operation_ledger or InMemoryOperationLedger(),
     )
 
 
@@ -201,7 +203,8 @@ def test_journal_rejects_a_replayed_tool_call_with_changed_arguments():
     client = FakePACAClient()
     model = FakeModel([tool_call(), AIMessage(content="done")])
     store = InMemoryStore()
-    graph = build_graph(model, client, store=store)
+    ledger = InMemoryOperationLedger()
+    graph = build_graph(model, client, store=store, operation_ledger=ledger)
     config = {"configurable": {"thread_id": "journal-conflict-thread"}}
 
     result = graph.invoke({"messages": [HumanMessage(content="Read report-1.")]}, config)
@@ -210,10 +213,60 @@ def test_journal_rejects_a_replayed_tool_call_with_changed_arguments():
     # A second graph/model proposing the same call ID with changed args is not a
     # new action: the persistent journal rejects the mismatch before gateway I/O.
     changed_model = FakeModel([tool_call(args={"resource_id": "report-2", "format": "text"})])
-    changed_graph = build_graph(changed_model, client, store=store)
+    changed_graph = build_graph(changed_model, client, store=store, operation_ledger=ledger)
     with pytest.raises(PACAFrameworkError, match="paca_execution_journal_conflict"):
         changed_graph.invoke(
             {"messages": [HumanMessage(content="Different operation.")]}, config
         )
     assert len(client.authorizations) == 1
     assert len(client.executions) == 1
+
+
+
+def test_in_memory_operation_ledger_serializes_concurrent_effect_claims():
+    ledger = InMemoryOperationLedger()
+    idem_key = "lg-" + "b" * 64
+    ledger.save_authorization(
+        thread_id="same-thread",
+        tool_call_id="same-call",
+        tool_name="read_document",
+        action="file.read",
+        request_fingerprint="a" * 64,
+        permit_id=PERMIT_ID,
+        idempotency_key=idem_key,
+    )
+    claim = ledger.claim_execution(
+        thread_id="same-thread",
+        tool_call_id="same-call",
+        tool_name="read_document",
+        action="file.read",
+        request_fingerprint="a" * 64,
+        idempotency_key=idem_key,
+    )
+    with pytest.raises(OperationInProgress, match="paca_operation_in_progress"):
+        ledger.claim_execution(
+            thread_id="same-thread",
+            tool_call_id="same-call",
+            tool_name="read_document",
+            action="file.read",
+            request_fingerprint="a" * 64,
+            idempotency_key=idem_key,
+        )
+    ledger.complete_execution(
+        thread_id="same-thread",
+        tool_call_id="same-call",
+        claim_token=claim.token,
+        status="succeeded",
+        result={"execution_id": "execution-1", "status": "succeeded"},
+        execution_id="execution-1",
+    )
+    replay = ledger.claim_execution(
+        thread_id="same-thread",
+        tool_call_id="same-call",
+        tool_name="read_document",
+        action="file.read",
+        request_fingerprint="a" * 64,
+        idempotency_key=idem_key,
+    )
+    assert replay.token is None
+    assert replay.record.status == "succeeded"

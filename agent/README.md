@@ -92,13 +92,13 @@ Install the pinned integration dependencies from the repository root:
 python -m pip install -r agent/requirements-langgraph.txt
 ```
 
-The adapter requires **both** a LangGraph checkpointer and a persistent LangGraph
-`BaseStore`. The checkpointer preserves graph state; the separate store records the
-issued PACA permit ID and stable idempotency key **before the first execution request**.
-When LangGraph resumes a failed tool node, the adapter reuses that exact permit/key.
-Without the journal, a resumed tool node could request a new permit after an uncertain
-execution attempt. The journal rejects a replay that reuses the same thread/tool-call ID
-with changed action or arguments.
+The adapter requires three independent persistence components:
+
+- A durable LangGraph checkpointer preserves graph state and unfinished tool calls.
+- A durable LangGraph `BaseStore` is provided to the graph for framework-level storage. It is **not** the protected-operation journal and its get/put calls are not treated as transactional.
+- A `PostgresOperationLedger` stores the request fingerprint, PACA permit ID, stable idempotency key, lease and terminal execution outcome in a dedicated PostgreSQL schema. Its primary key is a hash of the LangGraph thread/tool-call identity. A transaction and short lease serialize concurrent workers for the same protected operation.
+
+Apply `agent/migrations/0001-operation-ledger.sql` with a migration role in the dedicated LangGraph persistence database. Give the runtime role only `USAGE` on `paca_langgraph` and `SELECT, INSERT, UPDATE` on `paca_langgraph.execution_journal`. Do not use the PACA service database or grant the agent access to `paca_private`. The runtime role must not own the schema or table in production.
 
 Example wiring (the model object is supplied by the host's chosen provider package):
 
@@ -139,22 +139,28 @@ operation = PACAOperation(
 )
 
 database_url = os.environ["LANGGRAPH_DATABASE_URL"]
-with PostgresSaver.from_conn_string(database_url) as checkpointer:
-    checkpointer.setup()
-    with PostgresStore.from_conn_string(database_url) as store:
-        store.setup()
-        graph = build_paca_langgraph_agent(
-            model=model,
-            paca_client=paca,
-            operations=[operation],
-            checkpointer=checkpointer,
-            store=store,
-        )
-        config = {"configurable": {"thread_id": "stable-host-generated-thread-id"}}
-        result = graph.invoke(
-            {"messages": [HumanMessage(content="Read the approved report.")]},
-            config,
-        )
+operation_ledger = PostgresOperationLedger(database_url, claim_ttl_seconds=120)
+operation_ledger.open()
+try:
+    with PostgresSaver.from_conn_string(database_url) as checkpointer:
+        checkpointer.setup()
+        with PostgresStore.from_conn_string(database_url) as store:
+            store.setup()
+            graph = build_paca_langgraph_agent(
+                model=model,
+                paca_client=paca,
+                operations=[operation],
+                checkpointer=checkpointer,
+                store=store,
+                operation_ledger=operation_ledger,
+            )
+            config = {"configurable": {"thread_id": "stable-host-generated-thread-id"}}
+            result = graph.invoke(
+                {"messages": [HumanMessage(content="Read the approved report.")]},
+                config,
+            )
+finally:
+    operation_ledger.close()
 ```
 
 Important deployment constraints:
@@ -162,15 +168,17 @@ Important deployment constraints:
 - Use a dedicated, access-controlled LangGraph persistence database and least-privilege database role. Do not reuse the PACA++ production-service database credentials or grant the LangGraph worker access to PACA's private signing-key schema.
 - Run Postgres saver/store schema setup through a reviewed migration role. Follow the installed package's security guidance for checkpoint deserialization; do not load untrusted checkpoint data with permissive deserialization.
 - Use a durable Postgres-backed checkpointer and store in deployment. `InMemorySaver` and `InMemoryStore` are used only by tests and local experiments.
-- Serialize active graph invocations for each `thread_id`. The LangGraph `BaseStore` get/put interface used by this journal is not a cross-process compare-and-set lock.
+- The PostgreSQL operation ledger grants one worker a short lease for an authorized operation. Set its lease longer than the PACA gateway request timeout and expected call duration. If a worker crashes, the lease expires; a subsequent attempt reuses the original permit and idempotency key. The gateway must enforce idempotency for this recovery to be safe.
 - If a tool call errors after the execution request, resume the same unfinished graph thread with `graph.invoke(None, config)`, not a fresh user input. The journal reuses the same permit and idempotency key. For an unknown outcome, reconcile the execution with the gateway/downstream system; do not create a new tool call or idempotency key for the same effect.
 - Do not add raw side-effecting tools to the model or `ToolNode`, and do not create other host code paths that call downstream effects directly. Network egress and downstream authorization controls are still needed to stop bypasses outside this graph.
 - `PACAClient` currently uses a caller-supplied access token. Token acquisition/refresh, sender-constrained tokens, and revocation are Stage 3 work, not implemented by this adapter.
 
 The automated tests execute a real LangGraph `StateGraph` and `ToolNode` with a deterministic
 fake chat model and a test gateway client. They verify registered calls, rejection of an
-unregistered tool, rejection of model-supplied extra action fields, and replay after a lost
-execution response using the same permit and idempotency key. This validates the graph
-adapter's action path; it does not prove that every side effect in an arbitrary host
-application or deployed environment is routed through PACA++. That requires integration
-and egress/bypass testing in the actual host application.
+unregistered tool, rejection of model-supplied extra action fields, permit/key reuse after
+a lost response, PostgreSQL uniqueness and worker leases, and process reconstruction using
+the PostgreSQL checkpointer, store and operation ledger. The persistence test exercises a
+real PostgreSQL instance in CI; its model and PACA gateway client remain deterministic test
+doubles. It does not prove that every side effect in an arbitrary host application or
+deployed environment is routed through PACA++. That requires host-specific OS/network
+isolation and independent bypass testing.
