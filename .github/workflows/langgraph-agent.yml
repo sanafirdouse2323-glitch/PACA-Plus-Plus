@@ -58,6 +58,8 @@ jobs:
       - name: Compile the agent package
         run: python -m compileall -q agent
       - name: Lint the adapter, ledger and tests
-        run: python -m ruff check agent/langgraph_adapter.py agent/operation_ledger.py agent/langgraph_tests
+        run: python -m ruff check agent/langgraph_adapter.py agent/operation_ledger.py agent/langgraph_tests agent/security_harness
       - name: Run LangGraph and PostgreSQL persistence integration tests
         run: python -m pytest agent/langgraph_tests -q
+      - name: Run containerized filesystem, database and API bypass isolation checks
+        run: bash agent/security_harness/run.sh

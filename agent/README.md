@@ -182,3 +182,16 @@ real PostgreSQL instance in CI; its model and PACA gateway client remain determi
 doubles. It does not prove that every side effect in an arbitrary host application or
 deployed environment is routed through PACA++. That requires host-specific OS/network
 isolation and independent bypass testing.
+
+
+## Containerized host-bypass isolation harness
+
+Run the reproducible Linux/Docker boundary test from the repository root:
+
+```sh
+bash agent/security_harness/run.sh
+```
+
+The harness creates two isolated internal Docker networks. The agent container is attached only to the gateway network; the mock PACA gateway is attached to both networks; and the protected PostgreSQL and downstream API services are attached only to the backend network. The protected test file is mounted into the gateway container, not the agent container. The agent runs as a non-root UID with a read-only root filesystem, dropped Linux capabilities, no-new-privileges, and no external network egress. The script creates a short-lived test-only TLS certificate so the agent uses the real `PACAClient` over verified HTTPS.
+
+The probe asserts that direct protected-file reads, root-filesystem writes, database connections, downstream API connections and arbitrary internet egress are blocked, while the PACA authorize/execute path remains reachable. The gateway, database and API in this harness are test services—not the production gateway or production host. This is evidence that the declared Docker topology enforces those specific boundaries; it does not certify a deployment, prove every host kernel/runtime configuration, or replace testing the actual host application's mounts, credentials, firewall and orchestration policies. Never reuse the harness certificate or token in a real deployment.

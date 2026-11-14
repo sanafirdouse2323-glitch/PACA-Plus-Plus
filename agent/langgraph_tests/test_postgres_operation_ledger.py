@@ -244,14 +244,14 @@ def test_postgres_checkpointer_and_operation_ledger_survive_process_reconstructi
             PostgresStore.from_conn_string(DATABASE_URL) as store,
         ):
             graph = build_paca_langgraph_agent(
-                    model=FakeModel([AIMessage(content="Recovered after restart.")]),
-                    paca_client=RestartedProcessClient(),
-                    operations=[operation()],
-                    checkpointer=checkpointer,
-                    store=store,
-                    operation_ledger=restarted_ledger,
-                )
-                result = graph.invoke(None, config)
+                model=FakeModel([AIMessage(content="Recovered after restart.")]),
+                paca_client=RestartedProcessClient(),
+                operations=[operation()],
+                checkpointer=checkpointer,
+                store=store,
+                operation_ledger=restarted_ledger,
+            )
+            result = graph.invoke(None, config)
     finally:
         restarted_ledger.close()
 
