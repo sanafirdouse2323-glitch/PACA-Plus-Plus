@@ -150,3 +150,171 @@ def test_loopback_downstream_route_can_use_local_development_without_service_tok
     )
     assert settings.api_base_url == "http://127.0.0.1:9010"
     assert settings.api_bearer_token is None
+
+
+
+def test_remote_opa_accepts_oauth_client_credentials_instead_of_static_token():
+    settings = Settings.from_env(
+        base_env(
+            PACA_OPA_URL="https://opa.example.org:8181",
+            PACA_OPA_OAUTH_TOKEN_URL="https://identity.example.org/oauth/token",
+            PACA_OPA_OAUTH_CLIENT_ID="paca-opa-client",
+            PACA_OPA_OAUTH_CLIENT_SECRET="opa-secret",
+            PACA_OPA_OAUTH_SCOPE="opa.decide",
+        )
+    )
+    assert settings.opa_bearer_token is None
+    assert settings.opa_oauth_token_url == "https://identity.example.org/oauth/token"
+    assert settings.opa_oauth_client_id == "paca-opa-client"
+    assert settings.opa_oauth_client_secret == "opa-secret"
+    assert settings.opa_oauth_scope == "opa.decide"
+
+
+def test_remote_downstream_route_accepts_independent_oauth_client_credentials():
+    routes = '{"document.update":{"method":"PATCH","path":"/v1/documents/{resource_id}","args_mode":"json"}}'
+    settings = Settings.from_env(
+        base_env(
+            PACA_API_BASE_URL="https://api.example.org",
+            PACA_API_ROUTES_JSON=routes,
+            PACA_API_OAUTH_TOKEN_URL="https://identity.example.org/oauth/token",
+            PACA_API_OAUTH_CLIENT_ID="paca-api-client",
+            PACA_API_OAUTH_CLIENT_SECRET="api-secret",
+            PACA_API_OAUTH_SCOPE="documents.write",
+        )
+    )
+    assert settings.api_bearer_token is None
+    assert settings.api_oauth_token_url == "https://identity.example.org/oauth/token"
+    assert settings.api_oauth_client_id == "paca-api-client"
+    assert settings.api_oauth_client_secret == "api-secret"
+    assert settings.api_oauth_scope == "documents.write"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"PACA_OPA_OAUTH_TOKEN_URL": "https://identity.example.org/token"},
+        {"PACA_OPA_OAUTH_CLIENT_ID": "paca-client"},
+        {"PACA_OPA_OAUTH_CLIENT_SECRET": "secret"},
+    ],
+)
+def test_partial_opa_oauth_configuration_is_rejected(overrides):
+    with pytest.raises(ConfigurationError, match="must be configured together"):
+        Settings.from_env(
+            base_env(
+                PACA_OPA_URL="https://opa.example.org",
+                **overrides,
+            )
+        )
+
+
+def test_static_opa_token_and_oauth_credentials_cannot_be_combined():
+    with pytest.raises(ConfigurationError, match="mutually exclusive"):
+        Settings.from_env(
+            base_env(
+                PACA_OPA_URL="https://opa.example.org",
+                PACA_OPA_BEARER_TOKEN="static-token",
+                PACA_OPA_OAUTH_TOKEN_URL="https://identity.example.org/token",
+                PACA_OPA_OAUTH_CLIENT_ID="paca-opa",
+                PACA_OPA_OAUTH_CLIENT_SECRET="secret",
+            )
+        )
+
+
+def test_remote_oauth_token_endpoint_requires_https():
+    with pytest.raises(ConfigurationError, match="HTTPS"):
+        Settings.from_env(
+            base_env(
+                PACA_OPA_URL="https://opa.example.org",
+                PACA_OPA_OAUTH_TOKEN_URL="http://identity.example.org/token",
+                PACA_OPA_OAUTH_CLIENT_ID="paca-opa",
+                PACA_OPA_OAUTH_CLIENT_SECRET="secret",
+            )
+        )
+
+
+def test_api_oauth_settings_require_configured_downstream_routes():
+    with pytest.raises(ConfigurationError, match="require PACA_API_BASE_URL"):
+        Settings.from_env(
+            base_env(
+                PACA_API_OAUTH_TOKEN_URL="https://identity.example.org/token",
+                PACA_API_OAUTH_CLIENT_ID="paca-api",
+                PACA_API_OAUTH_CLIENT_SECRET="secret",
+            )
+        )
+
+
+def test_opa_and_api_oauth_clients_must_have_distinct_client_ids():
+    routes = '{"document.update":{"method":"PATCH","path":"/v1/documents/{resource_id}","args_mode":"json"}}'
+    with pytest.raises(ConfigurationError, match="different client IDs"):
+        Settings.from_env(
+            base_env(
+                PACA_OPA_URL="https://opa.example.org",
+                PACA_OPA_OAUTH_TOKEN_URL="https://identity.example.org/token",
+                PACA_OPA_OAUTH_CLIENT_ID="shared-client",
+                PACA_OPA_OAUTH_CLIENT_SECRET="opa-secret",
+                PACA_API_BASE_URL="https://api.example.org",
+                PACA_API_ROUTES_JSON=routes,
+                PACA_API_OAUTH_TOKEN_URL="https://identity.example.org/token",
+                PACA_API_OAUTH_CLIENT_ID="shared-client",
+                PACA_API_OAUTH_CLIENT_SECRET="api-secret",
+            )
+        )
+
+
+def test_opa_and_api_oauth_clients_must_have_distinct_client_secrets():
+    routes = '{"document.update":{"method":"PATCH","path":"/v1/documents/{resource_id}","args_mode":"json"}}'
+    with pytest.raises(ConfigurationError, match="different client secrets"):
+        Settings.from_env(
+            base_env(
+                PACA_OPA_URL="https://opa.example.org",
+                PACA_OPA_OAUTH_TOKEN_URL="https://identity.example.org/token",
+                PACA_OPA_OAUTH_CLIENT_ID="paca-opa-client",
+                PACA_OPA_OAUTH_CLIENT_SECRET="shared-secret",
+                PACA_API_BASE_URL="https://api.example.org",
+                PACA_API_ROUTES_JSON=routes,
+                PACA_API_OAUTH_TOKEN_URL="https://identity.example.org/token",
+                PACA_API_OAUTH_CLIENT_ID="paca-api-client",
+                PACA_API_OAUTH_CLIENT_SECRET="shared-secret",
+            )
+        )
+
+
+def test_opa_and_api_static_bearer_tokens_must_be_distinct():
+    routes = '{"document.update":{"method":"PATCH","path":"/v1/documents/{resource_id}","args_mode":"json"}}'
+    with pytest.raises(ConfigurationError, match="static bearer tokens must be different"):
+        Settings.from_env(
+            base_env(
+                PACA_OPA_URL="https://opa.example.org",
+                PACA_OPA_BEARER_TOKEN="shared-static-token",
+                PACA_API_BASE_URL="https://api.example.org",
+                PACA_API_ROUTES_JSON=routes,
+                PACA_API_BEARER_TOKEN="shared-static-token",
+            )
+        )
+
+
+def test_settings_repr_does_not_expose_database_or_service_credentials():
+    routes = '{"document.update":{"method":"PATCH","path":"/v1/documents/{resource_id}","args_mode":"json"}}'
+    settings = Settings.from_env(
+        base_env(
+            PACA_DATABASE_URL="postgresql://paca_runtime:db-secret-not-for-repr@database:5432/paca",
+            PACA_TENANT_CONTEXT_HMAC_KEY="abcdef0123456789" * 4,
+            PACA_OPA_URL="https://opa.example.org",
+            PACA_OPA_OAUTH_TOKEN_URL="https://identity.example.org/oauth/token",
+            PACA_OPA_OAUTH_CLIENT_ID="paca-opa-client",
+            PACA_OPA_OAUTH_CLIENT_SECRET="opa-secret-not-for-repr",
+            PACA_API_BASE_URL="https://api.example.org",
+            PACA_API_ROUTES_JSON=routes,
+            PACA_API_OAUTH_TOKEN_URL="https://identity.example.org/oauth/token",
+            PACA_API_OAUTH_CLIENT_ID="paca-api-client",
+            PACA_API_OAUTH_CLIENT_SECRET="api-secret-not-for-repr",
+        )
+    )
+    rendered = repr(settings)
+    for secret in (
+        "db-secret-not-for-repr",
+        "abcdef0123456789" * 4,
+        "opa-secret-not-for-repr",
+        "api-secret-not-for-repr",
+    ):
+        assert secret not in rendered
