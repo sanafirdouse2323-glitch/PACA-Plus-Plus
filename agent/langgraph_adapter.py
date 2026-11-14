@@ -199,6 +199,15 @@ def _load_or_create_permit(
     return permit_id, idempotency_key
 
 
+def _runtime_args_schema(operation: PACAOperation) -> type[BaseModel]:
+    """Include LangGraph's injected runtime for validation, but hide it from the model."""
+    return create_model(
+        f"{operation.args_schema.__name__}LangGraphRuntimeArgs",
+        __base__=operation.args_schema,
+        runtime=(ToolRuntime, Field(exclude=True, repr=False)),
+    )
+
+
 def build_paca_tools(
     paca_client: Any,
     operations: list[PACAOperation] | tuple[PACAOperation, ...],
