@@ -16,7 +16,7 @@ def test_client_performs_authorize_then_execute_with_same_operation_and_key():
             observed.append((self.path, self.headers.get("Authorization"),
                              self.headers.get("Idempotency-Key"), body))
             if self.path == "/v1/authorizations":
-                result = {"permit_id": "permit-123"}
+                result = {"permit_id": "00000000-0000-0000-0000-000000000123"}
             else:
                 result = {"execution_id": "exec-123", "status": "succeeded"}
             encoded = json.dumps(result).encode()
@@ -55,7 +55,7 @@ def test_client_performs_authorize_then_execute_with_same_operation_and_key():
     }
     assert observed[1][3] == {
         "action": "file.read", "resource_id": "report-1",
-        "arguments": {"format": "text"}, "permit_id": "permit-123"
+        "arguments": {"format": "text"}, "permit_id": "00000000-0000-0000-0000-000000000123"
     }
 
 
