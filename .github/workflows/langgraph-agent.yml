@@ -32,6 +32,10 @@ jobs:
           python -m pip install -r agent/requirements-langgraph.txt
       - name: Compile the agent package
         run: python -m compileall -q agent
+      - name: Apply and display exact Ruff import fixes for review
+        run: |
+          python -m ruff check --fix agent/langgraph_adapter.py agent/langgraph_tests || true
+          git diff -- agent/langgraph_adapter.py agent/langgraph_tests
       - name: Lint the adapter and tests
         run: python -m ruff check agent/langgraph_adapter.py agent/langgraph_tests
       - name: Run actual LangGraph adapter tests
