@@ -50,7 +50,11 @@ jobs:
       - name: Test host-side client and PACA++-guarded LangGraph tools
         run: python -m pytest agent/tests -q
       - name: Lint LangGraph adapter and integration tests
-        run: ruff check agent/langgraph_integration agent/tests/test_langgraph_integration.py production_service/tests/test_oidc_integration.py
+        run: |
+          ruff check agent/langgraph_integration agent/tests/test_langgraph_integration.py production_service/tests/test_oidc_integration.py || {
+            ruff check --diff agent/langgraph_integration agent/tests/test_langgraph_integration.py production_service/tests/test_oidc_integration.py || true
+            exit 1
+          }
       - name: Install PostgreSQL client
         run: |
           sudo apt-get update
