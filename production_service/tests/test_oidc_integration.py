@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
+from paca_service.benchmarks.security_benchmark import SecurityBenchmarkRecorder
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from pydantic import Field
@@ -29,7 +30,6 @@ from pydantic import Field
 from paca_service.adapters import AdapterRouter, SandboxedFileAdapter
 from paca_service.app import create_app
 from paca_service.auth import AuthenticationError, JWTAuthenticator
-from paca_service.benchmarks.security_benchmark import SecurityBenchmarkRecorder
 from paca_service.config import Settings
 from paca_service.opa import OPAClient
 from paca_service.store import PostgresStore
