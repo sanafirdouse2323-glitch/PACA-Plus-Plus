@@ -6,7 +6,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.store.memory import InMemoryStore
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from agent.langgraph_adapter import (
     PACAArgsModel,
@@ -141,7 +141,7 @@ def test_model_cannot_override_the_host_configured_paca_action():
     graph = build_graph(model, client)
     config = {"configurable": {"thread_id": "extra-argument-thread"}}
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         graph.invoke({"messages": [HumanMessage(content="Read a report.")]}, config)
 
     assert client.authorizations == []
