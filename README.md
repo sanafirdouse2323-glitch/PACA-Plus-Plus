@@ -11,6 +11,18 @@ Its primary scope is **authorization enforcement at the protected-action boundar
 - **Application area — AI-agent authorization:** the prototype provides reference boundaries and a model-vendor-neutral guarded runtime. A host must integrate its actual model and tool adapters and must not expose bypass paths.
 - **Not a complete IAM replacement:** the repository does not provide a full identity lifecycle, user provisioning/deprovisioning, enterprise directory administration, access certification, or a complete SSO/MFA product.
 
+## Market applications and customer needs
+
+The following are **target application areas and potential customer groups**, not claims of signed customers, validated demand, regulatory certification or complete product coverage.
+
+| Application area | Potential customers | Core need | PACA++ relevance and current boundary |
+|---|---|---|---|
+| **Enterprise access management and cross-application authorization** | Large enterprises, SaaS providers, IT departments and security teams | Apply consistent, reviewable access decisions across applications and services | PACA++ is aimed at the authorization-enforcement layer: applications can delegate policy decisions and protected-action checks to a shared authorization service. It is **not** a complete IAM platform: identity lifecycle, directory administration, provisioning, access certification and a full SSO/MFA suite are outside the repository's current scope. |
+| **Database security and multi-tenant isolation** | Cloud platforms, healthcare software providers, financial-technology services and multi-tenant SaaS providers | Prevent one tenant or customer from reading or changing another tenant's data | The production-service implementation includes a concrete PostgreSQL tenant-isolation design using row-level security (RLS) and a short-lived HMAC-signed tenant context verified inside PostgreSQL. This is a specific PostgreSQL capability, not a universal database-security product, and it does not by itself establish healthcare, financial-sector or other regulatory compliance. |
+| **Enterprise authorization for AI agents and distributed applications** | Organizations deploying autonomous AI agents and complex distributed applications | Ensure authorization and information-use restrictions are checked when an agent attempts a protected tool or service action | PACA++ focuses on binding authorization to the principal, tenant, action, resource, policy revision and trusted context at the protected-action boundary. This is an architectural direction and guarded integration foundation; real agent-framework/tool adapters, complete host-path coverage and independent attack-resistance evidence remain deployment and evaluation work. |
+
+These areas overlap but are not interchangeable: enterprise access management is the broader application context, PostgreSQL RLS is one implemented tenant-isolation capability, and AI-agent security is a protected-action use case. The potential-customer descriptions are positioning hypotheses; customer interviews, pilots and measured deployment results are needed to validate market demand.
+
 ## Repository architecture — keep the implementations distinct
 
 | Path | Role | Evidence and limits |
