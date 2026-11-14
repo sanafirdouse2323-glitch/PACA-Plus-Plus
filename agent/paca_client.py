@@ -67,7 +67,7 @@ class PACAClient:
                 loopback = host == "localhost"
             if not loopback:
                 raise ValueError("https_required_for_non_loopback_hosts")
-        if not isinstance(access_token, str) or not access_token or any(ch in access_token for ch in "\\r\\n"):
+        if not isinstance(access_token, str) or not access_token or any(ch in access_token for ch in "\r\n"):
             raise ValueError("invalid_access_token")
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
             raise ValueError("timeout_must_be_positive")
@@ -132,7 +132,7 @@ class PACAClient:
     ) -> dict[str, Any]:
         if not isinstance(action, str) or not _ACTION_RE.fullmatch(action):
             raise ValueError("invalid_action")
-        if not isinstance(resource_id, str) or not resource_id.strip() or "\\x00" in resource_id:
+        if not isinstance(resource_id, str) or not resource_id.strip() or "\x00" in resource_id:
             raise ValueError("invalid_resource_id")
         if not isinstance(arguments, dict):
             raise ValueError("arguments_must_be_an_object")
