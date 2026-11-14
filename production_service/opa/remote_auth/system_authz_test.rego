@@ -45,7 +45,6 @@ mock_decode_verify(token, constraints) := [true, {"typ": "at+JWT", "alg": "RS256
 
 mock_decode_verify(token, _) := [false, {}, {}] if token == "wrong-audience-token"
 
-mock_decode_verify(_, _) := [false, {}, {}]
 
 authz_data := {
     "jwks": {"keys": []},
