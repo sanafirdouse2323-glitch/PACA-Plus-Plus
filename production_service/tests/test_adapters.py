@@ -217,3 +217,76 @@ def test_http_adapter_stops_reading_when_upstream_response_exceeds_size_limit():
     assert result == {"status_code": 200, "response_body_omitted": "size_limit"}
     assert stream.chunks_yielded < 100
     adapter.close()
+
+
+def test_http_adapter_treats_4xx_as_unknown_unless_route_contract_proves_no_effect():
+    def bad_request(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": "bad request"})
+
+    adapter = HttpAPIAdapter(
+        "https://internal.example",
+        {"document.update": {"method": "PATCH", "path": "/v1/documents/{resource_id}", "args_mode": "json"}},
+        timeout_seconds=1,
+        client=httpx.Client(transport=httpx.MockTransport(bad_request)),
+    )
+    with pytest.raises(EffectOutcomeUnknown, match="upstream_non_success_outcome_unknown"):
+        adapter.execute(
+            request("document.update", "doc-1", {"name": "x"}, {"resource": {"kind": "document"}})
+        )
+    adapter.close()
+
+    # Only an explicit, reviewed upstream contract may classify a 4xx as
+    # proof that no effect was applied.
+    adapter = HttpAPIAdapter(
+        "https://internal.example",
+        {
+            "document.update": {
+                "method": "PATCH",
+                "path": "/v1/documents/{resource_id}",
+                "args_mode": "json",
+                "effect_not_applied_statuses": [400, 422],
+            }
+        },
+        timeout_seconds=1,
+        client=httpx.Client(transport=httpx.MockTransport(bad_request)),
+    )
+    with pytest.raises(EffectRejected, match="documented_no_effect_status") as error:
+        adapter.execute(
+            request("document.update", "doc-1", {"name": "x"}, {"resource": {"kind": "document"}})
+        )
+    assert error.value.status_code == 400
+    adapter.close()
+
+
+def test_http_adapter_rejects_unsafe_transport_and_bad_no_effect_contract():
+    routes = {
+        "document.read": {
+            "method": "GET", "path": "/v1/documents/{resource_id}", "args_mode": "query"
+        }
+    }
+    with pytest.raises(ValueError, match="https_required"):
+        HttpAPIAdapter("http://api.example", routes, timeout_seconds=1)
+    with pytest.raises(ValueError, match="timeout_must_be_positive"):
+        HttpAPIAdapter("https://api.example", routes, timeout_seconds=0)
+    with pytest.raises(ValueError, match="effect_not_applied_statuses"):
+        HttpAPIAdapter(
+            "https://api.example",
+            {
+                "document.update": {
+                    "method": "PATCH", "path": "/v1/documents/{resource_id}",
+                    "args_mode": "json", "effect_not_applied_statuses": [200, 422],
+                }
+            },
+            timeout_seconds=1,
+        )
+    with pytest.raises(ValueError, match="effect_not_applied_statuses"):
+        HttpAPIAdapter(
+            "https://api.example",
+            {
+                "document.update": {
+                    "method": "PATCH", "path": "/v1/documents/{resource_id}",
+                    "args_mode": "json", "effect_not_applied_statuses": [422, 422],
+                }
+            },
+            timeout_seconds=1,
+        )
