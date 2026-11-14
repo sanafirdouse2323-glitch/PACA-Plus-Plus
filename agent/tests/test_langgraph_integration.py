@@ -70,10 +70,10 @@ class FakePACAHandler(BaseHTTPRequestHandler):
 
 
 class LocalPACAService:
-    def __init__(self) -> None:
+    def __init__(self, *, next_execution_status: int = 200) -> None:
         FakePACAHandler.requests_seen = []
         FakePACAHandler.execution_statuses = []
-        FakePACAHandler.next_execution_status = 200
+        FakePACAHandler.next_execution_status = next_execution_status
         self.server = HTTPServer(("127.0.0.1", 0), FakePACAHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -197,7 +197,7 @@ def test_authorization_denial_stops_before_protected_execution(tmp_path: Path) -
 
 def test_unknown_execution_replay_reuses_same_permit_and_idempotency_key(tmp_path: Path) -> None:
     paca = LocalPACAService()
-    FakePACAHandler.next_execution_status = 503
+    paca = LocalPACAService(next_execution_status=503)
     model = ScriptedToolModel("read_document", "call-replay")
     ledger_path = tmp_path / "replay.sqlite3"
     try:
@@ -239,8 +239,7 @@ def test_unknown_execution_replay_reuses_same_permit_and_idempotency_key(tmp_pat
 
 
 def test_new_tool_call_cannot_duplicate_unresolved_action_in_same_thread(tmp_path: Path) -> None:
-    paca = LocalPACAService()
-    FakePACAHandler.next_execution_status = 503
+    paca = LocalPACAService(next_execution_status=503)
     ledger_path = tmp_path / "duplicate.sqlite3"
     try:
         graph, ledger = _build(
