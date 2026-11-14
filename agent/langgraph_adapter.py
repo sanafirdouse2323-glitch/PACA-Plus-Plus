@@ -9,6 +9,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from uuid import UUID
 from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage
@@ -20,7 +21,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, ToolRuntime
 from langgraph.store.base import BaseStore
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 _TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -159,8 +160,6 @@ def _load_or_create_permit(
             raise PACAFrameworkError("paca_execution_journal_conflict")
         permit_id = value["permit_id"]
         try:
-            from uuid import UUID
-
             permit_id = str(UUID(permit_id))
         except (ValueError, TypeError, AttributeError) as exc:
             raise PACAFrameworkError("paca_execution_journal_has_invalid_permit") from exc
@@ -178,8 +177,6 @@ def _load_or_create_permit(
     if not isinstance(permit_id, str):
         raise PACAFrameworkError("paca_authorization_response_missing_permit")
     try:
-        from uuid import UUID
-
         permit_id = str(UUID(permit_id))
     except (ValueError, TypeError, AttributeError) as exc:
         raise PACAFrameworkError("paca_authorization_response_invalid_permit") from exc
@@ -389,7 +386,3 @@ def build_paca_langgraph_agent(
     builder.add_conditional_edges("agent", route_after_model, {"tools": "tools", END: END})
     builder.add_edge("tools", "agent")
     return builder.compile(checkpointer=checkpointer, store=store)
-
-
-# Imported at the end to keep the gateway client dependency explicit and avoid
-# coupling LangGraph consumers to the production service package.
