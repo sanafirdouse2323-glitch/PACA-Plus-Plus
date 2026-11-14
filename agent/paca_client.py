@@ -5,8 +5,10 @@ The caller must supply an access token from the configured trusted identity prov
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 from typing import Any
+from urllib.parse import urlsplit
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -29,8 +31,19 @@ class PACAClient:
     """
 
     def __init__(self, base_url: str, access_token: str, timeout: float = 10.0):
-        if not base_url.startswith(("http://", "https://")):
+        parts = urlsplit(base_url)
+        if parts.scheme not in {"http", "https"} or not parts.hostname:
             raise ValueError("base_url_must_be_absolute_http_url")
+        if parts.username or parts.password or parts.query or parts.fragment:
+            raise ValueError("base_url_must_not_contain_credentials_query_or_fragment")
+        if parts.scheme == "http":
+            host = parts.hostname.lower()
+            try:
+                loopback = ipaddress.ip_address(host).is_loopback
+            except ValueError:
+                loopback = host == "localhost"
+            if not loopback:
+                raise ValueError("https_required_for_non_loopback_hosts")
         if not access_token or any(ch in access_token for ch in "\r\n"):
             raise ValueError("invalid_access_token")
         if timeout <= 0:
