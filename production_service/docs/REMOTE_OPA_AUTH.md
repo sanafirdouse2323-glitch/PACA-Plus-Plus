@@ -1,6 +1,6 @@
 # Remote OPA authentication and audience enforcement
 
-The PACA service's `OPAClient` sends its service credential in an HTTP Bearer header. That header alone does **not** authenticate a remote caller: the OPA server must enable authentication and authorization, and its `system.authz` policy must validate the token and restrict the API surface.
+The PACA service's `OPAClient` sends its service credential in an HTTP Bearer header. That header alone does **not** authenticate a remote caller: the OPA server must enable token authentication and API authorization, and its `system.authz` policy must validate the token and restrict the API surface.
 
 ## Required OPA-side controls
 
@@ -16,7 +16,7 @@ opa run --server \
   /srv/opa/bundle
 ```
 
-Do not expose a parallel unauthenticated HTTP listener. OPA's `system.authz` policy validates a JWT access token's RS256 signature against the provisioned JWKS, checks the exact issuer and audience, requires an access-token type, the configured service `client_id` and `opa.decide` scope, and permits only `POST /v1/data/paca/authz/decision`. All other requests are denied by default.
+Do not expose a parallel unauthenticated HTTP listener. OPA's `system.authz` policy validates the token extracted by OPA into `input.identity`: signature, RS256 algorithm, exact issuer and audience, `exp`/ `nbf` time validity, access-token type, client identity, subject and the `opa.decide` scope. It permits only `POST /v1/data/paca/authz/decision`. All other APIs are denied by default. OPA's authorization hook receives the authenticated bearer token in `input.identity`; it does not accept a JWT found only in the JSON request body.
 
 The bundle's `data.json` must include:
 
@@ -49,7 +49,7 @@ PACA_OPA_OAUTH_RESOURCE=https://opa.example.org/
 
 The OAuth client sends the RFC 8707 `resource` parameter to the token endpoint. The authorization server must be configured to issue a JWT access token whose `aud` matches the resource indicator; the OPA policy validates the actual signed token claims rather than trusting the request parameter. Configure a separate client ID, client secret, scope and resource indicator for downstream APIs (`PACA_API_OAUTH_*`).
 
-Use one resource indicator per token. The sample policy expects RFC 9068-style JWT access tokens with `typ=at+JWT` (or `application/at+JWT`), RS256, issuer, audience, `client_id`, `exp` and a space-delimited `scope` claim. Opaque access tokens and providers that do not issue this profile need a separately reviewed introspection-based policy; do not silently decode an unverified JWT or accept a missing audience.
+Use one resource indicator per token. This example expects an RFC 9068-style JWT access token with `typ=at+JWT` (or `application/at+JWT`), RS256, issuer, audience, `client_id`, `sub`, `iat`, `exp` and a space-delimited `scope` claim. Opaque access tokens and providers that do not issue this profile need a separately reviewed introspection-based policy; do not silently decode an unverified JWT or accept a missing audience.
 
 This example does not implement token introspection/revocation, DPoP, mTLS-bound OAuth tokens or automatic JWKS retrieval. TLS protects the OPA endpoint; the OAuth/JWT policy authenticates the caller. A static `PACA_OPA_BEARER_TOKEN` requires a separate administrator-managed static-token policy and is not validated by this JWT profile example.
 
@@ -60,4 +60,4 @@ opa test --bundle production_service/opa/remote_auth -v
 pytest production_service/tests/test_service_tokens.py production_service/tests/test_config.py -q
 ```
 
-The production-service CI also starts a real OPA server with `--authentication=token --authorization=basic` and exercises signed JWT acceptance, wrong-audience/client/scope rejection, default-deny API path restrictions and the PACA `OPAClient` over its actual HTTP endpoint. Its token endpoint is a deterministic test server; the customer's identity provider and production OPA deployment still require deployment-specific configuration and verification.
+The production-service CI starts a real OPA server with `--authentication=token --authorization=basic` over verified HTTPS. It exercises signed JWT acceptance, wrong-audience/client/scope rejection, default-deny API path restrictions and the PACA `OPAClient` over its actual HTTP endpoint. The token endpoint is a deterministic test fixture; the customer's identity provider and production OPA deployment still require deployment-specific configuration and verification.

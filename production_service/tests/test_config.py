@@ -357,7 +357,7 @@ def test_remote_oauth_credentials_require_a_resource_indicator():
 
 
 def test_oauth_resource_indicator_must_be_an_absolute_uri_without_fragment():
-    with pytest.raises(ConfigurationError, match="absolute resource URI"):
+    with pytest.raises(ConfigurationError, match="absolute HTTPS resource URI"):
         Settings.from_env(
             base_env(
                 PACA_OPA_URL="https://opa.example.org",

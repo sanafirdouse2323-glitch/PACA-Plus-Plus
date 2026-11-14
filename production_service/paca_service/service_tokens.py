@@ -83,7 +83,9 @@ class ClientCredentialsTokenProvider:
                 raise ValueError("oauth_resource_indicator_invalid")
             resource_parts = urlsplit(resource)
             if (
-                not resource_parts.scheme
+                resource_parts.scheme != "https"
+                or not resource_parts.hostname
+                or resource_parts.query
                 or resource_parts.fragment
                 or resource_parts.username
                 or resource_parts.password

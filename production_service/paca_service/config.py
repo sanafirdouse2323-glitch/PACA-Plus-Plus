@@ -131,13 +131,15 @@ def _oauth_client_configuration(
         resource_parts = urlsplit(raw_resource)
         if (
             any(ch.isspace() for ch in raw_resource)
-            or not resource_parts.scheme
+            or resource_parts.scheme != "https"
+            or not resource_parts.hostname
+            or resource_parts.query
             or resource_parts.fragment
             or resource_parts.username
             or resource_parts.password
         ):
             raise ConfigurationError(
-                f"{resource_name} must be an absolute resource URI without credentials or fragment."
+                f"{resource_name} must be an absolute HTTPS resource URI without credentials, query or fragment."
             )
         resource = raw_resource
     return token_url, raw_client_id, raw_client_secret, raw_scope or None, resource

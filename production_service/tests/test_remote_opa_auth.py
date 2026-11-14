@@ -4,11 +4,17 @@ import os
 from pathlib import Path
 
 import httpx
+import pytest
 
 from paca_service.opa import OPAClient
 from paca_service.service_tokens import ClientCredentialsTokenProvider
 
 DECISION_PATH = "/v1/data/paca/authz/decision"
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("PACA_RUN_REMOTE_OPA_AUTH_INTEGRATION") != "1",
+    reason="explicit authenticated remote OPA integration stage only",
+)
 OPA_RESOURCE = "https://opa.example.org/"
 
 
@@ -42,7 +48,7 @@ def test_remote_opa_authenticates_resource_bound_service_jwt_and_denies_bypasses
     wrong_client = (auth_dir / "wrong-client.jwt").read_text(encoding="utf-8").strip()
     wrong_scope = (auth_dir / "wrong-scope.jwt").read_text(encoding="utf-8").strip()
 
-    ca_file = os.environ["SSL_CERT_FILE"]
+    ca_file = os.environ["PACA_TEST_REMOTE_OPA_CA_FILE"]
     raw_client = httpx.Client(
         verify=ca_file,
         follow_redirects=False,

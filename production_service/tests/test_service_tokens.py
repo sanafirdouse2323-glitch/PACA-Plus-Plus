@@ -321,7 +321,14 @@ def test_oauth_resource_indicator_is_sent_as_rfc8707_form_parameter():
 
 @pytest.mark.parametrize(
     "resource",
-    ["", "not-a-uri", "https://opa.example.org/#fragment", "https://u:p@opa.example.org/"],
+    [
+        "",
+        "not-a-uri",
+        "http://opa.example.org/",
+        "https://opa.example.org/?query=bad",
+        "https://opa.example.org/#fragment",
+        "https://u:p@opa.example.org/",
+    ],
 )
 def test_oauth_resource_indicator_rejects_invalid_uri(resource):
     with pytest.raises(ValueError, match="resource_indicator_invalid"):
