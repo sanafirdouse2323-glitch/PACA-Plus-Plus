@@ -35,6 +35,8 @@ authenticator = JWTAuthenticator(
     settings.jwt_audience,
     settings.jwt_jwks_url,
     settings.jwt_timeout_seconds,
+    token_use_claim=settings.jwt_token_use_claim,
+    expected_token_use=settings.jwt_expected_token_use,
 )
 
 adapters = []
