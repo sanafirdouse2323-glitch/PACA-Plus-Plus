@@ -162,7 +162,7 @@ def test_http_adapter_never_follows_redirects_and_classifies_uncertain_effects()
         timeout_seconds=1,
         client=httpx.Client(transport=httpx.MockTransport(broken)),
     )
-    with pytest.raises(EffectOutcomeUnknown, match="upstream_server_outcome_unknown"):
+    with pytest.raises(EffectOutcomeUnknown, match="upstream_non_success_outcome_unknown"):
         adapter.execute(
             request("document.update", "doc-1", {"name": "x"}, {"resource": {"kind": "document"}})
         )
