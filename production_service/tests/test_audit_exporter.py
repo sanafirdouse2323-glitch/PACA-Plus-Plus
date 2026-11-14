@@ -20,14 +20,21 @@ from paca_service.audit_exporter import (
 
 
 class FakeS3NotFound(Exception):
-    response = {"Error": {"Code": "NoSuchKey"}, "ResponseMetadata": {"HTTPStatusCode": 404}}
+    def __init__(self):
+        super().__init__("no_such_key")
+        self.response = {
+            "Error": {"Code": "NoSuchKey"},
+            "ResponseMetadata": {"HTTPStatusCode": 404},
+        }
 
 
 class FakeS3PreconditionFailed(Exception):
-    response = {
-        "Error": {"Code": "PreconditionFailed"},
-        "ResponseMetadata": {"HTTPStatusCode": 412},
-    }
+    def __init__(self):
+        super().__init__("precondition_failed")
+        self.response = {
+            "Error": {"Code": "PreconditionFailed"},
+            "ResponseMetadata": {"HTTPStatusCode": 412},
+        }
 
 
 class FakeS3:
