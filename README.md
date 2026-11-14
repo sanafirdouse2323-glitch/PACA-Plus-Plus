@@ -8,7 +8,7 @@ Its primary scope is **authorization enforcement at the protected-action boundar
 
 ## Positioning and target applications
 
-PACA++ is primarily an **authorization-enforcement architecture**. The current repository combines a FastAPI/OPA/PostgreSQL gateway with a separate research prototype. The following are target uses and potential customer groups, not existing customers, validated demand or compliance claims.
+The table summarizes target uses and potential customer groups, not existing customers, validated demand or compliance claims.
 
 | Application area | Potential users and need | What this repository provides—and its limit |
 |---|---|---|
@@ -25,7 +25,8 @@ These areas are related but distinct: enterprise authorization is the primary ar
 | `production_service/` | Separate FastAPI authorization gateway using verified JWTs, OPA, PostgreSQL permits/executions, RLS and configured effect adapters | Main controlled-evaluation service. See its README and threat model. |
 | `prototype/` | Python research prototype: legacy in-memory engine plus a separate OPA/OIDC hardening path, agent boundaries/runtime, SQLite and PostgreSQL stores | Useful for experiments. Its stores and identity/context model are not interchangeable with the production service. |
 | `compiler/` and root `tests/` | Experimental parser/emitter for a limited policy subset | Not a complete or standards-compatible ALFA/UCON+ compiler. Tests do not prove ASP/Cedar semantic equivalence. |
-| `legacy_policy_engine/` | Older policy parser, compiler/evaluator and engine package | Separate historical implementation; not part of the production-service API and not covered by the current root CI workflow. |\n| `archive/paca-plus-plus-new/` | Text-only snapshot and recovery notes for the separate newer repository | Read-only archival material; several source entries are embedded in text filenames and are not an importable or runnable copy. Use the linked standalone repository for its current code. |
+| `legacy_policy_engine/` | Older policy parser, compiler/evaluator and engine package | Separate historical implementation; not part of the production-service API and not covered by the current root CI workflow. |
+| `archive/paca-plus-plus-new/` | Text-only snapshot and recovery notes for the separate newer repository | Read-only archival material; several source entries are embedded in text filenames and are not an importable or runnable copy. Use the linked standalone repository for its current code. |
 | `agent/` | Thin standard-library HTTP client for the production service's authorize/execute API, with tests and a small placeholder file | Not an LLM agent, not a LangChain/LangGraph/AutoGen adapter, and not proof that every host action is routed through the gateway. |
 
 Do not infer that a feature in one path is automatically present in another. In particular, the prototype PostgreSQL store is not the production service's tenant-RLS boundary.
