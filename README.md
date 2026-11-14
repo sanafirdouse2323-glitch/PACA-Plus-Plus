@@ -4,6 +4,8 @@ PACA++ is an **enterprise authorization research and engineering project**. Its 
 
 Its primary scope is **authorization enforcement at the protected-action boundary**, including controlled execution for AI-agent tools. It is not a complete identity and access management (IAM) suite, a general-purpose database security product, or a universal prompt-injection detector.
 
+> **Repository lineage:** This is the earlier service/compiler-oriented PACA++ codebase. The separate [PACA-Plus-Plus-New repository](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus-New) is the successor project for the provenance-anchored continuous-authorization research line focused on autonomous systems and LLM agents. The two repositories have different implementations, tests and evidence. Do not attribute this repository's FastAPI/PostgreSQL features to the newer repository, or transfer the newer repository's agent mechanisms and benchmark results to this one. In this codebase, AI-agent integration remains a limited reference/integration area rather than a complete production agent-security product.
+
 ## Accurate project positioning
 
 - **Primary category — enterprise authorization architecture:** authenticate a caller, obtain trusted resource context, evaluate policy, issue a short-lived permit, re-check authorization at execution, and record the outcome.
