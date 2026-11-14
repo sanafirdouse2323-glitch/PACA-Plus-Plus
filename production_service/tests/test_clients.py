@@ -292,3 +292,34 @@ def test_opa_rejects_injected_http_client_that_enables_redirects():
             bearer_token="opa-service-token",
         )
     client.close()
+
+
+def test_opa_response_size_limit_fails_closed():
+    oversized = (
+        b'{"result":{"allow":false,"policy_revision":"paca-dev-2026-10-23","padding":"'
+        + (b"x" * 256)
+        + b'"}}'
+    )
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, content=oversized))
+    )
+    opa = OPAClient(
+        "http://opa:8181",
+        "/v1/data/paca/authz/decision",
+        "paca-dev-2026-10-23",
+        client=client,
+        max_response_bytes=128,
+    )
+    with pytest.raises(PolicyEngineUnavailable, match="opa_response_too_large"):
+        opa.evaluate({"action": "document.read"})
+    opa.close()
+
+
+def test_opa_response_size_limit_must_be_positive():
+    with pytest.raises(ValueError, match="max_response_bytes"):
+        OPAClient(
+            "http://opa:8181",
+            "/v1/data/paca/authz/decision",
+            "paca-dev-2026-10-23",
+            max_response_bytes=0,
+        )
