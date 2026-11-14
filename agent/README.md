@@ -19,18 +19,35 @@ paca = PACAClient(
     base_url="http://127.0.0.1:8000",
     access_token="<access token from your configured OIDC provider>",
 )
+# Use a stable key for this logical operation and retain the permit ID.
+idempotency_key = "job-2026-00042-read-report"
+permit = paca.authorize(
+    action="file.read",
+    resource_id="report-123",
+    arguments={},
+)
+permit_id = permit["permit_id"]
+
 try:
-    result = paca.authorize_and_execute(
+    result = paca.execute(
         action="file.read",
         resource_id="report-123",
         arguments={},
-        idempotency_key="job-2026-00042-read-report",
+        permit_id=permit_id,
+        idempotency_key=idempotency_key,
     )
 except PACARequestError as exc:
-    # For status=None or an unknown execution outcome, reconcile before retrying.
-    print(exc.status, exc.body)
+    # The permit ID and idempotency key must be retained across retries.
+    # Retry execute() with the same values; never authorize a new permit
+    # merely because the execution response timed out.
+    print(exc.status, exc.body, permit_id)
 else:
-    print(result)
+    if result.get("status") == "unknown":
+        # Query status and reconcile with the downstream service before any
+        # decision to retry or compensate.
+        print(paca.execution_status(result["execution_id"]))
+    else:
+        print(result)
 ```
 
 Use HTTPS for any non-loopback deployment. Do not put access tokens in prompts, tool arguments, logs or source control. Obtain tokens through the host application's trusted OIDC flow. The server must provision the resource and its trusted authorization facts; a caller-provided resource ID is not proof of ownership.
@@ -39,7 +56,7 @@ Use HTTPS for any non-loopback deployment. Do not put access tokens in prompts, 
 
 - The model may propose an action, but the host validates it against a server-configured tool/resource registry.
 - The host, not the model, supplies the authenticated access token and stable idempotency key.
-- The host routes the actual effect through PACA++; it must not execute the same action directly as a fallback.
+- The host routes the actual effect through PACA++; it must not execute the same action directly as a fallback. For retries, persist and reuse the original permit ID and idempotency key. Calling `authorize_and_execute()` again obtains a new permit and is not a safe retry of an earlier execution.
 - Treat retrieved content and tool output as untrusted data. Authorization does not make prompt-injection content safe.
 - A timeout or transport error can leave the remote outcome uncertain. Reconcile the execution/downstream state before retrying; never generate a new idempotency key for the same logical effect.
 - This helper does not integrate a particular LangChain, LangGraph, AutoGen, CrewAI or other framework. Framework-specific adapters and bypass testing remain deployment work.
