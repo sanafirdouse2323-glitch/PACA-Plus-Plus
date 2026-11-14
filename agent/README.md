@@ -59,7 +59,7 @@ Use HTTPS for any non-loopback deployment. Do not put access tokens in prompts, 
 - The host routes the actual effect through PACA++; it must not execute the same action directly as a fallback. For retries, persist and reuse the original permit ID and idempotency key. Calling `authorize_and_execute()` again obtains a new permit and is not a safe retry of an earlier execution.
 - Treat retrieved content and tool output as untrusted data. Authorization does not make prompt-injection content safe.
 - A timeout or transport error can leave the remote outcome uncertain. Reconcile the execution/downstream state before retrying; never generate a new idempotency key for the same logical effect.
-- This helper does not integrate a particular LangChain, LangGraph, AutoGen, CrewAI or other framework. Framework-specific adapters and bypass testing remain deployment work.
+- The minimal HTTP client is framework-neutral. The optional [LangGraph adapter](langgraph_integration/README.md) is a concrete integration; AutoGen, CrewAI, MCP and other framework adapters remain separate work.
 
 ## Test
 
