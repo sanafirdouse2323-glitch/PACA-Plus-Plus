@@ -253,7 +253,7 @@ def test_authenticator_rejects_id_tokens_and_tokens_without_access_use_marker(rs
 
 
 def test_remote_opa_requires_token_and_sends_bearer_header():
-    with pytest.raises(ValueError, match="bearer token"):
+    with pytest.raises(ValueError, match="service credential"):
         OPAClient(
             "https://opa.example.org",
             "/v1/data/paca/authz/decision",
