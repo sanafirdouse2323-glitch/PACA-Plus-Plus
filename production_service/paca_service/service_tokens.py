@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import base64
 import json
 import threading
 import time
 from collections.abc import Callable
-from urllib.parse import urlsplit
+from urllib.parse import quote_plus, urlsplit
 
 import httpx
 
@@ -103,13 +104,22 @@ class ClientCredentialsTokenProvider:
         form = {"grant_type": "client_credentials"}
         if self.scope:
             form["scope"] = self.scope
+        # RFC 6749 client_secret_basic form-encodes each credential before
+        # joining with ':' and Base64 encoding the result.
+        encoded_id = quote_plus(self.client_id, safe="")
+        encoded_secret = quote_plus(self.client_secret, safe="")
+        basic = base64.b64encode(
+            f"{encoded_id}:{encoded_secret}".encode("ascii")
+        ).decode("ascii")
         try:
             with self.client.stream(
                 "POST",
                 self.token_url,
                 data=form,
-                auth=httpx.BasicAuth(self.client_id, self.client_secret),
-                headers={"Accept": "application/json"},
+                headers={
+                    "Accept": "application/json",
+                    "Authorization": f"Basic {basic}",
+                },
             ) as response:
                 if response.status_code != 200:
                     raise TokenProviderUnavailable("oauth_token_endpoint_rejected_request")
