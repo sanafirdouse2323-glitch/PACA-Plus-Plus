@@ -100,6 +100,10 @@ class HttpAPIAdapter(ExecutionAdapter):
             or any(ch.isspace() for ch in bearer_token)
         ):
             raise ValueError("invalid_upstream_bearer_token")
+        if token_provider is not None and not isinstance(
+            token_provider, ClientCredentialsTokenProvider
+        ):
+            raise TypeError("upstream token_provider must be a ClientCredentialsTokenProvider")
         if bearer_token is not None and token_provider is not None:
             raise ValueError("configure either a static upstream bearer token or an OAuth token provider, not both")
         if not loopback and not bearer_token and token_provider is None:
