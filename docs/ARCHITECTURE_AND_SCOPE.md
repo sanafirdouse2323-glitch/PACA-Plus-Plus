@@ -50,7 +50,7 @@ A test result belongs to the component and exact commit that ran it. Never trans
 
 ## 4. Separate successor repository and archival snapshot
 
-[PACA-Plus-Plus-New](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus-New) is a separate, provenance-focused LLM-agent reference-monitor project. Its in-process monitor, author-written simulation, optional AgentDojo integration and benchmark evidence are not the implementation or test suite of this repository's FastAPI/PostgreSQL service. Do not transfer feature claims, test results or benchmark numbers between the repositories.
+This repository uses PACA++ to mean **Policy-Aware Authorization and Controlled Action**. [PACA-Plus-Plus-New](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus-New) reuses the PACA++ name for **Provenance-Anchored Continuous Authorization for LLM agents** and is a separate, provenance-focused reference-monitor project. Its in-process monitor, author-written simulation, optional AgentDojo integration and benchmark evidence are not the implementation or test suite of this repository's FastAPI/PostgreSQL service. Do not transfer feature claims, test results or benchmark numbers between the repositories.
 
 The `archive/paca-plus-plus-new/` directory in this repository is a text-only historical snapshot with recovery notes. It is not a working copy of the newer repository and must not be imported as application code. Use the standalone repository for its current source.
 
