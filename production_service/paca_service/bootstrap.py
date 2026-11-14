@@ -29,6 +29,7 @@ opa = OPAClient(
     settings.opa_decision_path,
     settings.expected_policy_revision,
     settings.opa_timeout_seconds,
+    bearer_token=settings.opa_bearer_token,
 )
 authenticator = JWTAuthenticator(
     settings.jwt_issuer,
