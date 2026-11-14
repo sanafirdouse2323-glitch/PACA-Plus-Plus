@@ -80,6 +80,52 @@ def _validate_service_url(
     return value.rstrip("/")
 
 
+
+def _oauth_client_configuration(
+    env: dict[str, str],
+    prefix: str,
+    *,
+    static_token: str | None,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    token_url_name = f"{prefix}_OAUTH_TOKEN_URL"
+    client_id_name = f"{prefix}_OAUTH_CLIENT_ID"
+    client_secret_name = f"{prefix}_OAUTH_CLIENT_SECRET"
+    scope_name = f"{prefix}_OAUTH_SCOPE"
+    raw_url = env.get(token_url_name, "").strip()
+    raw_client_id = env.get(client_id_name, "")
+    raw_client_secret = env.get(client_secret_name, "")
+    raw_scope = env.get(scope_name, "")
+    configured = any((raw_url, raw_client_id, raw_client_secret, raw_scope))
+    if not configured:
+        return None, None, None, None
+    if static_token:
+        raise ConfigurationError(
+            f"{prefix}_BEARER_TOKEN and {prefix}_OAUTH_* settings are mutually exclusive."
+        )
+    if not raw_url or not raw_client_id or not raw_client_secret:
+        raise ConfigurationError(
+            f"{token_url_name}, {client_id_name}, and {client_secret_name} must be configured together."
+        )
+    token_url = _validate_service_url(
+        token_url_name, raw_url, allow_http=True
+    )
+    if (
+        raw_client_id.strip() != raw_client_id
+        or any(ch.isspace() for ch in raw_client_id)
+        or any(ch in raw_client_id for ch in "\\r\\n")
+    ):
+        raise ConfigurationError(f"{client_id_name} must be a non-whitespace identifier.")
+    if any(ch in raw_client_secret for ch in "\\r\\n"):
+        raise ConfigurationError(f"{client_secret_name} must not contain CR or LF.")
+    if raw_scope and (
+        raw_scope.strip() != raw_scope
+        or any(ch in raw_scope for ch in "\\r\\n\\t")
+        or len(raw_scope) > 1024
+    ):
+        raise ConfigurationError(f"{scope_name} is invalid.")
+    return token_url, raw_client_id, raw_client_secret, raw_scope or None
+
+
 @dataclass(frozen=True)
 class Settings:
     database_url: str
@@ -102,6 +148,14 @@ class Settings:
     jwt_token_use_claim: str = "token_use"
     jwt_expected_token_use: str = "access"
     opa_bearer_token: str | None = None
+    opa_oauth_token_url: str | None = None
+    opa_oauth_client_id: str | None = None
+    opa_oauth_client_secret: str | None = None
+    opa_oauth_scope: str | None = None
+    api_oauth_token_url: str | None = None
+    api_oauth_client_id: str | None = None
+    api_oauth_client_secret: str | None = None
+    api_oauth_scope: str | None = None
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> Settings:
@@ -129,16 +183,28 @@ class Settings:
             raise ConfigurationError("PACA_OPA_DECISION_PATH must be a fixed OPA Data API path.")
         raw_opa_bearer_token = env.get("PACA_OPA_BEARER_TOKEN", "")
         opa_bearer_token = raw_opa_bearer_token or None
-        opa_host = urlsplit(opa_url).hostname.lower().rstrip(".")
-        if opa_host not in _LOOPBACK_HOSTS | {"opa"} and not opa_bearer_token:
-            raise ConfigurationError(
-                "PACA_OPA_BEARER_TOKEN is required for remote OPA endpoints."
-            )
         if opa_bearer_token and (
             opa_bearer_token.strip() != opa_bearer_token
             or any(ch.isspace() for ch in opa_bearer_token)
         ):
             raise ConfigurationError("PACA_OPA_BEARER_TOKEN must be a non-whitespace token.")
+        (
+            opa_oauth_token_url,
+            opa_oauth_client_id,
+            opa_oauth_client_secret,
+            opa_oauth_scope,
+        ) = _oauth_client_configuration(
+            env, "PACA_OPA", static_token=opa_bearer_token
+        )
+        opa_host = urlsplit(opa_url).hostname.lower().rstrip(".")
+        if (
+            opa_host not in _LOOPBACK_HOSTS | {"opa"}
+            and not opa_bearer_token
+            and opa_oauth_token_url is None
+        ):
+            raise ConfigurationError(
+                "Remote OPA requires PACA_OPA_BEARER_TOKEN or the PACA_OPA_OAUTH_* client-credentials settings."
+            )
 
         issuer = _required(env, "PACA_JWT_ISSUER")
         issuer_parts = urlsplit(issuer)
@@ -188,13 +254,29 @@ class Settings:
             or any(ch.isspace() for ch in api_bearer_token)
         ):
             raise ConfigurationError("PACA_API_BEARER_TOKEN must be a non-whitespace token.")
+        api_bearer_token = api_bearer_token or None
+        (
+            api_oauth_token_url,
+            api_oauth_client_id,
+            api_oauth_client_secret,
+            api_oauth_scope,
+        ) = _oauth_client_configuration(
+            env, "PACA_API", static_token=api_bearer_token
+        )
+        if (api_oauth_token_url is not None) and not (base and routes):
+            raise ConfigurationError(
+                "PACA_API_OAUTH_* settings require PACA_API_BASE_URL and configured API routes."
+            )
         if base and routes:
             api_host = urlsplit(base).hostname.lower().rstrip(".")
-            if api_host not in _LOOPBACK_HOSTS and not api_bearer_token:
+            if (
+                api_host not in _LOOPBACK_HOSTS
+                and not api_bearer_token
+                and api_oauth_token_url is None
+            ):
                 raise ConfigurationError(
-                    "PACA_API_BEARER_TOKEN is required for remote downstream API routes."
+                    "Remote downstream API routes require PACA_API_BEARER_TOKEN or PACA_API_OAUTH_* client-credentials settings."
                 )
-        api_bearer_token = api_bearer_token or None
 
         execution_timeout = _positive_float(env, "PACA_EXECUTION_TIMEOUT_SECONDS", "10", 120)
 
@@ -219,4 +301,12 @@ class Settings:
             jwt_token_use_claim=token_use_claim,
             jwt_expected_token_use=expected_token_use,
             opa_bearer_token=opa_bearer_token,
+            opa_oauth_token_url=opa_oauth_token_url,
+            opa_oauth_client_id=opa_oauth_client_id,
+            opa_oauth_client_secret=opa_oauth_client_secret,
+            opa_oauth_scope=opa_oauth_scope,
+            api_oauth_token_url=api_oauth_token_url,
+            api_oauth_client_id=api_oauth_client_id,
+            api_oauth_client_secret=api_oauth_client_secret,
+            api_oauth_scope=api_oauth_scope,
         )
