@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from paca_service.benchmarks.security_benchmark import SecurityBenchmarkRecorder
 
 
