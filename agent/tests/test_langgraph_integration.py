@@ -9,7 +9,6 @@ from typing import Any, ClassVar
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from agent.paca_client import PACAClient
 from agent.langgraph_integration.paca_tools import (
     ActionSpec,
     PACALangGraphError,
@@ -17,7 +16,7 @@ from agent.langgraph_integration.paca_tools import (
     UnresolvedOperationError,
     build_paca_langgraph_agent,
 )
-
+from agent.paca_client import PACAClient
 
 PERMIT_ID = "00000000-0000-0000-0000-000000000123"
 EXECUTION_ID = "00000000-0000-0000-0000-000000000456"
