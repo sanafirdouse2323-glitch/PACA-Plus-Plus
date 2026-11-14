@@ -141,6 +141,8 @@ jobs:
       - name: Lint service code
         run: ruff check production_service
       - name: Run service unit and least-privilege PostgreSQL integration tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: pytest production_service/tests -q
       - name: Start pinned OPA for real decision-client smoke test
         run: |
