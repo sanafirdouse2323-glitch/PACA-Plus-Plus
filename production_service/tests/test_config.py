@@ -115,7 +115,38 @@ def test_remote_opa_requires_bearer_credential():
     assert settings.opa_bearer_token == "opa-service-token"
 
 
-@pytest.mark.parametrize("token", ["has spaces", "bad\\ntoken"])
+@pytest.mark.parametrize("token", ["has spaces", "bad\ntoken"])
 def test_opa_bearer_credential_rejects_whitespace(token: str):
     with pytest.raises(ConfigurationError, match="PACA_OPA_BEARER_TOKEN"):
         Settings.from_env(base_env(PACA_OPA_BEARER_TOKEN=token))
+
+
+def test_remote_downstream_routes_require_a_service_credential():
+    routes = '{"document.update":{"method":"PATCH","path":"/v1/documents/{resource_id}","args_mode":"json"}}'
+    with pytest.raises(ConfigurationError, match="PACA_API_BEARER_TOKEN"):
+        Settings.from_env(
+            base_env(
+                PACA_API_BASE_URL="https://api.example.org",
+                PACA_API_ROUTES_JSON=routes,
+            )
+        )
+    settings = Settings.from_env(
+        base_env(
+            PACA_API_BASE_URL="https://api.example.org",
+            PACA_API_ROUTES_JSON=routes,
+            PACA_API_BEARER_TOKEN="downstream-service-token",
+        )
+    )
+    assert settings.api_bearer_token == "downstream-service-token"
+
+
+def test_loopback_downstream_route_can_use_local_development_without_service_token():
+    routes = '{"document.update":{"method":"PATCH","path":"/v1/documents/{resource_id}","args_mode":"json"}}'
+    settings = Settings.from_env(
+        base_env(
+            PACA_API_BASE_URL="http://127.0.0.1:9010",
+            PACA_API_ROUTES_JSON=routes,
+        )
+    )
+    assert settings.api_base_url == "http://127.0.0.1:9010"
+    assert settings.api_bearer_token is None
