@@ -21,7 +21,6 @@ jobs:
       PACA_TEST_ADMIN_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/paca_test
       PACA_TEST_DATABASE_URL: postgresql://paca_runtime:paca_test_runtime_password@localhost:5432/paca_test
       PACA_TEST_REMOTE_OPA_URL: https://localhost:8182
-      PACA_TEST_REMOTE_OPA_AUTH_DIR: ${{ runner.temp }}/paca-remote-opa-auth/tokens
       PACA_TENANT_CONTEXT_HMAC_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       PACA_TENANT_CONTEXT_KEY_ID: v1
     services:
@@ -220,12 +219,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$PACA_REMOTE_OPA_AUTH_ROOT/bundle/policies" "$PACA_REMOTE_OPA_AUTH_ROOT/tokens"
-          openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \\
-            -keyout "$PACA_REMOTE_OPA_AUTH_ROOT/server.key" \\
-            -out "$PACA_REMOTE_OPA_AUTH_ROOT/server.crt" \\
-            -subj "/CN=localhost" \\
-            -addext "subjectAltName=DNS:localhost" \\
-            -addext "basicConstraints=critical,CA:TRUE" \\
+          openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
+            -keyout "$PACA_REMOTE_OPA_AUTH_ROOT/server.key" \
+            -out "$PACA_REMOTE_OPA_AUTH_ROOT/server.crt" \
+            -subj "/CN=localhost" \
+            -addext "subjectAltName=DNS:localhost" \
+            -addext "basicConstraints=critical,CA:TRUE" \
             -addext "extendedKeyUsage=serverAuth"
           cp production_service/opa/policies/authz.rego "$PACA_REMOTE_OPA_AUTH_ROOT/bundle/policies/authz.rego"
           cp production_service/opa/remote_auth/system_authz.rego "$PACA_REMOTE_OPA_AUTH_ROOT/bundle/policies/system_authz.rego"
