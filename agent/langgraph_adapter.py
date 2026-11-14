@@ -14,6 +14,7 @@ from uuid import UUID
 
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.tools import StructuredTool
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
@@ -22,7 +23,6 @@ from langgraph.store.base import BaseStore
 from pydantic import BaseModel, ConfigDict
 
 from .paca_client import PACARequestError
-
 
 _TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _ACTION_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,127}$")
@@ -352,7 +352,7 @@ def build_paca_langgraph_agent(
     if not callable(getattr(bound_model, "invoke", None)):
         raise TypeError("bound_model_must_expose_invoke")
 
-    def call_model(state: _AgentState, config: dict[str, Any]) -> dict[str, list[BaseMessage]]:
+    def call_model(state: _AgentState, config: RunnableConfig) -> dict[str, list[BaseMessage]]:
         messages = state.get("messages")
         if not isinstance(messages, list) or not messages:
             raise PACAFrameworkError("langgraph_messages_required")
