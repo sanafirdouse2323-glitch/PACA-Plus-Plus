@@ -9,19 +9,19 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from uuid import UUID
 from typing import Annotated, Any, TypedDict
+from uuid import UUID
 
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.tools import StructuredTool
-
-from .paca_client import PACARequestError
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, ToolRuntime
 from langgraph.store.base import BaseStore
 from pydantic import BaseModel, ConfigDict
+
+from .paca_client import PACARequestError
 
 
 _TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -82,7 +82,7 @@ class PACAOperation:
         if not isinstance(self.args_schema, type) or not issubclass(
             self.args_schema, PACAArgsModel
         ):
-            raise ValueError("args_schema_must_extend_PACAArgsModel")
+            raise TypeError("args_schema_must_extend_PACAArgsModel")
         field = self.args_schema.model_fields.get(self.resource_id_field)
         if field is None or not field.is_required() or field.annotation is not str:
             raise ValueError("resource_id_field_must_be_a_required_string")
