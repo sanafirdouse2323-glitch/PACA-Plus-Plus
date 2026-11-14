@@ -70,3 +70,16 @@ python -m unittest discover -s agent/tests -v
 ```
 
 This is a thin HTTP client integration test using a local test server. It is not a live OIDC, production gateway or real-agent security evaluation.
+
+## LangGraph integration
+
+See [the PACA++-guarded LangGraph integration](langgraph_integration/README.md). It provides a real LangGraph `StateGraph` and `ToolNode` path in which the model-visible tools are created only from host-owned PACA++ action specifications. It uses a persistent SQLite operation ledger for stable thread/tool-call idempotency identity and requires a `thread_id` on each graph invocation. This is a single-host coordination aid, not a shared multi-host database or independent audit store.
+
+Install and test the optional adapter with:
+
+```sh
+python -m pip install -r agent/requirements-langgraph.txt
+python -m pytest agent/tests/test_langgraph_integration.py -q
+```
+
+The tests use a deterministic fake chat model to exercise the real LangGraph execution engine and a local fake PACA++ HTTP endpoint. They do not make a call to a hosted LLM provider or prove that an entire external host application has no direct-effect bypass.
