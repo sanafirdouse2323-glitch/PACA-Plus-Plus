@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from agent.paca_client import PACAClient
 from agent.langgraph_integration.paca_tools import (
@@ -207,7 +207,10 @@ def test_unknown_execution_replay_reuses_same_permit_and_idempotency_key(tmp_pat
                 {"messages": [HumanMessage(content="Read report-123.")]},
                 config=config,
             )
-        # Rebuild with the same stable tool-call identity, as a host replay would.
+        # Reopen the file-backed ledger to verify that permit and key survive
+        # a process/connection restart. The host replays the original tool-call ID.
+        ledger.close()
+        ledger = SQLiteOperationLedger(ledger_path)
         retry_model = ScriptedToolModel("read_document", "call-replay")
         retry_graph = build_paca_langgraph_agent(
             model=retry_model,
@@ -251,6 +254,8 @@ def test_new_tool_call_cannot_duplicate_unresolved_action_in_same_thread(tmp_pat
                 config=config,
             )
         before = len(paca.requests)
+        ledger.close()
+        ledger = SQLiteOperationLedger(ledger_path)
         duplicate_graph = build_paca_langgraph_agent(
             model=ScriptedToolModel("read_document", "call-new"),
             client=paca.client,
@@ -280,10 +285,20 @@ def test_model_cannot_invoke_undeclared_direct_effect_tool(tmp_path: Path) -> No
     try:
         graph, ledger = _build(paca, tmp_path / "bypass.sqlite3", model)
         assert model.bound_tool_names == ["read_document"]
-        with pytest.raises(Exception):
-            graph.invoke(
+        result = None
+        try:
+            result = graph.invoke(
                 {"messages": [HumanMessage(content="Write directly to the database.")]},
                 config={"configurable": {"thread_id": "thread-bypass"}},
+            )
+        except Exception:
+            # Depending on LangGraph release internals, an unknown tool may be
+            # rejected as an exception or returned as an error ToolMessage.
+            pass
+        if result is not None:
+            assert any(
+                isinstance(message, ToolMessage) and message.status == "error"
+                for message in result["messages"]
             )
         assert paca.requests == []
         ledger.close()
