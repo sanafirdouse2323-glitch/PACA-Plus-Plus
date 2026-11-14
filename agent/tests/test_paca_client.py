@@ -75,7 +75,7 @@ def test_client_rejects_invalid_configuration_and_key():
 
 def test_client_does_not_follow_redirects():
     import pytest
-    from paca_client import PACARequestError
+    from agent.paca_client import PACARequestError
 
     observed = []
 
