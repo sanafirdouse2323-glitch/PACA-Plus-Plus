@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - integration/langgraph-paca-gateway
+      - security/postgres-langgraph-ledger
   pull_request:
     branches:
       - main
@@ -17,6 +18,23 @@ permissions:
 jobs:
   langgraph-adapter:
     runs-on: ubuntu-latest
+    env:
+      PACA_AGENT_TEST_DATABASE_URL: postgresql://paca_agent_test:paca_agent_test_password@localhost:5432/paca_langgraph_test
+      PACA_AGENT_LEDGER_DATABASE_URL: postgresql://paca_agent_ledger_runtime:paca_agent_ledger_runtime_password@localhost:5432/paca_agent_ledger
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -30,9 +48,30 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r agent/requirements-langgraph.txt
+      - name: Create isolated LangGraph persistence database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -euo pipefail
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE paca_agent_test LOGIN PASSWORD 'paca_agent_test_password';
+          CREATE ROLE paca_agent_ledger_owner LOGIN PASSWORD 'paca_agent_ledger_owner_password';
+          CREATE ROLE paca_agent_ledger_runtime LOGIN PASSWORD 'paca_agent_ledger_runtime_password';
+          SQL
+          createdb -h localhost -U postgres -O paca_agent_test paca_langgraph_test
+          createdb -h localhost -U postgres -O paca_agent_ledger_owner paca_agent_ledger
+          PGPASSWORD=paca_agent_ledger_owner_password psql -h localhost -U paca_agent_ledger_owner -d paca_agent_ledger -v ON_ERROR_STOP=1 -f agent/migrations/0001-operation-ledger.sql
+          psql -h localhost -U postgres -d paca_agent_ledger -v ON_ERROR_STOP=1 <<'SQL'
+          REVOKE ALL ON DATABASE paca_agent_ledger FROM PUBLIC;
+          GRANT CONNECT ON DATABASE paca_agent_ledger TO paca_agent_ledger_runtime;
+          GRANT USAGE ON SCHEMA paca_langgraph TO paca_agent_ledger_runtime;
+          GRANT SELECT, INSERT, UPDATE ON TABLE paca_langgraph.execution_journal TO paca_agent_ledger_runtime;
+          SQL
       - name: Compile the agent package
         run: python -m compileall -q agent
-      - name: Lint the adapter and tests
-        run: python -m ruff check agent/langgraph_adapter.py agent/langgraph_tests
-      - name: Run actual LangGraph adapter tests
+      - name: Lint the adapter, ledger and tests
+        run: python -m ruff check agent/langgraph_adapter.py agent/operation_ledger.py agent/langgraph_tests agent/security_harness
+      - name: Run LangGraph and PostgreSQL persistence integration tests
         run: python -m pytest agent/langgraph_tests -q
+      - name: Run containerized filesystem, database and API bypass isolation checks
+        run: bash agent/security_harness/run.sh
