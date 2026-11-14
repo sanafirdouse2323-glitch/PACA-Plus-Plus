@@ -14,8 +14,8 @@ from .app import create_app
 from .auth import JWTAuthenticator
 from .config import Settings
 from .opa import OPAClient
-from .store import PostgresStore
 from .service_tokens import ClientCredentialsTokenProvider
+from .store import PostgresStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
