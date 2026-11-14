@@ -49,6 +49,10 @@ class OPAClient:
         local_hosts = {"localhost", "127.0.0.1", "::1", "opa"}
         if parts.scheme == "http" and host not in local_hosts:
             raise ValueError("remote OPA must use HTTPS.")
+        if token_provider is not None and not isinstance(
+            token_provider, ClientCredentialsTokenProvider
+        ):
+            raise TypeError("OPA token_provider must be a ClientCredentialsTokenProvider.")
         if bearer_token is not None and token_provider is not None:
             raise ValueError("configure either a static OPA bearer token or an OAuth token provider, not both.")
         if host not in local_hosts and not bearer_token and token_provider is None:
