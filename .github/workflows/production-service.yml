@@ -43,8 +43,11 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: production_service/pyproject.toml
-      - name: Install service and test dependencies
-        run: python -m pip install --upgrade pip && python -m pip install -e "production_service[dev]"
+      - name: Install service and LangGraph integration test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e "production_service[dev]"
+          python -m pip install -r agent/requirements-langgraph.txt
       - name: Test the host-side PACA++ client
         run: python -m pytest agent/tests -q
       - name: Install PostgreSQL client
@@ -137,6 +140,8 @@ jobs:
       - name: Lint service code
         run: ruff check production_service
       - name: Run service unit and least-privilege PostgreSQL integration tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/production_service
         run: pytest production_service/tests -q
       - name: Start pinned OPA for real decision-client smoke test
         run: |
@@ -232,6 +237,7 @@ jobs:
         env:
           PACA_TEST_OIDC_REALM_URL: http://localhost:8081/realms/paca
           PACA_TEST_OPA_URL: http://127.0.0.1:8181
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/production_service
         run: pytest production_service/tests/test_oidc_integration.py -q
       - name: Clean up Keycloak OIDC test provider
         if: always()
