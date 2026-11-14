@@ -101,6 +101,7 @@ class Settings:
     file_root: str | None
     jwt_token_use_claim: str = "token_use"
     jwt_expected_token_use: str = "access"
+    opa_bearer_token: str | None = None
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> Settings:
@@ -126,6 +127,17 @@ class Settings:
         decision_path = env.get("PACA_OPA_DECISION_PATH", "/v1/data/paca/authz/decision")
         if not decision_path.startswith("/v1/data/") or "?" in decision_path or "#" in decision_path:
             raise ConfigurationError("PACA_OPA_DECISION_PATH must be a fixed OPA Data API path.")
+        opa_bearer_token = env.get("PACA_OPA_BEARER_TOKEN", "").strip() or None
+        opa_host = urlsplit(opa_url).hostname.lower().rstrip(".")
+        if opa_host not in _LOOPBACK_HOSTS | {"opa"} and not opa_bearer_token:
+            raise ConfigurationError(
+                "PACA_OPA_BEARER_TOKEN is required for remote OPA endpoints."
+            )
+        if opa_bearer_token and (
+            any(ch.isspace() for ch in opa_bearer_token)
+            or any(ch in opa_bearer_token for ch in "\\r\\n")
+        ):
+            raise ConfigurationError("PACA_OPA_BEARER_TOKEN must be a non-whitespace token.")
 
         issuer = _required(env, "PACA_JWT_ISSUER")
         issuer_parts = urlsplit(issuer)
@@ -192,4 +204,5 @@ class Settings:
             file_root=env.get("PACA_FILE_ROOT", "").strip() or None,
             jwt_token_use_claim=token_use_claim,
             jwt_expected_token_use=expected_token_use,
+            opa_bearer_token=opa_bearer_token,
         )
