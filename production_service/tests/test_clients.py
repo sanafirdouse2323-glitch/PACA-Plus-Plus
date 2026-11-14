@@ -36,6 +36,7 @@ def signed_token(private_key, kid: str = "test-key", omit_claim: str | None = No
         "aud": AUDIENCE,
         "sub": "alice",
         "tenant_id": "tenant-1",
+        "token_use": "access",
         "roles": ["analyst"],
         "scope": "file:read tool:invoke",
         "tools": ["text.word_count"],
@@ -235,3 +236,15 @@ def test_opa_http_error_and_network_error_fail_closed():
     with pytest.raises(PolicyEngineUnavailable):
         client.evaluate({"action": "document.read"})
     client.close()
+
+
+def test_authenticator_rejects_id_tokens_and_tokens_without_access_use_marker(rsa_keys):
+    private, public = rsa_keys
+    auth = JWTAuthenticator(
+        ISSUER, AUDIENCE, "https://identity.example.org/jwks",
+        jwks_client=FakeJWKS(public),
+    )
+    with pytest.raises(AuthenticationError, match="wrong_token_use"):
+        auth.authenticate(signed_token(private, token_use="id"))
+    with pytest.raises(AuthenticationError):
+        auth.authenticate(signed_token(private, omit_claim="token_use"))
