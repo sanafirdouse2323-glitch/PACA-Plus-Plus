@@ -16,6 +16,7 @@ from paca_service.auth import (
     JWTAuthenticator,
 )
 from paca_service.opa import OPAClient, PolicyEngineUnavailable
+from paca_service.service_tokens import ClientCredentialsTokenProvider
 
 ISSUER = "https://identity.example.org/"
 AUDIENCE = "paca-api"
@@ -252,7 +253,7 @@ def test_authenticator_rejects_id_tokens_and_tokens_without_access_use_marker(rs
 
 
 def test_remote_opa_requires_token_and_sends_bearer_header():
-    with pytest.raises(ValueError, match="bearer token"):
+    with pytest.raises(ValueError, match="service credential"):
         OPAClient(
             "https://opa.example.org",
             "/v1/data/paca/authz/decision",
@@ -323,3 +324,62 @@ def test_opa_response_size_limit_must_be_positive():
             "paca-dev-2026-10-23",
             max_response_bytes=0,
         )
+
+
+
+def test_opa_client_uses_automatically_refreshed_oauth_service_tokens():
+    now = [100.0]
+    token_calls = 0
+    resource_authorizations = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal token_calls
+        if request.url.path == "/oauth/token":
+            token_calls += 1
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": f"opa-token-{token_calls}",
+                    "token_type": "Bearer",
+                    "expires_in": 100,
+                },
+            )
+        resource_authorizations.append(request.headers.get("authorization"))
+        return httpx.Response(
+            200,
+            json={
+                "result": {
+                    "allow": False,
+                    "reason": "default_deny",
+                    "policy_revision": "paca-dev-2026-10-23",
+                }
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    token_provider = ClientCredentialsTokenProvider(
+        "https://identity.example.org/oauth/token",
+        "paca-opa-client",
+        "opa-client-secret",
+        client=httpx.Client(transport=transport),
+        clock=lambda: now[0],
+        refresh_skew_seconds=20,
+    )
+    client = OPAClient(
+        "https://opa.example.org",
+        "/v1/data/paca/authz/decision",
+        "paca-dev-2026-10-23",
+        client=httpx.Client(transport=transport),
+        token_provider=token_provider,
+    )
+    try:
+        assert client.evaluate({"action": "read"}).allowed is False
+        now[0] = 191.0
+        assert client.evaluate({"action": "read"}).allowed is False
+        assert token_calls == 2
+        assert resource_authorizations == [
+            "Bearer opa-token-1",
+            "Bearer opa-token-2",
+        ]
+    finally:
+        client.close()
