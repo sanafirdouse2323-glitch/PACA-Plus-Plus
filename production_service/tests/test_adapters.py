@@ -1,11 +1,8 @@
 from __future__ import annotations
-
 import tempfile
 from pathlib import Path
-
 import httpx
 import pytest
-
 from paca_service.adapters import (
     EffectOutcomeUnknown,
     EffectRejected,
@@ -15,8 +12,6 @@ from paca_service.adapters import (
     ToolRegistryAdapter,
 )
 from paca_service.auth import Principal
-
-
 def request(
     action: str,
     resource_id: str,
@@ -29,8 +24,6 @@ def request(
         scopes=("file:read", "file:create", "tool:invoke"), tools=("text.word_count",),
     )
     return EffectRequest(execution_id, principal, action, resource_id, arguments, context)
-
-
 def file_context(relative_path: str) -> dict:
     return {
         "resource": {
@@ -38,8 +31,6 @@ def file_context(relative_path: str) -> dict:
             "attributes": {"relative_path": relative_path},
         }
     }
-
-
 def test_sandboxed_file_read_and_create_are_real_operations_below_root():
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -50,14 +41,11 @@ def test_sandboxed_file_read_and_create_are_real_operations_below_root():
         )
         assert read["content"] == "alpha beta"
         assert read["bytes_read"] == 10
-
         created = adapter.execute(
             request("file.create", "new-1", {"content": "new report"}, file_context("new.txt"))
         )
         assert created["created"] is True
         assert (root / "new.txt").read_text(encoding="utf-8") == "new report"
-
-
 def test_sandboxed_file_adapter_rejects_traversal_and_symlinks():
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -74,8 +62,6 @@ def test_sandboxed_file_adapter_rejects_traversal_and_symlinks():
                 adapter.execute(request("file.read", "symlink", {}, file_context("link.txt")))
         finally:
             outside.unlink(missing_ok=True)
-
-
 def test_sandboxed_file_create_does_not_overwrite_existing_files():
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -89,8 +75,6 @@ def test_sandboxed_file_create_does_not_overwrite_existing_files():
                 )
             )
         assert (root / "existing.txt").read_text(encoding="utf-8") == "keep"
-
-
 def test_tool_registry_only_dispatches_registered_tool_names():
     tools = ToolRegistryAdapter()
     tools.register("text.word_count", lambda data, req: {"words": len(data["text"].split())})
@@ -105,21 +89,17 @@ def test_tool_registry_only_dispatches_registered_tool_names():
         )
     )
     assert result == {"words": 3}
-
-
 def test_http_adapter_uses_configured_host_and_stable_downstream_idempotency_key():
     observed = []
-
     def responder(req: httpx.Request) -> httpx.Response:
         observed.append(req)
         return httpx.Response(200, json={"document_id": "doc-1"})
-
     client = httpx.Client(transport=httpx.MockTransport(responder))
     adapter = HttpAPIAdapter(
         "https://internal.example",
         {"document.read": {"method": "GET", "path": "/v1/documents/{resource_id}", "args_mode": "query"}},
-        timeout_seconds=1,
         bearer_token="service-secret",
+        timeout_seconds=1,
         client=client,
     )
     result = adapter.execute(
@@ -136,8 +116,6 @@ def test_http_adapter_uses_configured_host_and_stable_downstream_idempotency_key
     assert outgoing.url.params["view"] == "summary"
     assert result["body"]["document_id"] == "doc-1"
     adapter.close()
-
-
 def test_http_adapter_never_follows_redirects_and_classifies_uncertain_effects():
     redirect_client = httpx.Client(
         transport=httpx.MockTransport(lambda req: httpx.Response(302, headers={"Location": "https://evil.example"}))
@@ -145,6 +123,7 @@ def test_http_adapter_never_follows_redirects_and_classifies_uncertain_effects()
     adapter = HttpAPIAdapter(
         "https://internal.example",
         {"document.update": {"method": "PATCH", "path": "/v1/documents/{resource_id}", "args_mode": "json"}},
+        bearer_token="test-service-token",
         timeout_seconds=1,
         client=redirect_client,
     )
@@ -153,12 +132,12 @@ def test_http_adapter_never_follows_redirects_and_classifies_uncertain_effects()
             request("document.update", "doc-1", {"name": "x"}, {"resource": {"kind": "document"}})
         )
     adapter.close()
-
     def broken(req: httpx.Request) -> httpx.Response:
         return httpx.Response(503, json={"error": "server"})
     adapter = HttpAPIAdapter(
         "https://internal.example",
         {"document.update": {"method": "PATCH", "path": "/v1/documents/{resource_id}", "args_mode": "json"}},
+        bearer_token="test-service-token",
         timeout_seconds=1,
         client=httpx.Client(transport=httpx.MockTransport(broken)),
     )
@@ -167,33 +146,29 @@ def test_http_adapter_never_follows_redirects_and_classifies_uncertain_effects()
             request("document.update", "doc-1", {"name": "x"}, {"resource": {"kind": "document"}})
         )
     adapter.close()
-
-
 def test_http_adapter_rejects_unsafe_route_configuration():
     with pytest.raises(ValueError):
         HttpAPIAdapter(
             "https://internal.example",
             {"document.read": {"method": "GET", "path": "//attacker.example/{resource_id}", "args_mode": "query"}},
+            bearer_token="test-service-token",
             timeout_seconds=1,
         )
     with pytest.raises(ValueError):
         HttpAPIAdapter(
             "https://internal.example",
             {"document.update": {"method": "PATCH", "path": "/v1/documents/{resource_id}", "args_mode": "query"}},
+            bearer_token="test-service-token",
             timeout_seconds=1,
         )
-
-
 def test_http_adapter_stops_reading_when_upstream_response_exceeds_size_limit():
     class TrackingStream(httpx.SyncByteStream):
         def __init__(self):
             self.chunks_yielded = 0
-
         def __iter__(self):
             for _ in range(100):
                 self.chunks_yielded += 1
                 yield b"x" * 8
-
     stream = TrackingStream()
     client = httpx.Client(
         transport=httpx.MockTransport(
@@ -207,6 +182,7 @@ def test_http_adapter_stops_reading_when_upstream_response_exceeds_size_limit():
     adapter = HttpAPIAdapter(
         "https://internal.example",
         {"document.read": {"method": "GET", "path": "/v1/documents/{resource_id}", "args_mode": "query"}},
+        bearer_token="test-service-token",
         timeout_seconds=1,
         client=client,
         max_response_bytes=16,
@@ -217,15 +193,13 @@ def test_http_adapter_stops_reading_when_upstream_response_exceeds_size_limit():
     assert result == {"status_code": 200, "response_body_omitted": "size_limit"}
     assert stream.chunks_yielded < 100
     adapter.close()
-
-
 def test_http_adapter_treats_4xx_as_unknown_unless_route_contract_proves_no_effect():
     def bad_request(req: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={"error": "bad request"})
-
     adapter = HttpAPIAdapter(
         "https://internal.example",
         {"document.update": {"method": "PATCH", "path": "/v1/documents/{resource_id}", "args_mode": "json"}},
+        bearer_token="test-service-token",
         timeout_seconds=1,
         client=httpx.Client(transport=httpx.MockTransport(bad_request)),
     )
@@ -234,7 +208,6 @@ def test_http_adapter_treats_4xx_as_unknown_unless_route_contract_proves_no_effe
             request("document.update", "doc-1", {"name": "x"}, {"resource": {"kind": "document"}})
         )
     adapter.close()
-
     # Only an explicit, reviewed upstream contract may classify a 4xx as
     # proof that no effect was applied.
     adapter = HttpAPIAdapter(
@@ -247,6 +220,7 @@ def test_http_adapter_treats_4xx_as_unknown_unless_route_contract_proves_no_effe
                 "effect_not_applied_statuses": [400, 422],
             }
         },
+        bearer_token="test-service-token",
         timeout_seconds=1,
         client=httpx.Client(transport=httpx.MockTransport(bad_request)),
     )
@@ -256,8 +230,6 @@ def test_http_adapter_treats_4xx_as_unknown_unless_route_contract_proves_no_effe
         )
     assert error.value.status_code == 400
     adapter.close()
-
-
 def test_http_adapter_rejects_unsafe_transport_and_bad_no_effect_contract():
     routes = {
         "document.read": {
@@ -266,6 +238,8 @@ def test_http_adapter_rejects_unsafe_transport_and_bad_no_effect_contract():
     }
     with pytest.raises(ValueError, match="https_required"):
         HttpAPIAdapter("http://api.example", routes, timeout_seconds=1)
+    with pytest.raises(ValueError, match="upstream_bearer_token_required"):
+        HttpAPIAdapter("https://api.example", routes, timeout_seconds=1)
     with pytest.raises(ValueError, match="timeout_must_be_positive"):
         HttpAPIAdapter("https://api.example", routes, timeout_seconds=0)
     with pytest.raises(ValueError, match="effect_not_applied_statuses"):
@@ -277,6 +251,7 @@ def test_http_adapter_rejects_unsafe_transport_and_bad_no_effect_contract():
                     "args_mode": "json", "effect_not_applied_statuses": [200, 422],
                 }
             },
+            bearer_token="test-service-token",
             timeout_seconds=1,
         )
     with pytest.raises(ValueError, match="effect_not_applied_statuses"):
@@ -288,5 +263,6 @@ def test_http_adapter_rejects_unsafe_transport_and_bad_no_effect_contract():
                     "args_mode": "json", "effect_not_applied_statuses": [422, 422],
                 }
             },
+            bearer_token="test-service-token",
             timeout_seconds=1,
         )
