@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
+import threading
 import uuid
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -9,9 +12,19 @@ import httpx
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.store.memory import InMemoryStore
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+from pydantic import Field
 
+from agent.langgraph_adapter import (
+    PACAArgsModel,
+    PACAOperation,
+    build_paca_langgraph_agent,
+)
+from agent.paca_client import PACAClient
 from paca_service.adapters import AdapterRouter, SandboxedFileAdapter
 from paca_service.app import create_app
 from paca_service.auth import AuthenticationError, JWTAuthenticator
@@ -257,6 +270,101 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
                 },
             )
             assert wrong_tenant.status_code == 404, wrong_tenant.text
+
+            # Exercise the same protected file.read action through an actual LangGraph
+            # StateGraph/ToolNode and the real FastAPI + OIDC + OPA + PostgreSQL service.
+            # PACAClient uses urllib, so this local HTTP bridge forwards its requests
+            # into the live TestClient app rather than faking gateway responses.
+            class PACAClientBridgeHandler(BaseHTTPRequestHandler):
+                def _forward(self, method: str) -> None:
+                    raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                    payload = json.loads(raw) if raw else None
+                    headers = {"Authorization": self.headers["Authorization"]}
+                    idempotency_key = self.headers.get("Idempotency-Key")
+                    if idempotency_key:
+                        headers["Idempotency-Key"] = idempotency_key
+                    response = client.request(method, self.path, json=payload, headers=headers)
+                    encoded = response.content
+                    self.send_response(response.status_code)
+                    self.send_header(
+                        "Content-Type",
+                        response.headers.get("content-type", "application/json"),
+                    )
+                    self.send_header("Content-Length", str(len(encoded)))
+                    self.end_headers()
+                    self.wfile.write(encoded)
+
+                def do_POST(self) -> None:
+                    self._forward("POST")
+
+                def do_GET(self) -> None:
+                    self._forward("GET")
+
+                def log_message(self, *_args) -> None:
+                    pass
+
+            class ReadFileArgs(PACAArgsModel):
+                resource_id: str = Field(min_length=1, max_length=256)
+
+            class DeterministicLangGraphModel:
+                def bind_tools(self, tools):
+                    self.tools = list(tools)
+                    return self
+
+                def invoke(self, messages, config=None):
+                    latest = messages[-1]
+                    if isinstance(latest, ToolMessage):
+                        observed = json.loads(latest.content)
+                        assert observed["status"] == "succeeded"
+                        assert observed["result"]["content"] == content
+                        return AIMessage(content="LangGraph received the PACA-authorized file.")
+                    return AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": "read_file",
+                                "args": {"resource_id": resource_id},
+                                "id": "oidc-e2e-langgraph-read-1",
+                                "type": "tool_call",
+                            }
+                        ],
+                    )
+
+            bridge = HTTPServer(("127.0.0.1", 0), PACAClientBridgeHandler)
+            bridge_thread = threading.Thread(target=bridge.serve_forever, daemon=True)
+            bridge_thread.start()
+            try:
+                langgraph_client = PACAClient(
+                    f"http://127.0.0.1:{bridge.server_port}",
+                    access_token=token,
+                )
+                operation = PACAOperation(
+                    name="read_file",
+                    description="Read a file through PACA++ policy authorization.",
+                    action="file.read",
+                    resource_id_field="resource_id",
+                    args_schema=ReadFileArgs,
+                )
+                model = DeterministicLangGraphModel()
+                graph = build_paca_langgraph_agent(
+                    model=model,
+                    paca_client=langgraph_client,
+                    operations=[operation],
+                    checkpointer=InMemorySaver(),
+                    store=InMemoryStore(),
+                )
+                graph_result = graph.invoke(
+                    {"messages": [HumanMessage(content="Read the authorized OIDC test file.")]},
+                    {"configurable": {"thread_id": "oidc-e2e-langgraph-thread"}},
+                )
+                assert graph_result["messages"][-1].content == (
+                    "LangGraph received the PACA-authorized file."
+                )
+                assert [tool.name for tool in model.tools] == ["read_file"]
+            finally:
+                bridge.shutdown()
+                bridge_thread.join()
+                bridge.server_close()
     finally:
         # Audit events are append-only by design, including for the runtime role.
         # Preserve those evidence records; clean only the FK-linked mutable test rows.
