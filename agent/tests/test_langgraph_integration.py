@@ -208,7 +208,7 @@ def test_unknown_execution_replay_reuses_same_permit_and_idempotency_key(tmp_pat
                 config=config,
             )
         # Reopen the file-backed ledger to verify that permit and key survive
-        # a process/connection restart. The host replays the original tool-call ID.
+        # an operation-ledger reopen. The host replays the original tool-call ID.
         ledger.close()
         ledger = SQLiteOperationLedger(ledger_path)
         retry_model = ScriptedToolModel("read_document", "call-replay")
