@@ -22,7 +22,7 @@ These areas are related but distinct: enterprise authorization is the primary ar
 
 | Path | Role | Evidence and limits |
 |---|---|---|
-| `production_service/` | Separate FastAPI authorization gateway using verified JWTs, OPA, PostgreSQL permits/executions, RLS and configured effect adapters | Main controlled-evaluation service. See its README and threat model. |
+| `production_service/` | Separate FastAPI authorization gateway using verified RS256 access tokens, OPA, PostgreSQL permits/executions, RLS and configured effect adapters | Main controlled-evaluation service. Access tokens must include the configured access-only purpose claim (`token_use=access` by default). See its README, identity-provider contract and threat model. |
 | `prototype/` | Python research prototype: legacy in-memory engine plus a separate OPA/OIDC hardening path, agent boundaries/runtime, SQLite and PostgreSQL stores | Useful for experiments. Its stores and identity/context model are not interchangeable with the production service. |
 | `compiler/` and root `tests/` | Experimental parser/emitter for a limited policy subset | Not a complete or standards-compatible ALFA/UCON+ compiler. Tests do not prove ASP/Cedar semantic equivalence. |
 | `legacy_policy_engine/` | Older policy parser, compiler/evaluator and engine package | Separate historical implementation; not part of the production-service API and not covered by the current root CI workflow. |
@@ -33,7 +33,7 @@ Do not infer that a feature in one path is automatically present in another. In 
 
 ## Production-service quick start
 
-Follow [production_service/README.md](production_service/README.md) from its own directory. Use a fresh local evaluation environment, generate independent secrets, configure a real test OIDC issuer/JWKS endpoint, provision trusted resource facts, and verify both `/healthz` and `/readyz`.
+Follow [production_service/README.md](production_service/README.md) from its own directory. Use a fresh local evaluation environment, generate independent secrets, configure a real OIDC issuer/JWKS endpoint with an access-only `token_use=access` claim, provision trusted resource facts, and verify both `/healthz` and `/readyz`.
 
 The checked-in example identity-provider values and HMAC key are placeholders. Replace them before use. Existing database volumes require the documented, backup-first upgrade procedure; restarting containers alone does not apply migrations or grants.
 
@@ -61,4 +61,4 @@ The prototype's deterministic scenarios are a small hand-authored test set, not 
 
 PACA++ is a research/engineering foundation with meaningful implemented controls. It is **not production-certified**, independently audited, formally verified, or proven superior to OPA, Cedar, commercial IAM products, or other agent-security systems. Do not claim complete IAM, universal prompt-injection prevention, exactly-once remote execution, tamper-proof audit against administrators, full ALFA/UCON+ support, or demonstrated benchmark superiority without new evidence.
 
-See [the architecture and scope contract](docs/ARCHITECTURE_AND_SCOPE.md), [production-service threat model](production_service/THREAT_MODEL.md), and [prototype hardening guide](prototype/docs/SECURITY_HARDENING.md). The file [prototype/THREAT_MODEL.md](prototype/THREAT_MODEL.md) applies only to the legacy in-memory engine; agent-boundary coverage and gaps are in [prototype/docs/THREAT_COVERAGE.md](prototype/docs/THREAT_COVERAGE.md).
+See the [architecture and scope contract](docs/ARCHITECTURE_AND_SCOPE.md), [security baseline and prioritized gaps](docs/SECURITY_BASELINE.md), [production-service threat model](production_service/THREAT_MODEL.md), and [prototype hardening guide](prototype/docs/SECURITY_HARDENING.md). The file [prototype/THREAT_MODEL.md](prototype/THREAT_MODEL.md) applies only to the legacy in-memory engine; agent-boundary coverage and gaps are in [prototype/docs/THREAT_COVERAGE.md](prototype/docs/THREAT_COVERAGE.md).
