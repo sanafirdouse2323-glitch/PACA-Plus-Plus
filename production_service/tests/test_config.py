@@ -73,3 +73,31 @@ def test_tenant_context_key_must_be_256_bit_hex():
 def test_tenant_context_key_id_is_strictly_validated():
     with pytest.raises(ConfigurationError, match="KEY_ID"):
         Settings.from_env(base_env(PACA_TENANT_CONTEXT_KEY_ID="bad key id"))
+
+
+def test_access_token_purpose_claim_is_configurable_and_defaults_to_access():
+    settings = Settings.from_env(base_env())
+    assert settings.jwt_token_use_claim == "token_use"
+    assert settings.jwt_expected_token_use == "access"
+
+    custom = Settings.from_env(
+        base_env(
+            PACA_JWT_TOKEN_USE_CLAIM="paca_token_type",
+            PACA_JWT_EXPECTED_TOKEN_USE="api_access",
+        )
+    )
+    assert custom.jwt_token_use_claim == "paca_token_type"
+    assert custom.jwt_expected_token_use == "api_access"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"PACA_JWT_TOKEN_USE_CLAIM": ""},
+        {"PACA_JWT_TOKEN_USE_CLAIM": "bad claim name"},
+        {"PACA_JWT_EXPECTED_TOKEN_USE": ""},
+    ],
+)
+def test_invalid_access_token_purpose_configuration_is_rejected(overrides):
+    with pytest.raises(ConfigurationError, match="TOKEN_USE"):
+        Settings.from_env(base_env(**overrides))
