@@ -12,10 +12,6 @@ import httpx
 import psycopg
 import pytest
 import uvicorn
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from psycopg.rows import dict_row
-from psycopg.types.json import Jsonb
-
 from agent.langgraph_integration.paca_tools import (
     ActionSpec,
     PACALangGraphError,
@@ -23,6 +19,10 @@ from agent.langgraph_integration.paca_tools import (
     build_paca_langgraph_agent,
 )
 from agent.paca_client import PACAClient
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
+
 from paca_service.adapters import AdapterRouter, SandboxedFileAdapter
 from paca_service.app import create_app
 from paca_service.auth import AuthenticationError, JWTAuthenticator
