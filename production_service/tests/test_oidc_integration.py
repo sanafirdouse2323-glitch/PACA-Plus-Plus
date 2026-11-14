@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import os
+import socket
+import threading
+import time
 import uuid
 from pathlib import Path
 from urllib.parse import urljoin
+
+import uvicorn
 
 import httpx
 import psycopg
@@ -17,6 +22,15 @@ from paca_service.auth import AuthenticationError, JWTAuthenticator
 from paca_service.config import Settings
 from paca_service.opa import OPAClient
 from paca_service.store import PostgresStore
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+from agent.paca_client import PACAClient
+from agent.langgraph_integration.paca_tools import (
+    ActionSpec,
+    PACALangGraphError,
+    SQLiteOperationLedger,
+    build_paca_langgraph_agent,
+)
 
 REALM_URL = os.getenv("PACA_TEST_OIDC_REALM_URL", "").rstrip("/")
 DATABASE_URL = os.getenv("PACA_TEST_DATABASE_URL", "")
@@ -175,22 +189,6 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
     )
 
     try:
-        import socket
-        import threading
-        import time
-
-        import uvicorn
-
-        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-
-        from agent.paca_client import PACAClient
-        from agent.langgraph_integration.paca_tools import (
-            ActionSpec,
-            PACALangGraphError,
-            SQLiteOperationLedger,
-            build_paca_langgraph_agent,
-        )
-
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind(("127.0.0.1", 0))
@@ -289,7 +287,7 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
                         self.calls = 0
                         self.bound_tool_names: list[str] = []
 
-                    def bind_tools(self, tools: list[object]) -> "RealServiceToolModel":
+                    def bind_tools(self, tools: list[object]) -> RealServiceToolModel:
                         self.bound_tool_names = [item.name for item in tools]
                         return self
 
