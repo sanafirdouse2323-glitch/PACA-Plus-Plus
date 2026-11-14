@@ -87,18 +87,20 @@ def _oauth_client_configuration(
     prefix: str,
     *,
     static_token: str | None,
-) -> tuple[str | None, str | None, str | None, str | None]:
+) -> tuple[str | None, str | None, str | None, str | None, str | None]:
     token_url_name = f"{prefix}_OAUTH_TOKEN_URL"
     client_id_name = f"{prefix}_OAUTH_CLIENT_ID"
     client_secret_name = f"{prefix}_OAUTH_CLIENT_SECRET"
     scope_name = f"{prefix}_OAUTH_SCOPE"
+    resource_name = f"{prefix}_OAUTH_RESOURCE"
     raw_url = env.get(token_url_name, "").strip()
     raw_client_id = env.get(client_id_name, "")
     raw_client_secret = env.get(client_secret_name, "")
     raw_scope = env.get(scope_name, "")
-    configured = any((raw_url, raw_client_id, raw_client_secret, raw_scope))
+    raw_resource = env.get(resource_name, "").strip()
+    configured = any((raw_url, raw_client_id, raw_client_secret, raw_scope, raw_resource))
     if not configured:
-        return None, None, None, None
+        return None, None, None, None, None
     if static_token:
         raise ConfigurationError(
             f"{prefix}_BEARER_TOKEN and {prefix}_OAUTH_* settings are mutually exclusive."
@@ -124,7 +126,21 @@ def _oauth_client_configuration(
         or len(raw_scope) > 1024
     ):
         raise ConfigurationError(f"{scope_name} is invalid.")
-    return token_url, raw_client_id, raw_client_secret, raw_scope or None
+    resource = None
+    if raw_resource:
+        resource_parts = urlsplit(raw_resource)
+        if (
+            any(ch.isspace() for ch in raw_resource)
+            or not resource_parts.scheme
+            or resource_parts.fragment
+            or resource_parts.username
+            or resource_parts.password
+        ):
+            raise ConfigurationError(
+                f"{resource_name} must be an absolute resource URI without credentials or fragment."
+            )
+        resource = raw_resource
+    return token_url, raw_client_id, raw_client_secret, raw_scope or None, resource
 
 
 @dataclass(frozen=True)
@@ -153,10 +169,12 @@ class Settings:
     opa_oauth_client_id: str | None = None
     opa_oauth_client_secret: str | None = field(default=None, repr=False)
     opa_oauth_scope: str | None = None
+    opa_oauth_resource: str | None = None
     api_oauth_token_url: str | None = None
     api_oauth_client_id: str | None = None
     api_oauth_client_secret: str | None = field(default=None, repr=False)
     api_oauth_scope: str | None = None
+    api_oauth_resource: str | None = None
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> Settings:
@@ -194,10 +212,15 @@ class Settings:
             opa_oauth_client_id,
             opa_oauth_client_secret,
             opa_oauth_scope,
+            opa_oauth_resource,
         ) = _oauth_client_configuration(
             env, "PACA_OPA", static_token=opa_bearer_token
         )
         opa_host = urlsplit(opa_url).hostname.lower().rstrip(".")
+        if opa_host not in _LOOPBACK_HOSTS | {"opa"} and opa_oauth_token_url and not opa_oauth_resource:
+            raise ConfigurationError(
+                "Remote OPA OAuth credentials require PACA_OPA_OAUTH_RESOURCE for audience restriction."
+            )
         if (
             opa_host not in _LOOPBACK_HOSTS | {"opa"}
             and not opa_bearer_token
@@ -261,6 +284,7 @@ class Settings:
             api_oauth_client_id,
             api_oauth_client_secret,
             api_oauth_scope,
+            api_oauth_resource,
         ) = _oauth_client_configuration(
             env, "PACA_API", static_token=api_bearer_token
         )
@@ -270,6 +294,10 @@ class Settings:
             )
         if base and routes:
             api_host = urlsplit(base).hostname.lower().rstrip(".")
+            if api_host not in _LOOPBACK_HOSTS and api_oauth_token_url and not api_oauth_resource:
+                raise ConfigurationError(
+                    "Remote downstream OAuth credentials require PACA_API_OAUTH_RESOURCE for audience restriction."
+                )
             if (
                 api_host not in _LOOPBACK_HOSTS
                 and not api_bearer_token
@@ -281,6 +309,14 @@ class Settings:
 
         # OPA and downstream APIs are separate service identities. Refuse
         # accidental credential reuse rather than relying only on documentation.
+        if opa_oauth_resource and api_oauth_resource:
+            if hmac.compare_digest(
+                opa_oauth_resource.encode("utf-8"),
+                api_oauth_resource.encode("utf-8"),
+            ):
+                raise ConfigurationError(
+                    "OPA and downstream API OAuth resource indicators must be different."
+                )
         if opa_oauth_client_id and api_oauth_client_id:
             if opa_oauth_client_id == api_oauth_client_id:
                 raise ConfigurationError(
@@ -328,8 +364,10 @@ class Settings:
             opa_oauth_client_id=opa_oauth_client_id,
             opa_oauth_client_secret=opa_oauth_client_secret,
             opa_oauth_scope=opa_oauth_scope,
+            opa_oauth_resource=opa_oauth_resource,
             api_oauth_token_url=api_oauth_token_url,
             api_oauth_client_id=api_oauth_client_id,
             api_oauth_client_secret=api_oauth_client_secret,
             api_oauth_scope=api_oauth_scope,
+            api_oauth_resource=api_oauth_resource,
         )

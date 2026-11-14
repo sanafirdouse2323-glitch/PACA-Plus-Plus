@@ -28,6 +28,7 @@ def make_provider(handler, *, clock=lambda: 100.0, client=None, skew=30):
         "paca-service-client",
         "test-client-secret",
         scope="opa.decide service.execute",
+        resource="https://opa.example.org/",
         client=http,
         clock=clock,
         refresh_skew_seconds=skew,
@@ -60,6 +61,7 @@ def test_client_credentials_uses_basic_auth_and_caches_token_until_refresh_windo
         assert dict(httpx.QueryParams(request.content.decode())) == {
             "grant_type": "client_credentials",
             "scope": "opa.decide service.execute",
+            "resource": "https://opa.example.org/",
         }
     finally:
         provider.close()
@@ -286,3 +288,46 @@ def test_oauth_token_response_rejects_non_finite_expiry_json(expires_in_json):
             provider.get_token()
     finally:
         provider.close()
+
+
+
+def test_oauth_resource_indicator_is_sent_as_rfc8707_form_parameter():
+    observed = []
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: observed.append(request) or token_response("resource-bound-token")
+        )
+    )
+    provider = ClientCredentialsTokenProvider(
+        "https://identity.example.org/oauth/token",
+        "paca-opa",
+        "opa-secret",
+        scope="opa.decide",
+        resource="https://opa.example.org/",
+        client=client,
+    )
+    try:
+        assert provider.get_token() == "resource-bound-token"
+        form = dict(httpx.QueryParams(observed[0].content.decode()))
+        assert form == {
+            "grant_type": "client_credentials",
+            "scope": "opa.decide",
+            "resource": "https://opa.example.org/",
+        }
+    finally:
+        provider.close()
+        client.close()
+
+
+@pytest.mark.parametrize(
+    "resource",
+    ["", "not-a-uri", "https://opa.example.org/#fragment", "https://u:p@opa.example.org/"],
+)
+def test_oauth_resource_indicator_rejects_invalid_uri(resource):
+    with pytest.raises(ValueError, match="resource_indicator_invalid"):
+        ClientCredentialsTokenProvider(
+            "https://identity.example.org/oauth/token",
+            "paca-opa",
+            "opa-secret",
+            resource=resource,
+        )

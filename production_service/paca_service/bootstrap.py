@@ -31,6 +31,7 @@ opa_token_provider = (
         settings.opa_oauth_client_id or "",
         settings.opa_oauth_client_secret or "",
         scope=settings.opa_oauth_scope,
+        resource=settings.opa_oauth_resource,
         timeout_seconds=settings.opa_timeout_seconds,
     )
     if settings.opa_oauth_token_url
@@ -61,6 +62,7 @@ if settings.api_routes:
             settings.api_oauth_client_id or "",
             settings.api_oauth_client_secret or "",
             scope=settings.api_oauth_scope,
+            resource=settings.api_oauth_resource,
             timeout_seconds=settings.execution_timeout_seconds,
         )
         if settings.api_oauth_token_url

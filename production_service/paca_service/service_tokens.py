@@ -45,6 +45,7 @@ class ClientCredentialsTokenProvider:
         client_secret: str,
         *,
         scope: str | None = None,
+        resource: str | None = None,
         timeout_seconds: float = 5.0,
         refresh_skew_seconds: float = 30.0,
         max_response_bytes: int = 65_536,
@@ -72,6 +73,22 @@ class ClientCredentialsTokenProvider:
             or len(scope) > 1024
         ):
             raise ValueError("oauth_scope_invalid")
+        if resource is not None:
+            if (
+                not isinstance(resource, str)
+                or not resource
+                or resource.strip() != resource
+                or any(ch.isspace() for ch in resource)
+            ):
+                raise ValueError("oauth_resource_indicator_invalid")
+            resource_parts = urlsplit(resource)
+            if (
+                not resource_parts.scheme
+                or resource_parts.fragment
+                or resource_parts.username
+                or resource_parts.password
+            ):
+                raise ValueError("oauth_resource_indicator_invalid")
         if (
             not isinstance(timeout_seconds, (int, float))
             or isinstance(timeout_seconds, bool)
@@ -100,6 +117,7 @@ class ClientCredentialsTokenProvider:
         self.client_id = client_id
         self.client_secret = client_secret
         self.scope = scope
+        self.resource = resource
         self.refresh_skew_seconds = float(refresh_skew_seconds)
         self.max_response_bytes = max_response_bytes
         self._clock = clock
@@ -119,6 +137,8 @@ class ClientCredentialsTokenProvider:
         form = {"grant_type": "client_credentials"}
         if self.scope:
             form["scope"] = self.scope
+        if self.resource:
+            form["resource"] = self.resource
         # RFC 6749 client_secret_basic form-encodes each credential before
         # joining with ':' and Base64 encoding the result.
         encoded_id = quote_plus(self.client_id, safe="")
