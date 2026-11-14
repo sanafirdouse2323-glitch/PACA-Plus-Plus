@@ -70,3 +70,38 @@ def test_client_rejects_invalid_configuration_and_key():
         client.authorize_and_execute(
             action="file.read", resource_id="r", arguments={}, idempotency_key="bad\nkey"
         )
+
+
+
+def test_client_does_not_follow_redirects():
+    import pytest
+    from paca_client import PACARequestError
+
+    observed = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            observed.append(self.path)
+            self.send_response(302)
+            self.send_header("Location", "http://127.0.0.1:1/collect")
+            self.end_headers()
+
+        def log_message(self, *_args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        client = PACAClient(f"http://127.0.0.1:{server.server_port}", "test-token")
+        with pytest.raises(PACARequestError) as error:
+            client.authorize_and_execute(
+                action="file.read", resource_id="report-1", arguments={},
+                idempotency_key="stable-operation-2",
+            )
+        assert error.value.status == 302
+        assert observed == ["/v1/authorizations"]
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
