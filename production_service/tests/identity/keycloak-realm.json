@@ -10,20 +10,114 @@
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": true,
-      "directAccessGrantsEnabled": true,
-      "standardFlowEnabled": false,
-      "implicitFlowEnabled": false,
       "serviceAccountsEnabled": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "fullScopeAllowed": false
+    },
+    {
+      "clientId": "paca-e2e-client",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "paca-e2e-only-client-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
       "fullScopeAllowed": true,
       "protocolMappers": [
         {
           "name": "paca-tenant-id",
           "protocol": "openid-connect",
-          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
           "consentRequired": false,
           "config": {
-            "user.attribute": "tenant_id",
             "claim.name": "tenant_id",
+            "claim.value": "tenant-e2e",
+            "jsonType.label": "String",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "paca-token-use",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "token_use",
+            "claim.value": "access",
+            "jsonType.label": "String",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "paca-operation-scopes",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "scopes",
+            "claim.value": "[\"file:read\",\"file:create\"]",
+            "jsonType.label": "JSON",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "paca-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "paca-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "paca-other-e2e-client",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "paca-other-e2e-only-client-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "paca-tenant-id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "tenant_id",
+            "claim.value": "tenant-other",
+            "jsonType.label": "String",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "paca-token-use",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "token_use",
+            "claim.value": "access",
             "jsonType.label": "String",
             "id.token.claim": "false",
             "access.token.claim": "true",
@@ -62,56 +156,13 @@
       "clientId": "wrong-audience-client",
       "enabled": true,
       "protocol": "openid-connect",
-      "publicClient": true,
-      "directAccessGrantsEnabled": true,
+      "publicClient": false,
+      "secret": "wrong-audience-only-client-secret",
+      "serviceAccountsEnabled": true,
       "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
       "implicitFlowEnabled": false,
-      "serviceAccountsEnabled": false,
       "fullScopeAllowed": true
-    }
-  ],
-  "users": [
-    {
-      "username": "paca-e2e-user",
-      "enabled": true,
-      "emailVerified": true,
-      "attributes": {
-        "tenant_id": [
-          "tenant-e2e"
-        ]
-      },
-      "credentials": [
-        {
-          "type": "password",
-          "value": "paca-e2e-only-password",
-          "temporary": false
-        }
-      ],
-      "firstName": "PACA",
-      "lastName": "E2E User",
-      "email": "paca-e2e-user@example.test",
-      "requiredActions": []
-    },
-    {
-      "username": "paca-other-user",
-      "enabled": true,
-      "emailVerified": true,
-      "attributes": {
-        "tenant_id": [
-          "tenant-other"
-        ]
-      },
-      "credentials": [
-        {
-          "type": "password",
-          "value": "paca-e2e-only-password",
-          "temporary": false
-        }
-      ],
-      "firstName": "Other",
-      "lastName": "Tenant User",
-      "email": "paca-other-user@example.test",
-      "requiredActions": []
     }
   ]
 }
