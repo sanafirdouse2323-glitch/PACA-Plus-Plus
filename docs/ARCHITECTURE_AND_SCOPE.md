@@ -43,13 +43,14 @@ The production service validates tokens from one configured OIDC issuer/audience
 | `prototype/` | Research prototype, legacy in-memory example, separate OPA/OIDC hardening path, agent boundaries/reference runtime and prototype stores | Same schema, same identity model or same RLS guarantees as production_service |
 | `compiler/` | Experimental parser/emitter for an explicitly limited policy subset | Complete ALFA/UCON+ support or semantic equivalence between ASP and Cedar |
 | `legacy_policy_engine/` | Preserved historical implementation | Supported production API or root-CI coverage unless explicitly wired into CI |
-| `agent/` | Thin standard-library client for the production-service authorize/execute API, plus tests | A full LLM agent, framework adapter, or proof that all host effects use the gateway |\n| `archive/paca-plus-plus-new/` | Text snapshot and recovery notes from the separate newer repository | Current source, importable modules, runnable package, or evidence for this repository |
+| `agent/` | Thin standard-library client for the production-service authorize/execute API, plus tests | A full LLM agent, framework adapter, or proof that all host effects use the gateway |
+| `archive/paca-plus-plus-new/` | Text snapshot and recovery notes from the separate newer repository | Current source, importable modules, runnable package, or evidence for this repository |
 
 A test result belongs to the component and exact commit that ran it. Never transfer a passing result from one component to another.
 
 ## 4. Separate successor repository and archival snapshot
 
-[\u200bPACA-Plus-Plus-New](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus-New) is a separate, provenance-focused LLM-agent reference-monitor project. Its in-process monitor, author-written simulation, optional AgentDojo integration and benchmark evidence are not the implementation or test suite of this repository's FastAPI/PostgreSQL service. Do not transfer feature claims, test results or benchmark numbers between the repositories.
+[PACA-Plus-Plus-New](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus-New) is a separate, provenance-focused LLM-agent reference-monitor project. Its in-process monitor, author-written simulation, optional AgentDojo integration and benchmark evidence are not the implementation or test suite of this repository's FastAPI/PostgreSQL service. Do not transfer feature claims, test results or benchmark numbers between the repositories.
 
 The `archive/paca-plus-plus-new/` directory in this repository is a text-only historical snapshot with recovery notes. It is not a working copy of the newer repository and must not be imported as application code. Use the standalone repository for its current source.
 
