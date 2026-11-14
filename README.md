@@ -1,56 +1,56 @@
-# PACA++ — authorization research prototype
+# PACA++ — policy-aware authorization and controlled action
 
-PACA++ explores authorization correctness at the protected-effect boundary of LLM-agent systems: whether an authorization decision remains bound to the intended action, resource, policy and context when an effect is attempted.
+PACA++ is an **enterprise authorization research and engineering project**. Its central question is whether an authorization decision remains bound to the authenticated principal, tenant, action, resource, policy revision and trusted context when a protected effect is attempted.
 
-**Important scope boundary:** the repository's original goal mentions compiling ALFA/UCON+ policies to ASP and Cedar. `compiler/transpiler.py` contains an experimental parser/emitter for a small policy subset; it is **not** a complete or standards-compatible ALFA/UCON+ compiler. The current regression tests verify parsing and generated-text invariants, not semantic equivalence between Cedar and ASP.
+Its primary scope is **authorization enforcement at the protected-action boundary**, including controlled execution for AI-agent tools. It is not a complete identity and access management (IAM) suite, a general-purpose database security product, or a universal prompt-injection detector.
 
-## What is in this repository?
+## Accurate project positioning
 
-- **`legacy_policy_engine/`:** the usable source snapshot from the earlier `PACA-Plus-Plus-New` repository, relocated as a separate legacy package to avoid replacing similarly named files in the current compiler, prototype, or production service. Its dependency manifest and tests are included. The legacy source is not yet wired into the root CI and should be validated independently before it is treated as part of the supported API.
+- **Primary category — enterprise authorization architecture:** authenticate a caller, obtain trusted resource context, evaluate policy, issue a short-lived permit, re-check authorization at execution, and record the outcome.
+- **Important security capability — tenant isolation:** the production-service PostgreSQL implementation uses row-level security (RLS) backed by a short-lived HMAC-signed context verified inside PostgreSQL. This is tenant-level isolation; OPA and application checks still make principal/resource decisions.
+- **Application area — AI-agent authorization:** the prototype provides reference boundaries and a model-vendor-neutral guarded runtime. A host must integrate its actual model and tool adapters and must not expose bypass paths.
+- **Not a complete IAM replacement:** the repository does not provide a full identity lifecycle, user provisioning/deprovisioning, enterprise directory administration, access certification, or a complete SSO/MFA product.
 
-- **`compiler/` and root `tests/`:** an experimental policy-subset parser and text emitters, with regression tests for the supported subset. Unsupported entity mappings and semantics fail explicitly instead of silently generating an output.
-- **`prototype/`:** the legacy in-memory JSON-policy engine and simulated-effect CLI; a separate hardening path adds OPA, OIDC/JWKS verification, trusted authorization context, SQLite/PostgreSQL coordination, execution recovery, adapters, and a transactional audit outbox. The legacy engine and hardening path have different trust and durability properties.
-- **`production_service/`:** a separately packaged FastAPI gateway combining verified JWT authentication, an OPA/Rego decision, resource-context lookup, PostgreSQL permits/execution records, and configured effect adapters. It is not the compiler, and it is not the same implementation as the `prototype/` gateway.
+## Repository architecture — keep the implementations distinct
 
-See each package's README and threat model before selecting the correct path for an experiment.
+| Path | Role | Evidence and limits |
+|---|---|---|
+| `production_service/` | Separate FastAPI authorization gateway using verified JWTs, OPA, PostgreSQL permits/executions, RLS and configured effect adapters | Main controlled-evaluation service. See its README and threat model. |
+| `prototype/` | Python research prototype: legacy in-memory engine plus a separate OPA/OIDC hardening path, agent boundaries/runtime, SQLite and PostgreSQL stores | Useful for experiments. Its stores and identity/context model are not interchangeable with the production service. |
+| `compiler/` and root `tests/` | Experimental parser/emitter for a limited policy subset | Not a complete or standards-compatible ALFA/UCON+ compiler. Tests do not prove ASP/Cedar semantic equivalence. |
+| `legacy_policy_engine/` | Preserved legacy source snapshot | Separate compatibility material; not part of the production-service API and not covered by the root CI contract unless a workflow explicitly says so. |
+| `agent/` | Placeholder/mock-agent area | Not a supported real-agent framework integration. Use the prototype reference runtime as a starting point and integrate a real host explicitly. |
 
-## Run the compiler regression tests
+Do not infer that a feature in one path is automatically present in another. In particular, the prototype PostgreSQL store is not the production service's tenant-RLS boundary.
 
-From the repository root:
+## Production-service quick start
 
-```bash
-python -m pip install lark-parser
-PYTHONPATH=. python -m unittest discover -s tests -p "test_fuzzer.py" -v
-```
+Follow [production_service/README.md](production_service/README.md) from its own directory. Use a fresh local evaluation environment, generate independent secrets, configure a real test OIDC issuer/JWKS endpoint, provision trusted resource facts, and verify both `/healthz` and `/readyz`.
 
-These tests do not establish compiler equivalence, language conformance, or correctness for unsupported ALFA/UCON+ syntax.
+The checked-in example identity-provider values and HMAC key are placeholders. Replace them before use. Existing database volumes require the documented, backup-first upgrade procedure; restarting containers alone does not apply migrations or grants.
 
-## Run the research prototype
+## Tests and what they prove
 
-From `prototype/`:
+CI runs separate production-service, prototype/hardening and compiler workflows. A passing workflow proves only that the workflow's declared tests passed on the exact commit and environment.
 
-```bash
-python -m pip install -e ".[web,test]"
-python -m unittest discover -s tests -v
-python examples/demo.py
-python experiments/run_experiments.py
-```
+The production-service tests cover selected authentication/OPA flows, permit and execution behavior, PostgreSQL tenant RLS, signed-context forgery/replay attempts, privilege boundaries and adapter safety. They do **not** prove resistance to every attack, atomicity with arbitrary remote effects, or safe operation in an unreviewed deployment.
 
-The legacy engine and demo use simulated effects. The deterministic scenario file is a small, hand-authored test suite—not an external benchmark. CI checks that the checked-in scenario results are reproducible.
+The prototype's deterministic scenarios are a small hand-authored test set, not an external benchmark. Compiler regression tests cover the implemented subset and generated-text invariants, not language conformance or semantic equivalence.
 
-## Run the production-service scaffold
+## Deployment gates — before sensitive enterprise workloads
 
-Start with [the production-service setup guide](production_service/README.md) and [its threat model](production_service/THREAT_MODEL.md). A real configured OIDC issuer/JWKS endpoint and trusted resource data are required. The local Compose stack is for controlled evaluation, not approval to handle sensitive workloads.
+1. Complete a deployment-specific threat model and independent security review.
+2. Configure the real identity provider, issuer/audience/JWKS, trusted claim mapping and key-rotation/revocation process.
+3. Protect the API HMAC key independently from the database runtime credential; use separate migration/admin and runtime roles.
+4. Apply database upgrades only after a verified backup; test restore and key rotation.
+5. Keep OPA private and coordinate policy revision rollout with protected effects.
+6. Configure TLS ingress, network segmentation, egress allow-lists, rate/concurrency limits, secrets management, monitoring and incident response.
+7. Verify downstream idempotency and reconciliation for each external effect, including timeout and crash-after-commit cases.
+8. Integrate a real agent framework and test that every tool/effect path passes through the guard.
+9. Benchmark against relevant baselines using attack success, legitimate-task utility, false denials, latency and recovery metrics.
 
-## What passing tests mean—and do not mean
+## Research and product claims
 
-CI results show that specified tests passed on a particular commit. They do not establish universal security, exactly-once execution across an arbitrary remote service, formal verification, independent security audit, standards compliance, or research novelty. An audit trigger/hash chain inside a database is not tamper-proof against a database administrator. Remote effects need downstream idempotency and reconciliation; deployment also needs least-privilege credentials, verified TLS where applicable, controlled OPA policy rollout, monitoring, backups, and incident response.
+PACA++ is a research/engineering foundation with meaningful implemented controls. It is **not production-certified**, independently audited, formally verified, or proven superior to OPA, Cedar, commercial IAM products, or other agent-security systems. Do not claim complete IAM, universal prompt-injection prevention, exactly-once remote execution, tamper-proof audit against administrators, full ALFA/UCON+ support, or demonstrated benchmark superiority without new evidence.
 
-## Research status
-
-The current evidence is a research/engineering scaffold. Before claiming a novel contribution, the supported semantics and threat model need a reproducible specification, differential tests against relevant systems, and a literature/artifact comparison. A successful build is useful implementation evidence, not proof of novelty.
-
-
-## Consolidated repository note
-
-The usable legacy policy-engine source is included under [`legacy_policy_engine/`](legacy_policy_engine/). The prior `PACA-Plus-Plus-New` repository remains unchanged as a backup for now; this avoids destroying the source history while the consolidation is validated. The archived snapshot under `archive/paca-plus-plus-new/` is historical material, not an importable working package.
+See [the architecture and scope contract](docs/ARCHITECTURE_AND_SCOPE.md), [production-service threat model](production_service/THREAT_MODEL.md), and [prototype threat model](prototype/THREAT_MODEL.md) before making deployment or research claims.
