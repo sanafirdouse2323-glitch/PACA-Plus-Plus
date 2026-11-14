@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import re
@@ -277,6 +278,28 @@ class Settings:
                 raise ConfigurationError(
                     "Remote downstream API routes require PACA_API_BEARER_TOKEN or PACA_API_OAUTH_* client-credentials settings."
                 )
+
+        # OPA and downstream APIs are separate service identities. Refuse
+        # accidental credential reuse rather than relying only on documentation.
+        if opa_oauth_client_id and api_oauth_client_id:
+            if opa_oauth_client_id == api_oauth_client_id:
+                raise ConfigurationError(
+                    "OPA and downstream API OAuth clients must use different client IDs."
+                )
+            if hmac.compare_digest(
+                opa_oauth_client_secret.encode("utf-8"),
+                api_oauth_client_secret.encode("utf-8"),
+            ):
+                raise ConfigurationError(
+                    "OPA and downstream API OAuth clients must use different client secrets."
+                )
+        if opa_bearer_token and api_bearer_token and hmac.compare_digest(
+            opa_bearer_token.encode("utf-8"),
+            api_bearer_token.encode("utf-8"),
+        ):
+            raise ConfigurationError(
+                "OPA and downstream API static bearer tokens must be different."
+            )
 
         execution_timeout = _positive_float(env, "PACA_EXECUTION_TIMEOUT_SECONDS", "10", 120)
 
