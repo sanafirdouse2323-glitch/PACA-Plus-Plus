@@ -112,14 +112,14 @@ def _oauth_client_configuration(
     if (
         raw_client_id.strip() != raw_client_id
         or any(ch.isspace() for ch in raw_client_id)
-        or any(ch in raw_client_id for ch in "\\r\\n")
+        or any(ch in raw_client_id for ch in "\r\n")
     ):
         raise ConfigurationError(f"{client_id_name} must be a non-whitespace identifier.")
-    if any(ch in raw_client_secret for ch in "\\r\\n"):
+    if any(ch in raw_client_secret for ch in "\r\n"):
         raise ConfigurationError(f"{client_secret_name} must not contain CR or LF.")
     if raw_scope and (
         raw_scope.strip() != raw_scope
-        or any(ch in raw_scope for ch in "\\r\\n\\t")
+        or any(ch in raw_scope for ch in "\r\n\t")
         or len(raw_scope) > 1024
     ):
         raise ConfigurationError(f"{scope_name} is invalid.")
