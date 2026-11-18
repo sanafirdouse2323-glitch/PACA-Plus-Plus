@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>PACA++ Gateway Console</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink:#172033; --muted:#637086; --line:#dce3ec; --paper:#f5f7fb;
+      --panel:#fff; --blue:#234f9b; --blue-soft:#eaf1ff; --green:#176c4b;
+      --green-soft:#e8f6ef; --red:#a63030; --red-soft:#fff0ef;
+      --amber:#805b12; --amber-soft:#fff7e5;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+    header{background:#101d35;color:#fff;padding:26px max(22px,calc((100vw - 1160px)/2))}
+    header .eyebrow{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#a8c4ff;font-weight:700}
+    h1{font-size:clamp(25px,4vw,36px);line-height:1.15;margin:8px 0}
+    header p{max-width:760px;color:#d3dced;margin:8px 0 0}
+    main{max-width:1160px;margin:24px auto;padding:0 18px 40px}
+    .notice{border:1px solid #e8d7a8;background:var(--amber-soft);color:#59400d;border-radius:12px;padding:13px 15px;margin-bottom:18px}
+    .layout{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(320px,.95fr);gap:18px;align-items:start}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:19px;box-shadow:0 4px 18px rgba(26,45,78,.045)}
+    .card h2{font-size:17px;margin:0 0 5px}
+    .sub{font-size:13px;color:var(--muted);margin:0 0 16px}
+    label{display:block;font-weight:650;font-size:13px;margin:13px 0 6px}
+    input,select,textarea{width:100%;border:1px solid #cbd5e1;border-radius:9px;background:#fff;color:var(--ink);font:inherit;padding:10px 11px;outline:none}
+    input:focus,select:focus,textarea:focus{border-color:#4777c2;box-shadow:0 0 0 3px #e7efff}
+    textarea{min-height:110px;resize:vertical;font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
+    input:disabled,select:disabled,textarea:disabled{background:#f1f4f8;color:#657287}
+    .hint{font-size:12px;color:var(--muted);margin-top:5px}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .row>*{flex:1}
+    button{border:0;border-radius:9px;padding:10px 14px;font:650 14px inherit;cursor:pointer;background:var(--blue);color:#fff}
+    button.secondary{background:#eaf0f7;color:#22324c}
+    button.ghost{background:transparent;color:#29466f;border:1px solid var(--line)}
+    button:disabled{opacity:.48;cursor:not-allowed}
+    .actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:17px}
+    .actions button{flex:1;min-width:140px}
+    .status{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:700;background:#edf1f6;color:#536174}
+    .status:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+    .status.ok{background:var(--green-soft);color:var(--green)}
+    .status.bad{background:var(--red-soft);color:var(--red)}
+    .status.wait{background:var(--amber-soft);color:var(--amber)}
+    .fieldhead{display:flex;justify-content:space-between;gap:12px;align-items:center}
+    .step{border-top:1px solid var(--line);margin-top:17px;padding-top:16px}
+    .stephead{display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .stepnum{display:inline-grid;place-items:center;width:25px;height:25px;border-radius:50%;background:var(--blue-soft);color:var(--blue);font-weight:800;margin-right:8px;font-size:12px}
+    .output{background:#f7f9fc;border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:10px;min-height:54px;overflow-wrap:anywhere}
+    .output pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:7px 0 0;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;color:#334155}
+    .empty{color:#8a95a6;font-size:13px}
+    .kv{display:grid;grid-template-columns:130px 1fr;gap:5px 10px;font-size:13px}
+    .kv strong{color:#536174;font-weight:600}
+    .footer{font-size:12px;color:var(--muted);margin:18px 2px 0}
+    .wide{grid-column:1/-1}
+    @media(max-width:820px){.layout{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">Software systems · authorization enforcement</div>
+  <h1>PACA++ Gateway Console</h1>
+  <p>Interactive client for the PACA-Plus-Plus authorization service. Explore its two-stage permit and protected-execution protocol using an isolated test instance.</p>
+</header>
+<main>
+  <div class="notice"><strong>Test-environment warning:</strong> Connect only to an isolated PACA++ test deployment. Use a short-lived test access token, never a production credential. The token is kept in this page only and is not written to browser storage. The resource identifier must already be provisioned by the server; this page cannot grant permissions or create trusted resource facts.</div>
+  <div class="layout">
+    <section class="card">
+      <div class="fieldhead">
+        <h2>Connection and identity</h2>
+        <span id="connectionState" class="status">Not checked</span>
+      </div>
+      <p class="sub">The browser calls the API on the same origin that served this page. No external API host is accepted.</p>
+      <label for="token">Short-lived test access token</label>
+      <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste a test access token">
+      <div class="hint">The service validates signature, issuer, audience and the configured access-token-purpose claim. Do not paste an ID token.</div>
+      <div class="actions">
+        <button id="checkButton" class="secondary" type="button">Check service health</button>
+        <button id="clearButton" class="ghost" type="button">Clear session</button>
+      </div>
+      <div id="healthOutput" class="output"><span class="empty">Health and readiness checks have not been run.</span></div>
+
+      <div class="step">
+        <div class="stephead">
+          <h2><span class="stepnum">1</span>Request authorisation</h2>
+          <span id="permitState" class="status">No permit</span>
+        </div>
+        <p class="sub">The backend retrieves trusted resource context and evaluates the request through OPA before issuing a short-lived permit.</p>
+        <label for="action">Action</label>
+        <select id="action">
+          <option value="file.read">file.read — read a file</option>
+          <option value="file.create">file.create — create a file</option>
+          <option value="document.read">document.read — read a document</option>
+          <option value="document.update">document.update — update a document</option>
+          <option value="tool.invoke">tool.invoke — invoke a registered tool</option>
+        </select>
+        <label for="resource">Server-provisioned resource ID</label>
+        <input id="resource" value="file-1" maxlength="256" spellcheck="false">
+        <div class="hint">The default file-1 is used in the repository's service unit-test fixture. It is not guaranteed to exist in a different deployment.</div>
+        <label for="arguments">Operation arguments (JSON object)</label>
+        <textarea id="arguments" spellcheck="false">{}</textarea>
+        <div class="hint">Arguments are fingerprinted and bound to the permit. Changing them after authorisation requires a new permit.</div>
+        <div class="actions">
+          <button id="authorizeButton" type="button">Evaluate policy and request permit</button>
+        </div>
+        <div id="permitOutput" class="output"><span class="empty">No authorisation request has been submitted.</span></div>
+      </div>
+
+      <div class="step">
+        <div class="stephead">
+          <h2><span class="stepnum">2</span>Execute protected operation</h2>
+          <span id="executionState" class="status">Not executed</span>
+        </div>
+        <p class="sub">Execution sends the original action, resource and arguments with the issued permit and a stable idempotency key.</p>
+        <div class="actions">
+          <button id="executeButton" type="button" disabled>Execute with permit</button>
+          <button id="statusButton" class="secondary" type="button" disabled>Check execution status</button>
+        </div>
+        <div id="executionOutput" class="output"><span class="empty">Execution is unavailable until a permit has been issued.</span></div>
+      </div>
+    </section>
+
+    <aside class="card">
+      <h2>Request lifecycle</h2>
+      <p class="sub">What the service is expected to do at each boundary.</p>
+      <div class="output">
+        <div class="kv"><strong>Identity</strong><span>Verified bearer access token</span><strong>Context</strong><span>Server-side resource facts</span><strong>Policy</strong><span>OPA/Rego decision</span><strong>Permit</strong><span>Short-lived and request-bound</span><strong>Execution</strong><span>Permit and context rechecked</span><strong>Idempotency</strong><span>Stable key for the same logical effect</span></div>
+      </div>
+      <div class="step">
+        <h2>Live API responses</h2>
+        <p class="sub">Responses below are produced by the connected PACA++ service, not generated by this page.</p>
+        <div id="traceOutput" class="output"><span class="empty">No API response yet.</span></div>
+      </div>
+      <div class="step">
+        <h2>Evidence boundary</h2>
+        <p class="sub">This console demonstrates the API flow; it does not prove that all tools in an arbitrary host application pass through PACA++. Actual OIDC, PostgreSQL, OPA and adapter behaviour depends on the connected deployment and its configuration.</p>
+      </div>
+    </aside>
+  </div>
+  <p class="footer">PACA-Plus-Plus interactive API console · Same-origin requests only · No browser storage · No automatic retry of uncertain execution outcomes.</p>
+</main>
+<script>
+(() => {
+  "use strict";
+  const byId = (id) => document.getElementById(id);
+  const state = { permit: null, executionId: null, idempotencyKey: null, operation: null, busy: false };
+  const setBadge = (id, text, kind) => {
+    const el = byId(id); el.textContent = text; el.className = "status" + (kind ? " " + kind : "");
+  };
+  const show = (id, value) => {
+    const el = byId(id);
+    el.replaceChildren();
+    if (typeof value === "string") { el.textContent = value; return; }
+    const pre = document.createElement("pre");
+    pre.textContent = JSON.stringify(value, null, 2);
+    el.appendChild(pre);
+  };
+  const token = () => byId("token").value.trim();
+  const setBusy = (busy) => {
+    state.busy = busy;
+    byId("checkButton").disabled = busy;
+    byId("authorizeButton").disabled = busy || !token();
+    byId("executeButton").disabled = busy || !state.permit;
+    byId("statusButton").disabled = busy || !state.executionId;
+  };
+  const clearPermit = () => {
+    state.permit = null; state.executionId = null; state.idempotencyKey = null; state.operation = null;
+    ["action","resource","arguments"].forEach(id => { byId(id).disabled = false; });
+    setBadge("permitState","No permit","");
+    setBadge("executionState","Not executed","");
+    show("permitOutput","No authorisation request has been submitted.");
+    show("executionOutput","Execution is unavailable until a permit has been issued.");
+    setBusy(state.busy);
+  };
+  const currentOperation = () => {
+    const parsed = JSON.parse(byId("arguments").value);
+    if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("Arguments must be a JSON object.");
+    const resource = byId("resource").value.trim();
+    if (!resource) throw new Error("Resource ID is required.");
+    return { action: byId("action").value, resource_id: resource, arguments: parsed };
+  };
+  const request = async (path, options) => {
+    const headers = Object.assign({ "Accept":"application/json" }, options && options.headers ? options.headers : {});
+    if (options && options.auth) {
+      if (!token()) throw new Error("Enter a short-lived test access token first.");
+      headers.Authorization = "Bearer " + token();
+    }
+    if (options && options.body !== undefined) headers["Content-Type"] = "application/json";
+    const response = await fetch(path, {
+      method: options && options.method ? options.method : "GET",
+      headers,
+      body: options && options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      credentials: "same-origin",
+      cache: "no-store",
+      redirect: "error"
+    });
+    let data;
+    const text = await response.text();
+    try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw_response: text.slice(0, 4000) }; }
+    if (!response.ok) {
+      const err = new Error("HTTP " + response.status + ": " + JSON.stringify(data));
+      err.status = response.status; err.data = data; throw err;
+    }
+    return data;
+  };
+  const invalidateOnEdit = () => {
+    if (state.permit) clearPermit();
+  };
+  ["action","resource","arguments"].forEach(id => byId(id).addEventListener("input", invalidateOnEdit));
+  byId("token").addEventListener("input", () => {
+    byId("authorizeButton").disabled = state.busy || !token();
+  });
+
+  byId("checkButton").addEventListener("click", async () => {
+    setBusy(true); setBadge("connectionState","Checking","wait");
+    try {
+      const health = await request("/healthz");
+      const readiness = await request("/readyz");
+      show("healthOutput",{health,readiness});
+      setBadge("connectionState",readiness.status === "ready" ? "Ready" : "Not ready",readiness.status === "ready" ? "ok" : "bad");
+    } catch (err) {
+      show("healthOutput",{error:err.message});
+      setBadge("connectionState","Check failed","bad");
+    } finally { setBusy(false); }
+  });
+
+  byId("authorizeButton").addEventListener("click", async () => {
+    let operation;
+    try { operation = currentOperation(); }
+    catch (err) { show("permitOutput",{error:err.message}); return; }
+    setBusy(true); setBadge("permitState","Requesting","wait");
+    show("permitOutput","Submitting request to /v1/authorizations …");
+    try {
+      const permit = await request("/v1/authorizations",{method:"POST",auth:true,body:operation});
+      state.permit = permit;
+      state.operation = operation;
+      state.idempotencyKey = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : "paca-demo-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+      ["action","resource","arguments"].forEach(id => { byId(id).disabled = true; });
+      setBadge("permitState","Permit issued","ok");
+      setBadge("executionState","Ready to execute","wait");
+      show("permitOutput",permit);
+      show("traceOutput",{step:"Authorization",endpoint:"POST /v1/authorizations",request:operation,response:permit});
+    } catch (err) {
+      setBadge("permitState",err.status === 403 ? "Denied by policy" : "Request failed","bad");
+      show("permitOutput",{error:err.message, response:err.data || null});
+      show("traceOutput",{step:"Authorization",endpoint:"POST /v1/authorizations",request:operation,error:err.data || err.message});
+    } finally { setBusy(false); }
+  });
+
+  byId("executeButton").addEventListener("click", async () => {
+    if (!state.permit || !state.operation) return;
+    setBusy(true); setBadge("executionState","Executing","wait");
+    const body = Object.assign({}, state.operation, { permit_id: state.permit.permit_id });
+    show("executionOutput","Submitting protected execution …");
+    try {
+      const result = await request("/v1/executions",{
+        method:"POST",auth:true,headers:{"Idempotency-Key":state.idempotencyKey},body
+      });
+      if (result.execution_id) state.executionId = result.execution_id;
+      const status = result.status || "completed";
+      setBadge("executionState",status === "succeeded" ? "Succeeded" : status === "unknown" ? "Outcome unknown" : status,"" + (status === "succeeded" ? "ok" : status === "unknown" ? "wait" : ""));
+      show("executionOutput",{result,idempotency_key:state.idempotencyKey});
+      show("traceOutput",{step:"Execution",endpoint:"POST /v1/executions",request:body,response:result,idempotency_key:state.idempotencyKey});
+    } catch (err) {
+      setBadge("executionState","Execution error","bad");
+      show("executionOutput",{error:err.message,response:err.data || null,idempotency_key:state.idempotencyKey,note:"Do not create a new permit or idempotency key to retry an uncertain effect. Reconcile the original execution first."});
+      show("traceOutput",{step:"Execution",endpoint:"POST /v1/executions",error:err.data || err.message,idempotency_key:state.idempotencyKey});
+    } finally { setBusy(false); }
+  });
+
+  byId("statusButton").addEventListener("click", async () => {
+    if (!state.executionId) return;
+    setBusy(true);
+    try {
+      const status = await request("/v1/executions/" + encodeURIComponent(state.executionId),{auth:true});
+      setBadge("executionState",status.status || "Status retrieved",status.status === "succeeded" ? "ok" : status.status === "unknown" ? "wait" : "");
+      show("executionOutput",{execution_status:status,idempotency_key:state.idempotencyKey});
+      show("traceOutput",{step:"Status",endpoint:"GET /v1/executions/" + state.executionId,response:status});
+    } catch (err) {
+      show("executionOutput",{status_check_error:err.message,response:err.data || null});
+    } finally { setBusy(false); }
+  });
+
+  byId("clearButton").addEventListener("click", () => {
+    byId("token").value = "";
+    clearPermit();
+    show("healthOutput","Session cleared. No token was saved by this page.");
+    show("traceOutput","No API response yet.");
+    setBadge("connectionState","Not checked","");
+    setBusy(false);
+  });
+
+  byId("authorizeButton").disabled = true;
+  byId("executeButton").disabled = true;
+  byId("statusButton").disabled = true;
+})();
+</script>
+</body>
+</html>
