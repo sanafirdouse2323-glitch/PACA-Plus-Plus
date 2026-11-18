@@ -33,7 +33,7 @@
     .hint{font-size:12px;color:var(--muted);margin-top:5px}
     .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .row>*{flex:1}
-    button{border:0;border-radius:9px;padding:10px 14px;font:650 14px inherit;cursor:pointer;background:var(--blue);color:#fff}
+    button{border:0;border-radius:9px;padding:10px 14px;font:inherit;font-weight:650;font-size:14px;cursor:pointer;background:var(--blue);color:#fff}
     button.secondary{background:#eaf0f7;color:#22324c}
     button.ghost{background:transparent;color:#29466f;border:1px solid var(--line)}
     button:disabled{opacity:.48;cursor:not-allowed}
@@ -145,7 +145,7 @@
 (() => {
   "use strict";
   const byId = (id) => document.getElementById(id);
-  const state = { permit: null, executionId: null, idempotencyKey: null, operation: null, busy: false };
+  const state = { permit: null, executionId: null, idempotencyKey: null, operation: null, boundToken: null, busy: false };
   const setBadge = (id, text, kind) => {
     const el = byId(id); el.textContent = text; el.className = "status" + (kind ? " " + kind : "");
   };
@@ -166,7 +166,7 @@
     byId("statusButton").disabled = busy || !state.executionId;
   };
   const clearPermit = () => {
-    state.permit = null; state.executionId = null; state.idempotencyKey = null; state.operation = null;
+    state.permit = null; state.executionId = null; state.idempotencyKey = null; state.operation = null; state.boundToken = null;
     ["action","resource","arguments"].forEach(id => { byId(id).disabled = false; });
     setBadge("permitState","No permit","");
     setBadge("executionState","Not executed","");
@@ -210,6 +210,7 @@
   };
   ["action","resource","arguments"].forEach(id => byId(id).addEventListener("input", invalidateOnEdit));
   byId("token").addEventListener("input", () => {
+    if (state.permit && token() !== state.boundToken) clearPermit();
     byId("authorizeButton").disabled = state.busy || !token();
   });
 
@@ -236,6 +237,7 @@
       const permit = await request("/v1/authorizations",{method:"POST",auth:true,body:operation});
       state.permit = permit;
       state.operation = operation;
+      state.boundToken = token();
       state.idempotencyKey = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : "paca-demo-" + Date.now() + "-" + Math.random().toString(16).slice(2);
       ["action","resource","arguments"].forEach(id => { byId(id).disabled = true; });
       setBadge("permitState","Permit issued","ok");
