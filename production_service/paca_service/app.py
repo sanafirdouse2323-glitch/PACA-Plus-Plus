@@ -3,11 +3,12 @@ from __future__ import annotations
 import logging
 import re
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -104,6 +105,24 @@ def create_app(
         lifespan=lifespan,
     )
     app.add_middleware(RequestBoundaryMiddleware)
+
+    @app.get("/demo", include_in_schema=False)
+    def demo_console() -> FileResponse:
+        """Serve the same-origin interactive console for an isolated test instance."""
+        return FileResponse(
+            Path(__file__).with_name("demo.html"),
+            media_type="text/html",
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Security-Policy": (
+                    "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+                    "connect-src 'self'; img-src 'self' data:; object-src 'none'; "
+                    "base-uri 'none'; frame-ancestors 'none'"
+                ),
+                "X-Content-Type-Options": "nosniff",
+                "Referrer-Policy": "no-referrer",
+            },
+        )
     bearer = HTTPBearer(auto_error=False)
 
     @app.middleware("http")
