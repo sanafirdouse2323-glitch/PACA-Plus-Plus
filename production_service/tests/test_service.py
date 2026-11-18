@@ -373,3 +373,17 @@ def test_execution_status_is_scoped_to_authenticated_principal():
             headers={"Authorization": "Bearer not-valid"},
         )
         assert other.status_code == 401
+
+
+def test_interactive_demo_console_is_served_same_origin_without_browser_storage():
+    app, _, _, _ = make_client()
+    with TestClient(app) as client:
+        response = client.get("/demo")
+
+    assert response.status_code == 200
+    assert "PACA++ Gateway Console" in response.text
+    assert 'credentials: "same-origin"' in response.text
+    assert "localStorage" not in response.text
+    assert "sessionStorage" not in response.text
+    assert response.headers["cache-control"] == "no-store"
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
