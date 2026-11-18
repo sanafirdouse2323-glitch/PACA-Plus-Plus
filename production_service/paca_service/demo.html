@@ -161,7 +161,7 @@
   const setBusy = (busy) => {
     state.busy = busy;
     byId("checkButton").disabled = busy;
-    byId("authorizeButton").disabled = busy || !token();
+    byId("authorizeButton").disabled = busy || !token() || !!state.permit;
     byId("executeButton").disabled = busy || !state.permit;
     byId("statusButton").disabled = busy || !state.executionId;
   };
@@ -211,7 +211,7 @@
   ["action","resource","arguments"].forEach(id => byId(id).addEventListener("input", invalidateOnEdit));
   byId("token").addEventListener("input", () => {
     if (state.permit && token() !== state.boundToken) clearPermit();
-    byId("authorizeButton").disabled = state.busy || !token();
+    byId("authorizeButton").disabled = state.busy || !token() || !!state.permit;
   });
 
   byId("checkButton").addEventListener("click", async () => {
