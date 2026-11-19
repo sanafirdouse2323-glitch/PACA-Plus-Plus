@@ -162,6 +162,33 @@ Use repeated independent runs and enough trials to report uncertainty. For binar
 
 Do not choose or change scenarios after seeing which arm performs best. Publish negative results and unsupported cases. Any manual intervention, flaky trial, retry, or excluded observation must be recorded with a reason.
 
+### 5.5.1 Pre-registration and freeze gate
+
+The protocol is not ready for confirmatory data collection until an immutable preregistration manifest has been published. The protocol document and the completed manifest together define the frozen study. Complete this gate after any non-evaluative harness calibration and before collecting confirmatory benchmark results.
+
+The manifest must record, at minimum:
+
+- exact commit SHA for the PACA++ release candidate, the host/adapter harness, the OPA policy and each baseline implementation;
+- immutable container image digests, dependency lockfiles, configuration, hardware, operating system, database/OPA versions, network topology and test identity-provider configuration;
+- the full scenario matrix, generated-input rules, outcome oracle, state-reset procedure, concurrency schedule and failure-injection points;
+- the primary endpoint, comparison, scenario weights, minimum practically important effect, sample-size calculation, planned trial counts, confidence-interval method, exclusions and stopping rule;
+- the preregistration commit SHA and timestamp, plus hashes of the test inputs and analysis scripts.
+
+Use any pilot or calibration run only to verify that the harness, outcome oracle, reset process and instrumentation work. Label it non-evaluative, retain its record, and exclude its observations from the confirmatory analysis. Freeze the protocol and completed manifest after calibration but before the first confirmatory run. Do not use confirmatory outcomes to choose scenarios, weights, sample sizes, exclusions, or analysis methods.
+
+For confirmatory analysis:
+
+1. The **single primary contrast** is Arm C versus Arm B on the unauthorized-protected-effect rate. Arm A is a negative-control check, not a competitor and not part of the primary superiority contrast.
+2. Report every scenario separately. An aggregate attack rate may be reported only with predeclared weights; use equal scenario weights unless the manifest justifies and freezes another weighting scheme before data collection. Also report the unweighted scenario-level counts and denominators so the aggregate cannot conceal a weak area.
+3. Before confirmatory collection, set the minimum practically important absolute risk difference and the expected baseline event rate. Calculate and freeze the per-arm sample size for each primary scenario using a two-sided 5% type-I error rate and 90% power for the predeclared two-proportion comparison. Record the calculation method, assumptions, resulting N, and any multiplicity handling in the manifest. Do not increase N, stop early, or change the effect threshold after inspecting confirmatory outcomes. If the required sample size is infeasible, report the study as underpowered for that endpoint rather than relaxing the threshold after the fact.
+4. Treat one independently reset case or isolated state namespace with its own seeded inputs as the trial unit. Repeated requests against shared mutable state are not independent observations. Randomize or counterbalance arm order within each run block; record environment resets, failed starts, retries and excluded trials. A failure to reset state invalidates the affected block unless the preregistered recovery rule explicitly covers it.
+5. For binary outcomes, report the numerator, denominator and a preselected 95% confidence interval for each arm and the risk difference. For the primary contrast, use the preregistered two-proportion method. Treat other arm comparisons and unplanned subgroup analyses as exploratory; apply the preregistered multiplicity correction to any additional inferential tests.
+6. For latency, predeclare the warm-up count, measured request count, concurrency levels, block structure and percentile/interval method. Report raw distributions and per-block summaries. Do not treat latency samples from one sustained run as independent environment replications.
+7. Keep business logic, operation semantics, host code and downstream effect behavior equivalent across arms. The enforcement mechanism is the intended experimental difference. If an arm cannot execute an operation under equivalent conditions, mark that scenario unsupported for that arm and do not score it as a security win. Document any unavoidable baseline differences before freezing.
+8. After the manifest is frozen, any change to candidate code, policies, scenarios, oracle, harness, metrics or analysis creates a protocol deviation. Preserve the original frozen manifest and results, describe the deviation, and start a separately versioned confirmatory run when the change could affect outcomes.
+
+The assessor's release-candidate review and the comparative benchmark are separate engagements. A security finding may require code changes; those changes must produce a new candidate commit and new assessment/retest scope. Do not silently substitute a remediated commit for the candidate named in the original report.
+
 ### 5.6 Interpretation rules
 
 - A lower unauthorized-effect rate does not by itself establish overall superiority if legitimate utility, false-denial rate, or operational reliability materially worsens.
