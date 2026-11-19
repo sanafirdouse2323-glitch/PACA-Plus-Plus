@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <title>PACA++ Gateway Console</title>
-  <style>
+  <style nonce="__PACA_CSP_NONCE__">
     :root {
       color-scheme: light;
       --ink:#172033; --muted:#637086; --line:#dce3ec; --paper:#f5f7fb;
@@ -78,7 +78,7 @@
       <div class="hint">The service validates signature, issuer, audience and the configured access-token-purpose claim. Do not paste an ID token.</div>
       <div class="actions">
         <button id="checkButton" class="secondary" type="button">Check service health</button>
-        <button id="clearButton" class="ghost" type="button">Clear session</button>
+        <button id="clearButton" class="ghost" type="button">Clear local session</button>
       </div>
       <div id="healthOutput" class="output"><span class="empty">Health and readiness checks have not been run.</span></div>
 
@@ -96,6 +96,7 @@
           <option value="document.update">document.update — update a document</option>
           <option value="tool.invoke">tool.invoke — invoke a registered tool</option>
         </select>
+        <div id="actionHint" class="hint" aria-live="polite"></div>
         <label for="resource">Server-provisioned resource ID</label>
         <input id="resource" value="file-1" maxlength="256" spellcheck="false">
         <div class="hint">The default file-1 is used in the repository's service unit-test fixture. It is not guaranteed to exist in a different deployment.</div>
@@ -141,7 +142,7 @@
   </div>
   <p class="footer">PACA-Plus-Plus interactive API console · Same-origin requests only · No browser storage · No automatic retry of uncertain execution outcomes.</p>
 </main>
-<script>
+<script nonce="__PACA_CSP_NONCE__">
 (() => {
   "use strict";
   const byId = (id) => document.getElementById(id);
@@ -161,8 +162,13 @@
   const setBusy = (busy) => {
     state.busy = busy;
     byId("checkButton").disabled = busy;
+    byId("clearButton").disabled = busy;
+    byId("token").disabled = busy;
+    ["action","resource","arguments"].forEach(id => {
+      byId(id).disabled = busy || !!state.permit;
+    });
     byId("authorizeButton").disabled = busy || !token() || !!state.permit;
-    byId("executeButton").disabled = busy || !state.permit;
+    byId("executeButton").disabled = busy || !state.permit || !!state.executionId;
     byId("statusButton").disabled = busy || !state.executionId;
   };
   const clearPermit = () => {
@@ -184,8 +190,9 @@
   const request = async (path, options) => {
     const headers = Object.assign({ "Accept":"application/json" }, options && options.headers ? options.headers : {});
     if (options && options.auth) {
-      if (!token()) throw new Error("Enter a short-lived test access token first.");
-      headers.Authorization = "Bearer " + token();
+      const accessToken = options.accessToken !== undefined ? options.accessToken : token();
+      if (!accessToken) throw new Error("Enter a short-lived test access token first.");
+      headers.Authorization = "Bearer " + accessToken;
     }
     if (options && options.body !== undefined) headers["Content-Type"] = "application/json";
     const response = await fetch(path, {
@@ -208,10 +215,21 @@
   const invalidateOnEdit = () => {
     if (state.permit) clearPermit();
   };
+  const actionHints = {
+    "file.read": "Requires PACA_FILE_ROOT and a server-provisioned file resource whose trusted relative_path points to an existing UTF-8 regular file. Arguments: {}.",
+    "file.create": "Requires PACA_FILE_ROOT and a server-provisioned file resource. Arguments must contain only a string content field, for example {\"content\":\"example text\"}. The target file must not already exist.",
+    "document.read": "No document route is enabled by default. An administrator must configure a fixed HTTP API route for this action; its method, path and argument mode are server-controlled.",
+    "document.update": "No document route is enabled by default. An administrator must configure a fixed HTTP API route for this action; its method, path and argument mode are server-controlled.",
+    "tool.invoke": "The default bootstrap registers the read-only text.word_count example. Arguments: {\"name\":\"text.word_count\",\"input\":{\"text\":\"hello world\"}}. OPA and trusted claims must also authorize this tool."
+  };
+  const updateActionHint = () => {
+    byId("actionHint").textContent = actionHints[byId("action").value] || "Use only an action and argument shape configured by the administrator.";
+  };
   ["action","resource","arguments"].forEach(id => byId(id).addEventListener("input", invalidateOnEdit));
+  byId("action").addEventListener("change", updateActionHint);
   byId("token").addEventListener("input", () => {
     if (state.permit && token() !== state.boundToken) clearPermit();
-    byId("authorizeButton").disabled = state.busy || !token() || !!state.permit;
+    setBusy(state.busy);
   });
 
   byId("checkButton").addEventListener("click", async () => {
@@ -231,13 +249,15 @@
     let operation;
     try { operation = currentOperation(); }
     catch (err) { show("permitOutput",{error:err.message}); return; }
+    const requestToken = token();
+    if (!requestToken) { show("permitOutput",{error:"Enter a short-lived test access token first."}); return; }
     setBusy(true); setBadge("permitState","Requesting","wait");
     show("permitOutput","Submitting request to /v1/authorizations …");
     try {
-      const permit = await request("/v1/authorizations",{method:"POST",auth:true,body:operation});
+      const permit = await request("/v1/authorizations",{method:"POST",auth:true,accessToken:requestToken,body:operation});
       state.permit = permit;
       state.operation = operation;
-      state.boundToken = token();
+      state.boundToken = requestToken;
       state.idempotencyKey = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : "paca-demo-" + Date.now() + "-" + Math.random().toString(16).slice(2);
       ["action","resource","arguments"].forEach(id => { byId(id).disabled = true; });
       setBadge("permitState","Permit issued","ok");
@@ -258,7 +278,7 @@
     show("executionOutput","Submitting protected execution …");
     try {
       const result = await request("/v1/executions",{
-        method:"POST",auth:true,headers:{"Idempotency-Key":state.idempotencyKey},body
+        method:"POST",auth:true,accessToken:state.boundToken,headers:{"Idempotency-Key":state.idempotencyKey},body
       });
       if (result.execution_id) state.executionId = result.execution_id;
       const status = result.status || "completed";
@@ -266,9 +286,37 @@
       show("executionOutput",{result,idempotency_key:state.idempotencyKey});
       show("traceOutput",{step:"Execution",endpoint:"POST /v1/executions",request:body,response:result,idempotency_key:state.idempotencyKey});
     } catch (err) {
-      setBadge("executionState","Execution error","bad");
-      show("executionOutput",{error:err.message,response:err.data || null,idempotency_key:state.idempotencyKey,note:"Do not create a new permit or idempotency key to retry an uncertain effect. Reconcile the original execution first."});
-      show("traceOutput",{step:"Execution",endpoint:"POST /v1/executions",error:err.data || err.message,idempotency_key:state.idempotencyKey});
+      const detail = err.data && typeof err.data.detail === "object" && err.data.detail !== null
+        ? err.data.detail
+        : err.data;
+      const errorCode = detail && typeof detail.code === "string" ? detail.code : null;
+      if (detail && typeof detail.execution_id === "string" && detail.execution_id) {
+        state.executionId = detail.execution_id;
+      }
+      const inProgress = errorCode === "execution_in_progress";
+      const knownFailure = errorCode === "prior_execution_failed" || errorCode === "protected_operation_rejected";
+      setBadge(
+        "executionState",
+        inProgress ? "Execution in progress" : knownFailure ? "Execution failed" : "Execution error",
+        inProgress ? "wait" : "bad"
+      );
+      const reconciliationNote = state.executionId
+        ? "The service returned an execution ID. Use Check execution status to inspect that same execution. Do not create a new permit or idempotency key."
+        : "No execution ID was returned. For any retry, reuse this same permit and idempotency key; do not create a new pair.";
+      show("executionOutput",{
+        error:err.message,
+        response:err.data || null,
+        execution_id:state.executionId,
+        idempotency_key:state.idempotencyKey,
+        note:reconciliationNote
+      });
+      show("traceOutput",{
+        step:"Execution",
+        endpoint:"POST /v1/executions",
+        error:err.data || err.message,
+        execution_id:state.executionId,
+        idempotency_key:state.idempotencyKey
+      });
     } finally { setBusy(false); }
   });
 
@@ -276,7 +324,7 @@
     if (!state.executionId) return;
     setBusy(true);
     try {
-      const status = await request("/v1/executions/" + encodeURIComponent(state.executionId),{auth:true});
+      const status = await request("/v1/executions/" + encodeURIComponent(state.executionId),{auth:true,accessToken:state.boundToken});
       setBadge("executionState",status.status || "Status retrieved",status.status === "succeeded" ? "ok" : status.status === "unknown" ? "wait" : "");
       show("executionOutput",{execution_status:status,idempotency_key:state.idempotencyKey});
       show("traceOutput",{step:"Status",endpoint:"GET /v1/executions/" + state.executionId,response:status});
@@ -294,6 +342,7 @@
     setBusy(false);
   });
 
+  updateActionHint();
   byId("authorizeButton").disabled = true;
   byId("executeButton").disabled = true;
   byId("statusButton").disabled = true;
