@@ -43,7 +43,7 @@ The committed Keycloak realm under `production_service/tests/identity/` is for a
 7. After a permit is issued, select **Execute with permit**. The console submits the exact same action/resource/arguments with that permit and a stable `Idempotency-Key`.
 8. For a response with an execution ID, use **Check execution status** to query the status endpoint.
 
-Changing the action, resource or arguments clears the current permit and requires a new authorization request. The page does not automatically retry an uncertain effect. If an execution reports `unknown`, reconcile the downstream outcome before deciding whether another attempt is safe.
+Changing the action, resource or arguments clears the current permit and requires a new authorization request. Those fields are temporarily disabled only while a request is in flight; after authorization they remain editable, and any edit invalidates the permit. The page does not automatically retry an uncertain effect. If execution returns an execution ID—whether in a successful response or an error such as `execution_in_progress`, `prior_execution_failed` or `protected_operation_rejected`—use **Check execution status** to inspect that same execution. A transport failure without an execution ID may be retried only with the same permit and idempotency key. Do not create a new permit/key pair for the same logical effect.
 
 ## What the responses mean
 
@@ -60,8 +60,8 @@ A successful authorization is not the same as a successful execution. The permit
 ## Browser and security boundaries
 
 - The page only calls relative, same-origin API paths; it does not accept an arbitrary API host.
-- The bearer token is held in the page's input/memory only. It is not written to `localStorage` or `sessionStorage`, included in a URL, or printed in the response trace. Use **Clear session** when finished.
-- The page uses `Cache-Control: no-store`, a restrictive Content Security Policy, and `Referrer-Policy: no-referrer`.
+- The bearer token is held in the page's input/memory only. It is not written to `localStorage` or `sessionStorage`, included in a URL, or printed in the response trace. **Clear local session** removes page-held fields and identifiers only; it does not revoke the server-side permit or the identity-provider token. The token input is locked after an execution ID is received so the original identity remains available for status lookup.
+- The page uses `Cache-Control: no-store`, a per-response nonce-based Content Security Policy without `unsafe-inline`, and `Referrer-Policy: no-referrer`.
 - The console itself does not authenticate users, mint tokens, provision resources, or assign trusted roles, scopes, ownership, tenant IDs or provenance.
 - Use only synthetic data and a disposable database/file volume. `file.create` can create files in the configured sandbox. Do not connect this page to production.
 - Do not expose the Compose service publicly. The current Compose setup binds the API to `127.0.0.1`; a public deployment would require a separately reviewed identity, network, ingress, rate-limit, resource-provisioning and data-isolation design.
@@ -70,4 +70,4 @@ A successful authorization is not the same as a successful execution. The permit
 
 This console demonstrates the **PACA-Plus-Plus** FastAPI/OPA/PostgreSQL gateway flow. It is not a demonstration of the separate PACA-Plus-Plus-New provenance reference monitor, and it does not import that repository's code, attack simulations or benchmark results.
 
-It also does not prove that every tool or side effect in an arbitrary agent host passes through PACA++. Host-level integration and bypass testing remain deployment work. The repository's automated tests and threat model define the implementation and evidence boundaries.
+It also does not prove that every tool or side effect in an arbitrary agent host passes through PACA++. Host-level integration and bypass testing remain deployment work. The automated checks currently verify the route, headers, packaged-container serving and selected static client contracts; they do not execute a real browser session or constitute browser end-to-end testing. The repository's automated tests and threat model define the implementation and evidence boundaries.
