@@ -159,6 +159,17 @@
     el.appendChild(pre);
   };
   const token = () => byId("token").value.trim();
+  const newIdempotencyKey = () => {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return window.crypto.randomUUID();
+    }
+    if (window.crypto && typeof window.crypto.getRandomValues === "function") {
+      const bytes = new Uint8Array(16);
+      window.crypto.getRandomValues(bytes);
+      return "paca-demo-" + Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+    }
+    throw new Error("This browser does not provide secure randomness for an idempotency key.");
+  };
   const setBusy = (busy) => {
     state.busy = busy;
     byId("checkButton").disabled = busy;
@@ -247,8 +258,11 @@
 
   byId("authorizeButton").addEventListener("click", async () => {
     let operation;
-    try { operation = currentOperation(); }
-    catch (err) { show("permitOutput",{error:err.message}); return; }
+    let requestIdempotencyKey;
+    try {
+      operation = currentOperation();
+      requestIdempotencyKey = newIdempotencyKey();
+    } catch (err) { show("permitOutput",{error:err.message}); return; }
     const requestToken = token();
     if (!requestToken) { show("permitOutput",{error:"Enter a short-lived test access token first."}); return; }
     setBusy(true); setBadge("permitState","Requesting","wait");
@@ -258,7 +272,7 @@
       state.permit = permit;
       state.operation = operation;
       state.boundToken = requestToken;
-      state.idempotencyKey = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : "paca-demo-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+      state.idempotencyKey = requestIdempotencyKey;
       setBadge("permitState","Permit issued","ok");
       setBadge("executionState","Ready to execute","wait");
       show("permitOutput",permit);
