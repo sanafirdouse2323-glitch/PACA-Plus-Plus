@@ -69,6 +69,7 @@ def test_oidc_discovery_extracts_issuer_and_jwks_uri(monkeypatch):
         "jwks_uri": "https://id.example.test/realms/paca/keys",
     }
     response = MagicMock()
+    response.__enter__.return_value = response
     response.read.return_value = json.dumps(metadata).encode("utf-8")
     opener = Mock()
     opener.open.return_value = response
@@ -84,7 +85,7 @@ def test_oidc_discovery_extracts_issuer_and_jwks_uri(monkeypatch):
     opener.open.assert_called_once()
 
 
-def test_oidc_discovery_rejects_http_and_mismatched_issuer_host():
+def test_oidc_discovery_rejects_http():
     with pytest.raises(paca_deploy.DeployError, match="HTTPS"):
         paca_deploy.oidc_metadata("http://id.example.test/.well-known/openid-configuration")
 
