@@ -27,7 +27,7 @@ where = ["."]
 include = ["paca_service*"]
 
 [tool.setuptools.package-data]
-paca_service = ["schema.sql"]
+paca_service = ["schema.sql", "demo.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -108,6 +108,12 @@ docker compose up --build -d
 
 The role-creation script is idempotent so it can be rerun for a controlled upgrade; it also removes every direct role membership from an existing `paca_runtime` role, because `NOINHERIT` alone does not prevent `SET ROLE`. The grants migration explicitly reassigns the `SECURITY DEFINER` functions to the trusted migration administrator because `CREATE OR REPLACE FUNCTION` does not change an existing function's owner. The schema migration replaces the old GUC-only RLS policies with signed-context verification. The grants migration exposes only the verifier/setter functions to the runtime role and explicitly revokes any legacy runtime grant on global recovery; the final command provisions the HMAC key. Do not start the updated API until the key row exists and the runtime grants are applied. If the old database administrator credential is unavailable, stop and recover access before changing roles. **Do not run `docker compose down -v`** to solve a permission error: that deletes persistent volumes.
 
+## Interactive gateway console
+
+The FastAPI service also serves a same-origin browser console at `/demo` for isolated test instances. After configuring and starting the service, open `http://127.0.0.1:8000/demo`, provide a short-lived access token from the configured test identity provider, and exercise the existing authorize/execute/status endpoints.
+
+The console does not mint tokens, provision trusted resource facts, or simulate OPA decisions. It requires an administrator-provisioned resource and a configured effect adapter. It is intended for local testing only; do not expose the Compose stack publicly or use production credentials. See [the gateway demo guide](../docs/GATEWAY_DEMO.md) for setup requirements, response semantics and security boundaries.
+
 ## Test and lint
 
 From this directory:

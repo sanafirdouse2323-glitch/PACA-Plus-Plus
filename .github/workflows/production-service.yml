@@ -251,6 +251,7 @@ jobs:
           docker compose --env-file production_service/.env.example -f production_service/compose.yaml up --build --wait
           curl --fail --retry 10 --retry-connrefused --retry-delay 2 http://127.0.0.1:8000/healthz
           curl --fail --retry 10 --retry-connrefused --retry-delay 2 http://127.0.0.1:8000/readyz
+          curl --fail --silent --show-error http://127.0.0.1:8000/demo | grep -q "PACA++ Gateway Console"
       - name: Tear down local Compose stack without deleting persistent volumes
         if: always()
         run: docker compose --env-file production_service/.env.example -f production_service/compose.yaml down

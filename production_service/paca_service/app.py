@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import logging
 import re
+import secrets
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -104,6 +106,27 @@ def create_app(
         lifespan=lifespan,
     )
     app.add_middleware(RequestBoundaryMiddleware)
+
+    @app.get("/demo", include_in_schema=False)
+    def demo_console() -> HTMLResponse:
+        """Serve the same-origin test console with per-response CSP nonces."""
+        nonce = secrets.token_urlsafe(18)
+        html = Path(__file__).with_name("demo.html").read_text(encoding="utf-8")
+        html = html.replace("__PACA_CSP_NONCE__", nonce)
+        return HTMLResponse(
+            content=html,
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Security-Policy": (
+                    f"default-src 'self'; script-src 'nonce-{nonce}'; "
+                    f"style-src 'nonce-{nonce}'; connect-src 'self'; "
+                    "img-src 'self' data:; object-src 'none'; base-uri 'none'; "
+                    "form-action 'self'; frame-ancestors 'none'"
+                ),
+                "X-Content-Type-Options": "nosniff",
+                "Referrer-Policy": "no-referrer",
+            },
+        )
     bearer = HTTPBearer(auto_error=False)
 
     @app.middleware("http")
