@@ -102,7 +102,7 @@ def replace_env_value(template: str, key: str, value: str) -> str:
 
 
 def make_environment(discovery: dict[str, str], audience: str) -> str:
-    if not audience or any(ch.isspace() or ch in "$#'\\"" for ch in audience):
+    if not audience or any(ch.isspace() or ord(ch) in (34, 35, 36, 39) for ch in audience):
         raise DeployError("Choose a simple API audience without whitespace or .env metacharacters.")
     try:
         template = ENV_EXAMPLE.read_text(encoding="utf-8")
