@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -375,10 +376,11 @@ def test_execution_status_is_scoped_to_authenticated_principal():
         assert other.status_code == 401
 
 
-def test_interactive_demo_console_is_served_same_origin_without_browser_storage():
+def test_interactive_demo_console_uses_nonce_csp_and_exposes_reconciliation_controls():
     app, _, _, _ = make_client()
     with TestClient(app) as client:
         response = client.get("/demo")
+        second_response = client.get("/demo")
 
     assert response.status_code == 200
     assert "PACA++ Gateway Console" in response.text
@@ -386,4 +388,24 @@ def test_interactive_demo_console_is_served_same_origin_without_browser_storage(
     assert "localStorage" not in response.text
     assert "sessionStorage" not in response.text
     assert response.headers["cache-control"] == "no-store"
-    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+
+    csp = response.headers["content-security-policy"]
+    script_match = re.search(r"script-src 'nonce-([^']+)'", csp)
+    style_match = re.search(r"style-src 'nonce-([^']+)'", csp)
+    assert script_match is not None and style_match is not None
+    nonce = script_match.group(1)
+    assert style_match.group(1) == nonce
+    assert f'<style nonce="{nonce}">' in response.text
+    assert f'<script nonce="{nonce}">' in response.text
+    assert "unsafe-inline" not in csp
+    assert "frame-ancestors 'none'" in csp
+
+    second_csp = second_response.headers["content-security-policy"]
+    second_nonce = re.search(r"script-src 'nonce-([^']+)'", second_csp)
+    assert second_nonce is not None and second_nonce.group(1) != nonce
+
+    # These are static-client contract checks, not browser end-to-end tests.
+    assert "accessToken:requestToken" in response.text
+    assert "state.executionId = detail.execution_id" in response.text
+    assert 'id="actionHint"' in response.text
+    assert "Clear local session" in response.text
