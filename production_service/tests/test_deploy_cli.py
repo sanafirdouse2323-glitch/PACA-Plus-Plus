@@ -4,7 +4,7 @@ import json
 import os
 import stat
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 
 import pytest
 
@@ -109,7 +109,7 @@ def test_write_new_env_uses_restrictive_permissions_and_refuses_overwrite(tmp_pa
 
 def test_fetch_oidc_metadata_extracts_https_issuer_and_jwks(monkeypatch):
     metadata = sample_metadata()
-    response = Mock()
+    response = MagicMock()
     response.__enter__ = Mock(return_value=response)
     response.__exit__ = Mock(return_value=False)
     response.read.return_value = json.dumps(metadata).encode("utf-8")
