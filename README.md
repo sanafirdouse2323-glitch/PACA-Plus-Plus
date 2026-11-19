@@ -39,7 +39,7 @@ The checked-in example identity-provider values and HMAC key are placeholders. R
 
 ## Tests and what they prove
 
-CI runs separate LangGraph-adapter, production-service, prototype/hardening and compiler workflows. A passing workflow proves only that the workflow's declared tests passed on the exact commit and environment.
+Separate GitHub Actions workflows cover the LangGraph adapter, production service, prototype/hardening and compiler regressions. Their triggers are not identical: the production-service, prototype and compiler workflows run on pushes to `main` and on pull requests targeting `main`; the LangGraph workflow runs on pushes to `main` or its dedicated integration branch, and on pull requests targeting `main` that change `agent/**` or the LangGraph workflow file. A workflow that was not triggered for a change has not validated that change. A passing workflow proves only that its declared tests passed on the exact commit and environment.
 
 The production-service tests cover selected authentication/OPA flows, permit and execution behavior, PostgreSQL tenant RLS, signed-context forgery/replay attempts, privilege boundaries and adapter safety. They do **not** prove resistance to every attack, atomicity with arbitrary remote effects, or safe operation in an unreviewed deployment.
 
