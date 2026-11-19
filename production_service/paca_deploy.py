@@ -44,6 +44,7 @@ def _validate_https_url(value: str, label: str) -> str:
         or parts.password
         or parts.query
         or parts.fragment
+        or any(ch in value for ch in "$#")
     ):
         raise DeployError(
             f"{label} must be an absolute HTTPS URL without credentials, query, or fragment."
@@ -65,7 +66,9 @@ def fetch_oidc_metadata(discovery_url: str) -> dict[str, str]:
         or not parts.hostname
         or parts.username
         or parts.password
+        or parts.query
         or parts.fragment
+        or any(ch in discovery_url for ch in "$#")
     ):
         raise DeployError("The OIDC discovery address must use HTTPS and contain no credentials.")
 
@@ -235,8 +238,17 @@ def validate_environment(values: dict[str, str], policy_data: dict[str, Any]) ->
 
     expected_use = values.get("PACA_JWT_EXPECTED_TOKEN_USE", "access")
     token_use_claim = values.get("PACA_JWT_TOKEN_USE_CLAIM", "token_use")
-    if not expected_use or not token_use_claim:
-        raise DeployError("The access-token purpose claim configuration must not be empty.")
+    if (
+        not expected_use
+        or not token_use_claim
+        or not re.fullmatch(r"[A-Za-z0-9_]+", token_use_claim)
+        or any(ch.isspace() for ch in expected_use)
+    ):
+        raise DeployError("The access-token purpose claim configuration is invalid.")
+
+    key_id = values.get("PACA_TENANT_CONTEXT_KEY_ID", "v1")
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", key_id):
+        raise DeployError("PACA_TENANT_CONTEXT_KEY_ID must be a 1-32 character safe identifier.")
 
     revision = policy_data.get("paca", {}).get("meta", {}).get("revision")
     if not isinstance(revision, str) or values["PACA_EXPECTED_POLICY_REVISION"] != revision:
@@ -248,34 +260,61 @@ def validate_environment(values: dict[str, str], policy_data: dict[str, Any]) ->
         routes = json.loads(values["PACA_API_ROUTES_JSON"])
     except json.JSONDecodeError as exc:
         raise DeployError("PACA_API_ROUTES_JSON must contain valid JSON.") from exc
-    if not isinstance(routes, dict):
-        raise DeployError("PACA_API_ROUTES_JSON must be a JSON object.")
+    if not isinstance(routes, dict) or any(
+        not isinstance(action, str) or not isinstance(route, dict)
+        for action, route in routes.items()
+    ):
+        raise DeployError("PACA_API_ROUTES_JSON must map action names to route objects.")
 
     opa_url = values["PACA_OPA_URL"]
     opa_parts = urlsplit(opa_url)
-    if opa_parts.scheme not in {"http", "https"} or not opa_parts.hostname:
-        raise DeployError("PACA_OPA_URL must be an absolute HTTP(S) URL.")
+    if (
+        opa_parts.scheme not in {"http", "https"}
+        or not opa_parts.hostname
+        or opa_parts.username
+        or opa_parts.password
+        or opa_parts.query
+        or opa_parts.fragment
+    ):
+        raise DeployError("PACA_OPA_URL must be an absolute HTTP(S) URL without credentials/query.")
     local_hosts = {"localhost", "127.0.0.1", "::1", "opa"}
     remote_opa = opa_parts.hostname.lower().rstrip(".") not in local_hosts
-    if remote_opa and (
-        opa_parts.scheme != "https" or not values.get("PACA_OPA_BEARER_TOKEN")
-    ):
+    opa_token = values.get("PACA_OPA_BEARER_TOKEN", "")
+    if remote_opa and (opa_parts.scheme != "https" or not opa_token):
         raise DeployError("Remote OPA requires HTTPS and PACA_OPA_BEARER_TOKEN.")
+    if opa_token and (
+        opa_token.strip() != opa_token or any(ch.isspace() for ch in opa_token)
+    ):
+        raise DeployError("PACA_OPA_BEARER_TOKEN must be a non-whitespace token.")
 
     api_base = values.get("PACA_API_BASE_URL", "").strip()
     if routes and not api_base:
         raise DeployError("PACA_API_BASE_URL is required when API routes are configured.")
     if api_base:
         api_parts = urlsplit(api_base)
-        if api_parts.scheme not in {"http", "https"} or not api_parts.hostname:
-            raise DeployError("PACA_API_BASE_URL must be an absolute HTTP(S) URL.")
+        if (
+            api_parts.scheme not in {"http", "https"}
+            or not api_parts.hostname
+            or api_parts.username
+            or api_parts.password
+            or api_parts.query
+            or api_parts.fragment
+        ):
+            raise DeployError(
+                "PACA_API_BASE_URL must be an absolute HTTP(S) URL without credentials/query."
+            )
         remote_api = api_parts.hostname.lower().rstrip(".") not in {
             "localhost", "127.0.0.1", "::1"
         }
-        if remote_api and (
-            api_parts.scheme != "https" or not values.get("PACA_API_BEARER_TOKEN")
+        api_token = values.get("PACA_API_BEARER_TOKEN", "")
+        if routes and remote_api and (api_parts.scheme != "https" or not api_token):
+            raise DeployError(
+                "Remote effect routes require HTTPS and PACA_API_BEARER_TOKEN."
+            )
+        if api_token and (
+            api_token.strip() != api_token or any(ch.isspace() for ch in api_token)
         ):
-            raise DeployError("Remote effect routes require HTTPS and PACA_API_BEARER_TOKEN.")
+            raise DeployError("PACA_API_BEARER_TOKEN must be a non-whitespace token.")
 
 
 def compose_command(*arguments: str) -> list[str]:
