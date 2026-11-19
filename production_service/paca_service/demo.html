@@ -163,9 +163,9 @@
     state.busy = busy;
     byId("checkButton").disabled = busy;
     byId("clearButton").disabled = busy;
-    byId("token").disabled = busy;
+    byId("token").disabled = busy || !!state.executionId;
     ["action","resource","arguments"].forEach(id => {
-      byId(id).disabled = busy || !!state.permit;
+      byId(id).disabled = busy;
     });
     byId("authorizeButton").disabled = busy || !token() || !!state.permit;
     byId("executeButton").disabled = busy || !state.permit || !!state.executionId;
@@ -259,7 +259,6 @@
       state.operation = operation;
       state.boundToken = requestToken;
       state.idempotencyKey = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : "paca-demo-" + Date.now() + "-" + Math.random().toString(16).slice(2);
-      ["action","resource","arguments"].forEach(id => { byId(id).disabled = true; });
       setBadge("permitState","Permit issued","ok");
       setBadge("executionState","Ready to execute","wait");
       show("permitOutput",permit);
@@ -336,7 +335,7 @@
   byId("clearButton").addEventListener("click", () => {
     byId("token").value = "";
     clearPermit();
-    show("healthOutput","Session cleared. No token was saved by this page.");
+    show("healthOutput","Local session cleared. This removes page state only; it does not revoke a server-side permit or the identity-provider token.");
     show("traceOutput","No API response yet.");
     setBadge("connectionState","Not checked","");
     setBusy(false);
