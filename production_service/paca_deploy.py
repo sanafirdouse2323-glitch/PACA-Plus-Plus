@@ -152,7 +152,7 @@ def render_environment(
         raise DeployError("The API audience contains a character unsafe for a Compose .env value.")
     issuer = _validate_https_url(metadata.get("issuer", ""), "The discovered issuer")
     jwks_uri = _validate_https_url(metadata.get("jwks_uri", ""), "The discovered JWKS address")
-    if not policy_revision or any(ch.isspace() for ch in policy_revision):
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", policy_revision):
         raise DeployError("The repository policy revision is missing or invalid.")
 
     generated = [secret_factory(32) for _ in range(3)]
@@ -233,8 +233,12 @@ def validate_environment(values: dict[str, str], policy_data: dict[str, Any]) ->
     _validate_https_url(values["PACA_JWT_ISSUER"], "PACA_JWT_ISSUER")
     _validate_https_url(values["PACA_JWT_JWKS_URL"], "PACA_JWT_JWKS_URL")
     audience = values["PACA_JWT_AUDIENCE"]
-    if not audience or any(ch.isspace() for ch in audience):
-        raise DeployError("PACA_JWT_AUDIENCE must be a non-empty value without whitespace.")
+    if (
+        not audience
+        or any(ch.isspace() for ch in audience)
+        or any(ch in audience for ch in "$#'\\"=")
+    ):
+        raise DeployError("PACA_JWT_AUDIENCE contains a value unsafe for a Compose .env file.")
 
     expected_use = values.get("PACA_JWT_EXPECTED_TOKEN_USE", "access")
     token_use_claim = values.get("PACA_JWT_TOKEN_USE_CLAIM", "token_use")
