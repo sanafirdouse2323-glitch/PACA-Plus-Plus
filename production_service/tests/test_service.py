@@ -407,5 +407,7 @@ def test_interactive_demo_console_uses_nonce_csp_and_exposes_reconciliation_cont
     # These are static-client contract checks, not browser end-to-end tests.
     assert "accessToken:requestToken" in response.text
     assert "state.executionId = detail.execution_id" in response.text
+    assert "getRandomValues" in response.text
+    assert "Math.random" not in response.text
     assert 'id="actionHint"' in response.text
     assert "Clear local session" in response.text
