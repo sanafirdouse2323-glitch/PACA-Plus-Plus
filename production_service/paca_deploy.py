@@ -243,6 +243,7 @@ def validate_environment(values: dict[str, str], policy_data: dict[str, Any]) ->
         or not token_use_claim
         or not re.fullmatch(r"[A-Za-z0-9_]+", token_use_claim)
         or any(ch.isspace() for ch in expected_use)
+        or any(ch in expected_use for ch in "$#'\\"=")
     ):
         raise DeployError("The access-token purpose claim configuration is invalid.")
 
@@ -251,7 +252,11 @@ def validate_environment(values: dict[str, str], policy_data: dict[str, Any]) ->
         raise DeployError("PACA_TENANT_CONTEXT_KEY_ID must be a 1-32 character safe identifier.")
 
     revision = policy_data.get("paca", {}).get("meta", {}).get("revision")
-    if not isinstance(revision, str) or values["PACA_EXPECTED_POLICY_REVISION"] != revision:
+    if (
+        not isinstance(revision, str)
+        or not re.fullmatch(r"[A-Za-z0-9._-]+", values["PACA_EXPECTED_POLICY_REVISION"])
+        or values["PACA_EXPECTED_POLICY_REVISION"] != revision
+    ):
         raise DeployError(
             "PACA_EXPECTED_POLICY_REVISION does not match production_service/opa/data.json."
         )
