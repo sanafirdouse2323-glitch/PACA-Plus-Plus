@@ -126,9 +126,9 @@ def make_environment(discovery: dict[str, str], audience: str) -> str:
         "PACA_OPA_URL": "http://opa:8181",
         "PACA_API_ROUTES_JSON": "{}",
     }
-    if len(set(values[key] for key in (
+    if len({values[key] for key in (
         "POSTGRES_PASSWORD", "PACA_RUNTIME_PASSWORD", "PACA_TENANT_CONTEXT_HMAC_KEY"
-    ))) != 3:
+    )}) != 3:
         raise DeployError("Could not generate independent deployment secrets.")
     for key, value in values.items():
         template = replace_env_value(template, key, value)
