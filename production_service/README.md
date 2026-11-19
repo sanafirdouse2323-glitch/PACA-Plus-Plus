@@ -4,25 +4,22 @@ This directory contains a separate FastAPI authorization gateway that combines R
 
 **Status:** controlled-evaluation scaffold. It is not production-certified and the setup instructions are not a substitute for a deployment-specific security review. For repository-wide positioning and the boundaries between this service, the prototype, compiler and agent integration, see [the architecture and scope contract](../docs/ARCHITECTURE_AND_SCOPE.md).
 
-## Fresh local setup
+## Quick deployment setup
 
-1. Copy `.env.example` to `.env`. Generate three independent secrets with `openssl rand -hex 32`; put them in `POSTGRES_PASSWORD`, `PACA_RUNTIME_PASSWORD`, and `PACA_TENANT_CONTEXT_HMAC_KEY`. The first is the PostgreSQL bootstrap/admin password, the second authenticates the restricted `paca_runtime` role, and the third signs tenant context in the API and is provisioned into a private database table. Set `PACA_TENANT_CONTEXT_KEY_ID=v1` unless you are deliberately rotating keys. The checked-in example HMAC key is public test material and must be replaced.
-2. Set `PACA_JWT_ISSUER`, `PACA_JWT_AUDIENCE`, and `PACA_JWT_JWKS_URL` to your actual test identity provider. The example `identity.example.org` settings are placeholders.
-3. Ensure the policy revision equals `production_service/opa/data.json`. In this service, `protected_resources.owner_id` is compared with the verified OIDC `sub`; provision the owner value accordingly, and only trust role/scope/tool claims from an issuer that controls them.
-4. For a newly initialized local database volume, start the stack:
+For a guided setup, use the standard-library helper from this directory:
 
-   ```sh
-   docker compose up --build --wait
-   ```
+```sh
+python paca_deploy.py init
+python paca_deploy.py check
+python paca_deploy.py up
+python paca_deploy.py status
+```
 
-5. Check both endpoints:
+The initializer reads the issuer and JWKS URI from your HTTPS OIDC discovery document, generates independent database and tenant-context secrets, and reads the expected policy revision from the checked-in OPA data. It creates a local `.env` file with restrictive permissions where supported. The helper does not create or configure your identity-provider tenant, users, claims or roles.
 
-   ```sh
-   curl --fail http://127.0.0.1:8000/healthz
-   curl --fail http://127.0.0.1:8000/readyz
-   ```
+See [DEPLOYMENT.md](DEPLOYMENT.md) for prerequisites, non-interactive setup, daily operations, volume safety and enterprise deployment gates. Do not commit `.env`. The `down` command preserves persistent volumes; never use `down -v` as an upgrade shortcut.
 
-   `/healthz` only indicates that the process is alive. `/readyz` verifies PostgreSQL connectivity and signed tenant-context verification, plus a real OPA deny-by-default decision that must carry the configured policy revision.
+For the underlying Compose configuration, manual environment setup and detailed security behavior, continue with the sections below.
 
 All tenant-scoped tables (`protected_resources`, `authz_permits`, `authz_executions`, and `audit_events`) have PostgreSQL row-level-security policies that call a database-side verifier. Before each tenant-scoped operation, the API signs the tenant, verified principal, PostgreSQL backend PID, current transaction ID, issue/expiry times, and key ID with HMAC-SHA-256. PostgreSQL verifies the signature using a key in the administrator-owned `paca_private` schema, checks the backend and transaction binding, and accepts only a short-lived context (maximum 60 seconds; the API issues 30-second contexts). RLS does not trust a caller-set tenant GUC by itself. The runtime role can call the verifier/setter functions but cannot read the signing key. Execution rows retain their composite foreign key tying tenant/principal to the referenced permit. Global stale-execution recovery is an administrator-only `SECURITY DEFINER` operation. The API runtime role cannot execute it, and API startup does not run a cross-tenant recovery sweep.
 
