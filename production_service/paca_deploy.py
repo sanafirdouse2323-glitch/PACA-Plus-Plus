@@ -148,7 +148,7 @@ def render_environment(
     """Render a local .env with three independently generated secrets."""
     if not isinstance(audience, str) or not audience or any(ch.isspace() for ch in audience):
         raise DeployError("The API audience must be a non-empty value without whitespace.")
-    if any(ch in audience for ch in "#'\""):
+    if any(ch in audience for ch in "$#\'\""):
         raise DeployError("The API audience contains a character unsafe for a Compose .env value.")
     issuer = _validate_https_url(metadata.get("issuer", ""), "The discovered issuer")
     jwks_uri = _validate_https_url(metadata.get("jwks_uri", ""), "The discovered JWKS address")
@@ -236,7 +236,7 @@ def validate_environment(values: dict[str, str], policy_data: dict[str, Any]) ->
     if (
         not audience
         or any(ch.isspace() for ch in audience)
-        or any(ch in audience for ch in "$#'\\"=")
+        or any(ch in audience for ch in "$#")
     ):
         raise DeployError("PACA_JWT_AUDIENCE contains a value unsafe for a Compose .env file.")
 
@@ -247,7 +247,7 @@ def validate_environment(values: dict[str, str], policy_data: dict[str, Any]) ->
         or not token_use_claim
         or not re.fullmatch(r"[A-Za-z0-9_]+", token_use_claim)
         or any(ch.isspace() for ch in expected_use)
-        or any(ch in expected_use for ch in "$#'\\"=")
+        or any(ch in expected_use for ch in "$#")
     ):
         raise DeployError("The access-token purpose claim configuration is invalid.")
 
