@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import secrets
 import stat
 import subprocess
@@ -14,52 +13,27 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from paca_service.config import ConfigurationError, Settings
+
 SERVICE_DIR = Path(__file__).resolve().parent
 ENV_EXAMPLE = SERVICE_DIR / ".env.example"
 ENV_FILE = SERVICE_DIR / ".env"
 COMPOSE_FILE = SERVICE_DIR / "compose.yaml"
 POLICY_DATA = SERVICE_DIR / "opa" / "data.json"
-_SECRET_RE = re.compile(r"^[0-9a-fA-F]{64}$")
-_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class DeployError(RuntimeError):
-    """A safe, actionable deployment setup or orchestration error."""
+    """A safe, actionable setup or deployment error."""
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, request: Any, fp: Any, code: int, msg: str,
-                         headers: Any, new_url: str) -> None:
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self, request: Any, fp: Any, code: int, msg: str, headers: Any, new_url: str
+    ) -> None:
         return None
 
 
-def _validate_https_url(value: str, label: str) -> str:
-    if not isinstance(value, str) or not value or any(ch.isspace() for ch in value):
-        raise DeployError(f"{label} must be a valid HTTPS URL.")
-    parts = urlsplit(value)
-    if (
-        parts.scheme != "https"
-        or not parts.hostname
-        or parts.username
-        or parts.password
-        or parts.query
-        or parts.fragment
-        or any(ch in value for ch in "$#")
-    ):
-        raise DeployError(
-            f"{label} must be an absolute HTTPS URL without credentials, query, or fragment."
-        )
-    return value
-
-
-def fetch_oidc_metadata(discovery_url: str) -> dict[str, str]:
-    """Fetch trusted OIDC discovery metadata without following redirects."""
-    if (
-        not isinstance(discovery_url, str)
-        or not discovery_url
-        or any(ch.isspace() for ch in discovery_url)
-    ):
-        raise DeployError("The OIDC discovery address must be a valid HTTPS URL.")
+def oidc_metadata(discovery_url: str) -> dict[str, str]:
     parts = urlsplit(discovery_url)
     if (
         parts.scheme != "https"
@@ -68,409 +42,235 @@ def fetch_oidc_metadata(discovery_url: str) -> dict[str, str]:
         or parts.password
         or parts.query
         or parts.fragment
-        or any(ch in discovery_url for ch in "$#")
     ):
-        raise DeployError("The OIDC discovery address must use HTTPS and contain no credentials.")
+        raise DeployError("Use the identity provider's HTTPS OIDC discovery URL without a query.")
 
     request = urllib.request.Request(
-        discovery_url,
-        headers={"Accept": "application/json", "User-Agent": "PACA-Deployment-Setup/1.0"},
+        discovery_url, headers={"Accept": "application/json", "User-Agent": "PACA-Setup/1.0"}
     )
-    opener = urllib.request.build_opener(_NoRedirect)
     try:
+        opener = urllib.request.build_opener(NoRedirect)
         with opener.open(request, timeout=10) as response:
             body = response.read(1_000_001)
     except urllib.error.HTTPError as exc:
         if 300 <= exc.code < 400:
-            raise DeployError(
-                "The OIDC discovery endpoint redirected. Use its final HTTPS address directly."
-            ) from exc
+            raise DeployError("OIDC discovery redirected; provide its final HTTPS URL.") from exc
         raise DeployError(f"OIDC discovery returned HTTP {exc.code}.") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise DeployError(f"Could not retrieve OIDC discovery metadata: {exc}") from exc
 
     if len(body) > 1_000_000:
-        raise DeployError("The OIDC discovery document exceeded the 1 MB safety limit.")
+        raise DeployError("OIDC discovery document exceeded the 1 MB safety limit.")
     try:
-        metadata = json.loads(body)
+        document = json.loads(body)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise DeployError("The OIDC discovery endpoint did not return valid JSON.") from exc
-    if not isinstance(metadata, dict):
-        raise DeployError("The OIDC discovery document must be a JSON object.")
+        raise DeployError("OIDC discovery did not return valid JSON.") from exc
 
-    issuer = metadata.get("issuer")
-    jwks_uri = metadata.get("jwks_uri")
-    if not isinstance(issuer, str) or not isinstance(jwks_uri, str):
-        raise DeployError("The discovery document must contain string issuer and jwks_uri fields.")
-    _validate_https_url(issuer, "The discovered issuer")
-    _validate_https_url(jwks_uri, "The discovered JWKS address")
+    if not isinstance(document, dict):
+        raise DeployError("OIDC discovery document must be a JSON object.")
+    issuer, jwks_uri = document.get("issuer"), document.get("jwks_uri")
+    issuer_parts = urlsplit(issuer) if isinstance(issuer, str) else None
+    jwks_parts = urlsplit(jwks_uri) if isinstance(jwks_uri, str) else None
+    if (
+        issuer_parts is None
+        or issuer_parts.scheme != "https"
+        or not issuer_parts.hostname
+        or (issuer_parts.scheme, issuer_parts.hostname, issuer_parts.port)
+        != (parts.scheme, parts.hostname, parts.port)
+    ):
+        raise DeployError("OIDC metadata issuer must be HTTPS and match the discovery host.")
+    if (
+        jwks_parts is None
+        or jwks_parts.scheme != "https"
+        or not jwks_parts.hostname
+        or jwks_parts.username
+        or jwks_parts.password
+        or jwks_parts.query
+        or jwks_parts.fragment
+    ):
+        raise DeployError("OIDC metadata must contain a valid HTTPS jwks_uri.")
     return {"issuer": issuer, "jwks_uri": jwks_uri}
 
 
-def parse_env_text(content: str) -> dict[str, str]:
-    """Parse the simple KEY=value format used in PACA's generated .env file."""
-    values: dict[str, str] = {}
-    for line_number, raw_line in enumerate(content.splitlines(), start=1):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            raise DeployError(f"Invalid .env syntax on line {line_number}.")
-        key, value = line.split("=", 1)
-        key = key.strip()
-        if not _ENV_KEY_RE.fullmatch(key):
-            raise DeployError(f"Invalid .env key on line {line_number}.")
-        if key in values:
-            raise DeployError(f"Duplicate .env key: {key}.")
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            value = value[1:-1]
-        values[key] = value
-    return values
+def replace_env_value(template: str, key: str, value: str) -> str:
+    lines = template.splitlines()
+    matches = [i for i, line in enumerate(lines) if line.startswith(f"{key}=")]
+    if len(matches) != 1 or any(ch in value for ch in "\r\n"):
+        raise DeployError(f"Could not safely set {key} in .env.example.")
+    lines[matches[0]] = f"{key}={value}"
+    return "\n".join(lines) + "\n"
 
 
-def _replace_env_value(content: str, key: str, value: str) -> str:
-    pattern = re.compile(rf"(?m)^{re.escape(key)}=.*$")
-    replacement = f"{key}={value}"
-    updated, count = pattern.subn(lambda _match: replacement, content)
-    if count != 1:
-        raise DeployError(f"Expected exactly one {key} entry in .env.example; found {count}.")
-    return updated
-
-
-def render_environment(
-    template: str,
-    metadata: dict[str, str],
-    audience: str,
-    policy_revision: str,
-    secret_factory: Any = secrets.token_hex,
-) -> str:
-    """Render a local .env with three independently generated secrets."""
-    if not isinstance(audience, str) or not audience or any(ch.isspace() for ch in audience):
-        raise DeployError("The API audience must be a non-empty value without whitespace.")
-    if any(ch in audience for ch in "$#\'\""):
-        raise DeployError("The API audience contains a character unsafe for a Compose .env value.")
-    issuer = _validate_https_url(metadata.get("issuer", ""), "The discovered issuer")
-    jwks_uri = _validate_https_url(metadata.get("jwks_uri", ""), "The discovered JWKS address")
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", policy_revision):
-        raise DeployError("The repository policy revision is missing or invalid.")
-
-    generated = [secret_factory(32) for _ in range(3)]
-    if any(not _SECRET_RE.fullmatch(secret) for secret in generated):
-        raise DeployError("The secret generator did not return three 32-byte hexadecimal secrets.")
-    if len(set(generated)) != 3:
-        raise DeployError("Secret generation did not produce independent credential values.")
+def make_environment(discovery: dict[str, str], audience: str) -> str:
+    if not audience or any(ch.isspace() or ch in "$#'\\"" for ch in audience):
+        raise DeployError("Choose a simple API audience without whitespace or .env metacharacters.")
+    try:
+        template = ENV_EXAMPLE.read_text(encoding="utf-8")
+        policy = json.loads(POLICY_DATA.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise DeployError(f"Could not read deployment defaults: {exc}") from exc
+    revision = policy.get("paca", {}).get("meta", {}).get("revision")
+    if not isinstance(revision, str):
+        raise DeployError("OPA policy revision is missing from opa/data.json.")
 
     values = {
-        "POSTGRES_PASSWORD": generated[0],
-        "PACA_RUNTIME_PASSWORD": generated[1],
-        "PACA_TENANT_CONTEXT_HMAC_KEY": generated[2],
-        "PACA_EXPECTED_POLICY_REVISION": policy_revision,
-        "PACA_JWT_ISSUER": issuer,
+        "POSTGRES_PASSWORD": secrets.token_hex(32),
+        "PACA_RUNTIME_PASSWORD": secrets.token_hex(32),
+        "PACA_TENANT_CONTEXT_HMAC_KEY": secrets.token_hex(32),
+        "PACA_EXPECTED_POLICY_REVISION": revision,
+        "PACA_JWT_ISSUER": discovery["issuer"],
         "PACA_JWT_AUDIENCE": audience,
-        "PACA_JWT_JWKS_URL": jwks_uri,
+        "PACA_JWT_JWKS_URL": discovery["jwks_uri"],
         "PACA_JWT_TOKEN_USE_CLAIM": "token_use",
         "PACA_JWT_EXPECTED_TOKEN_USE": "access",
         "PACA_OPA_URL": "http://opa:8181",
         "PACA_API_ROUTES_JSON": "{}",
     }
+    if len(set(values[key] for key in (
+        "POSTGRES_PASSWORD", "PACA_RUNTIME_PASSWORD", "PACA_TENANT_CONTEXT_HMAC_KEY"
+    ))) != 3:
+        raise DeployError("Could not generate independent deployment secrets.")
     for key, value in values.items():
-        if any(ch in value for ch in "\r\n"):
-            raise DeployError(f"Refusing a newline in {key}.")
-        template = _replace_env_value(template, key, value)
+        template = replace_env_value(template, key, value)
     return template
 
 
-def write_new_env(path: Path, content: str) -> None:
-    """Create the secret file exclusively with owner-only permissions where supported."""
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+def write_env(content: str) -> None:
     try:
-        descriptor = os.open(path, flags, 0o600)
+        descriptor = os.open(ENV_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError as exc:
-        raise DeployError(f"{path.name} already exists; refusing to overwrite secrets.") from exc
+        raise DeployError(".env already exists; refusing to overwrite deployment secrets.") from exc
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
         if os.name == "posix":
-            os.chmod(path, 0o600)
+            os.chmod(ENV_FILE, 0o600)
     except Exception:
-        try:
-            path.unlink(missing_ok=True)
-        finally:
-            raise
+        ENV_FILE.unlink(missing_ok=True)
+        raise
 
 
-def validate_environment(values: dict[str, str], policy_data: dict[str, Any]) -> None:
-    required = (
-        "POSTGRES_PASSWORD",
-        "PACA_RUNTIME_PASSWORD",
-        "PACA_TENANT_CONTEXT_HMAC_KEY",
-        "PACA_EXPECTED_POLICY_REVISION",
-        "PACA_JWT_ISSUER",
-        "PACA_JWT_AUDIENCE",
-        "PACA_JWT_JWKS_URL",
-        "PACA_API_ROUTES_JSON",
-        "PACA_OPA_URL",
-    )
-    missing = [key for key in required if not values.get(key)]
-    if missing:
-        raise DeployError("Missing required .env values: " + ", ".join(missing))
+def read_env() -> dict[str, str]:
+    values: dict[str, str] = {}
+    for number, raw in enumerate(ENV_FILE.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            raise DeployError(f"Invalid .env syntax on line {number}.")
+        key, value = line.split("=", 1)
+        if key in values:
+            raise DeployError(f"Duplicate .env key: {key}.")
+        values[key.strip()] = value.strip().strip("'").strip('"')
+    return values
 
+
+def validate_configuration(values: dict[str, str]) -> None:
     for key in ("POSTGRES_PASSWORD", "PACA_RUNTIME_PASSWORD"):
-        value = values[key]
-        if len(value) < 32 or any(ch.isspace() for ch in value):
-            raise DeployError(f"{key} must be at least 32 characters and contain no whitespace.")
-    for key in ("POSTGRES_PASSWORD", "PACA_RUNTIME_PASSWORD"):
-        if values[key] == values["PACA_TENANT_CONTEXT_HMAC_KEY"]:
-            raise DeployError("Database credentials and the tenant-context HMAC key must be distinct.")
+        if len(values.get(key, "")) < 32:
+            raise DeployError(f"{key} must contain at least 32 characters.")
     if values["POSTGRES_PASSWORD"] == values["PACA_RUNTIME_PASSWORD"]:
-        raise DeployError("POSTGRES_PASSWORD and PACA_RUNTIME_PASSWORD must be different.")
-    if not _SECRET_RE.fullmatch(values["PACA_TENANT_CONTEXT_HMAC_KEY"]):
-        raise DeployError("PACA_TENANT_CONTEXT_HMAC_KEY must be exactly 64 hexadecimal characters.")
+        raise DeployError("Database administrator and runtime passwords must be different.")
 
-    _validate_https_url(values["PACA_JWT_ISSUER"], "PACA_JWT_ISSUER")
-    _validate_https_url(values["PACA_JWT_JWKS_URL"], "PACA_JWT_JWKS_URL")
-    audience = values["PACA_JWT_AUDIENCE"]
-    if (
-        not audience
-        or any(ch.isspace() for ch in audience)
-        or any(ch in audience for ch in "$#")
-    ):
-        raise DeployError("PACA_JWT_AUDIENCE contains a value unsafe for a Compose .env file.")
-
-    expected_use = values.get("PACA_JWT_EXPECTED_TOKEN_USE", "access")
-    token_use_claim = values.get("PACA_JWT_TOKEN_USE_CLAIM", "token_use")
-    if (
-        not expected_use
-        or not token_use_claim
-        or not re.fullmatch(r"[A-Za-z0-9_]+", token_use_claim)
-        or any(ch.isspace() for ch in expected_use)
-        or any(ch in expected_use for ch in "$#")
-    ):
-        raise DeployError("The access-token purpose claim configuration is invalid.")
-
-    key_id = values.get("PACA_TENANT_CONTEXT_KEY_ID", "v1")
-    if not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", key_id):
-        raise DeployError("PACA_TENANT_CONTEXT_KEY_ID must be a 1-32 character safe identifier.")
-
-    revision = policy_data.get("paca", {}).get("meta", {}).get("revision")
-    if (
-        not isinstance(revision, str)
-        or not re.fullmatch(r"[A-Za-z0-9._-]+", values["PACA_EXPECTED_POLICY_REVISION"])
-        or values["PACA_EXPECTED_POLICY_REVISION"] != revision
-    ):
-        raise DeployError(
-            "PACA_EXPECTED_POLICY_REVISION does not match production_service/opa/data.json."
-        )
-
+    # Compose constructs this URL from the generated hexadecimal runtime password.
+    values = dict(values)
+    values["PACA_DATABASE_URL"] = (
+        "postgresql://paca_runtime:"
+        + values["PACA_RUNTIME_PASSWORD"]
+        + "@database:5432/paca"
+    )
     try:
-        routes = json.loads(values["PACA_API_ROUTES_JSON"])
-    except json.JSONDecodeError as exc:
-        raise DeployError("PACA_API_ROUTES_JSON must contain valid JSON.") from exc
-    if not isinstance(routes, dict) or any(
-        not isinstance(action, str) or not isinstance(route, dict)
-        for action, route in routes.items()
-    ):
-        raise DeployError("PACA_API_ROUTES_JSON must map action names to route objects.")
-
-    opa_url = values["PACA_OPA_URL"]
-    opa_parts = urlsplit(opa_url)
-    if (
-        opa_parts.scheme not in {"http", "https"}
-        or not opa_parts.hostname
-        or opa_parts.username
-        or opa_parts.password
-        or opa_parts.query
-        or opa_parts.fragment
-    ):
-        raise DeployError("PACA_OPA_URL must be an absolute HTTP(S) URL without credentials/query.")
-    local_hosts = {"localhost", "127.0.0.1", "::1", "opa"}
-    remote_opa = opa_parts.hostname.lower().rstrip(".") not in local_hosts
-    opa_token = values.get("PACA_OPA_BEARER_TOKEN", "")
-    if remote_opa and (opa_parts.scheme != "https" or not opa_token):
-        raise DeployError("Remote OPA requires HTTPS and PACA_OPA_BEARER_TOKEN.")
-    if opa_token and (
-        opa_token.strip() != opa_token or any(ch.isspace() for ch in opa_token)
-    ):
-        raise DeployError("PACA_OPA_BEARER_TOKEN must be a non-whitespace token.")
-
-    api_base = values.get("PACA_API_BASE_URL", "").strip()
-    if routes and not api_base:
-        raise DeployError("PACA_API_BASE_URL is required when API routes are configured.")
-    if api_base:
-        api_parts = urlsplit(api_base)
-        if (
-            api_parts.scheme not in {"http", "https"}
-            or not api_parts.hostname
-            or api_parts.username
-            or api_parts.password
-            or api_parts.query
-            or api_parts.fragment
-        ):
-            raise DeployError(
-                "PACA_API_BASE_URL must be an absolute HTTP(S) URL without credentials/query."
-            )
-        remote_api = api_parts.hostname.lower().rstrip(".") not in {
-            "localhost", "127.0.0.1", "::1"
-        }
-        api_token = values.get("PACA_API_BEARER_TOKEN", "")
-        if routes and remote_api and (api_parts.scheme != "https" or not api_token):
-            raise DeployError(
-                "Remote effect routes require HTTPS and PACA_API_BEARER_TOKEN."
-            )
-        if api_token and (
-            api_token.strip() != api_token or any(ch.isspace() for ch in api_token)
-        ):
-            raise DeployError("PACA_API_BEARER_TOKEN must be a non-whitespace token.")
+        settings = Settings.from_env(values)
+        policy = json.loads(POLICY_DATA.read_text(encoding="utf-8"))
+    except (ConfigurationError, OSError, json.JSONDecodeError) as exc:
+        raise DeployError(f"Deployment configuration is invalid: {exc}") from exc
+    revision = policy.get("paca", {}).get("meta", {}).get("revision")
+    if settings.expected_policy_revision != revision:
+        raise DeployError("PACA_EXPECTED_POLICY_REVISION does not match opa/data.json.")
 
 
-def compose_command(*arguments: str) -> list[str]:
-    return [
+def compose(*arguments: str) -> None:
+    command = [
         "docker", "compose", "--env-file", str(ENV_FILE), "-f", str(COMPOSE_FILE),
         *arguments,
     ]
-
-
-def run_compose(*arguments: str) -> int:
     try:
-        result = subprocess.run(compose_command(*arguments), cwd=SERVICE_DIR, check=False)
+        result = subprocess.run(command, cwd=SERVICE_DIR, check=False)
     except FileNotFoundError as exc:
-        raise DeployError(
-            "Docker was not found. Install Docker Desktop or Docker Engine with Compose v2."
-        ) from exc
-    if result.returncode != 0:
+        raise DeployError("Install Docker Engine/Desktop with Docker Compose v2 first.") from exc
+    if result.returncode:
         raise DeployError(f"Docker Compose failed with exit code {result.returncode}.")
-    return result.returncode
 
 
-def check_configuration() -> None:
-    if not ENV_FILE.is_file():
-        raise DeployError("No production_service/.env found. Run: python paca_deploy.py init")
+def check_ready() -> bool:
     try:
-        values = parse_env_text(ENV_FILE.read_text(encoding="utf-8"))
-        policy_data = json.loads(POLICY_DATA.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise DeployError(f"Could not read deployment configuration: {exc}") from exc
-    validate_environment(values, policy_data)
-
-    if os.name == "posix":
-        permissions = stat.S_IMODE(ENV_FILE.stat().st_mode)
-        if permissions & 0o077:
-            raise DeployError(
-                "The .env file is accessible by group/other users. Run: chmod 600 .env"
-            )
-
-    run_compose("config", "--quiet")
-    print("Configuration valid. No services were started.")
+        with urllib.request.urlopen("http://127.0.0.1:8000/readyz", timeout=5) as response:
+            return json.loads(response.read(16_384)).get("status") == "ready"
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return False
 
 
-def initialize(args: argparse.Namespace) -> None:
+def check() -> None:
+    if not ENV_FILE.is_file():
+        raise DeployError("No .env found. Run: python paca_deploy.py init")
+    try:
+        values = read_env()
+    except OSError as exc:
+        raise DeployError(f"Could not read .env: {exc}") from exc
+    validate_configuration(values)
+    if os.name == "posix" and stat.S_IMODE(ENV_FILE.stat().st_mode) & 0o077:
+        raise DeployError("Restrict .env permissions with: chmod 600 .env")
+    compose("config", "--quiet")
+    print("Configuration valid; no services were started.")
+
+
+def init(args: argparse.Namespace) -> None:
     if ENV_FILE.exists():
-        raise DeployError("production_service/.env already exists; refusing to overwrite it.")
-
+        raise DeployError(".env already exists; refusing to overwrite it.")
     discovery_url = args.discovery_url
     audience = args.audience
-    if not discovery_url:
-        if not sys.stdin.isatty():
-            raise DeployError(
-                "Provide --discovery-url and --audience when running without an interactive terminal."
-            )
-        discovery_url = input(
-            "OIDC discovery URL (the provider's /.well-known/openid-configuration): "
-        ).strip()
+    if not discovery_url and sys.stdin.isatty():
+        discovery_url = input("HTTPS OIDC discovery URL: ").strip()
     if not audience and sys.stdin.isatty():
         audience = input("API audience [paca-api]: ").strip() or "paca-api"
-    if not audience:
-        raise DeployError("Provide the API audience with --audience.")
-
-    metadata = fetch_oidc_metadata(discovery_url)
-    try:
-        template = ENV_EXAMPLE.read_text(encoding="utf-8")
-        policy_data = json.loads(POLICY_DATA.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise DeployError(f"Could not read repository deployment defaults: {exc}") from exc
-    revision = policy_data.get("paca", {}).get("meta", {}).get("revision")
-    if not isinstance(revision, str):
-        raise DeployError("The OPA policy revision is missing from opa/data.json.")
-
-    content = render_environment(template, metadata, audience, revision)
-    write_new_env(ENV_FILE, content)
-    print("Created production_service/.env with three independently generated secrets.")
-    print("The file was created with owner-only permissions where supported.")
+    if not discovery_url or not audience:
+        raise DeployError("Provide --discovery-url and --audience, or run init interactively.")
+    write_env(make_environment(oidc_metadata(discovery_url), audience))
+    print("Created .env with separate random secrets and your provider's OIDC metadata.")
     print("Next: python paca_deploy.py check")
 
 
-def check_endpoint(path: str) -> bool:
-    url = f"http://127.0.0.1:8000{path}"
-    try:
-        with urllib.request.urlopen(url, timeout=5) as response:
-            payload = json.loads(response.read(16_384))
-    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
-        return False
-    return isinstance(payload, dict) and payload.get("status") == (
-        "alive" if path == "/healthz" else "ready"
-    )
-
-
-def start_services() -> None:
-    check_configuration()
-    run_compose("up", "--build", "--detach", "--wait")
-    if not check_endpoint("/readyz"):
-        raise DeployError(
-            "Compose started, but PACA++ did not pass /readyz. Inspect: python paca_deploy.py logs"
-        )
-    print("PACA++ is ready at http://127.0.0.1:8000.")
-    print("The API is bound to loopback; it is not exposed directly to the public internet.")
-
-
-def show_status() -> None:
-    run_compose("ps")
-    health = check_endpoint("/healthz")
-    ready = check_endpoint("/readyz")
-    print(f"API liveness: {'alive' if health else 'unavailable'}")
-    print(f"API readiness: {'ready' if ready else 'not ready'}")
-    if not ready:
-        raise DeployError("The service is not ready. Inspect logs and deployment configuration.")
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Set up and operate the PACA++ production-service Compose deployment."
-    )
-    commands = parser.add_subparsers(dest="command", required=True)
-
-    init_parser = commands.add_parser(
-        "init", help="Create a local .env using real OIDC discovery metadata and random secrets."
-    )
-    init_parser.add_argument("--discovery-url", help="HTTPS OIDC discovery document URL.")
-    init_parser.add_argument("--audience", help="Audience that the identity provider issues for PACA.")
-
-    commands.add_parser("check", help="Validate .env, policy revision, and Compose configuration.")
-    commands.add_parser("up", help="Validate configuration, build, start, and wait for readiness.")
-    commands.add_parser("status", help="Show container and API readiness status.")
-    commands.add_parser("logs", help="Follow recent service logs.")
-    commands.add_parser("down", help="Stop services without deleting persistent volumes.")
-    return parser
-
-
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = argparse.ArgumentParser(description="PACA++ production-service setup and operations.")
+    commands = parser.add_subparsers(dest="command", required=True)
+    init_parser = commands.add_parser("init", help="Create .env from HTTPS OIDC metadata.")
+    init_parser.add_argument("--discovery-url")
+    init_parser.add_argument("--audience")
+    for name in ("check", "up", "status", "logs", "down"):
+        commands.add_parser(name)
+
+    args = parser.parse_args(argv)
     try:
         if args.command == "init":
-            initialize(args)
+            init(args)
         elif args.command == "check":
-            check_configuration()
+            check()
         elif args.command == "up":
-            start_services()
+            check()
+            compose("up", "--build", "--detach", "--wait")
+            if not check_ready():
+                raise DeployError("API did not pass /readyz; inspect: python paca_deploy.py logs")
+            print("PACA++ is ready at http://127.0.0.1:8000 (loopback only).")
         elif args.command == "status":
-            show_status()
+            compose("ps")
+            print("API readiness: " + ("ready" if check_ready() else "not ready"))
         elif args.command == "logs":
-            run_compose("logs", "--tail", "100", "--follow")
+            compose("logs", "--tail", "100", "--follow")
         elif args.command == "down":
-            run_compose("down")
-            print("Services stopped. Persistent PostgreSQL and file volumes were preserved.")
+            compose("down")
+            print("Services stopped; named database and file volumes were preserved.")
         return 0
     except DeployError as exc:
         print(f"Deployment error: {exc}", file=sys.stderr)
