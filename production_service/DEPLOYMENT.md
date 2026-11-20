@@ -99,8 +99,8 @@ The sample values are placeholders. Replace them with the exact trusted tenant I
 Provision from `production_service/`:
 
 ```sh
-python paca_provision.py resources \\
-  --manifest ./resources.json \\
+python paca_provision.py resources \
+  --manifest ./resources.json \
   --actor "operator@example.org"
 ```
 
@@ -118,7 +118,7 @@ After the API is ready and a non-sensitive smoke-test file has been provisioned,
 - a different subject in the same tenant with the same `file:read` scope, without the privileged `admin` role;
 - a token for a different tenant.
 
-All three tokens must otherwise satisfy the configured RS256, issuer, audience, expiry and `token_use=access` contract. Use dedicated test identities and never use real customer content. The same-tenant token must have the required scope; otherwise a scope denial could be mistaken for an ownership denial.
+All three tokens must otherwise satisfy the configured RS256, issuer, audience, expiry and `token_use=access` contract. Use dedicated test identities and never use real customer content. The verifier decodes the JWT claims payload only to validate the test scenario: the owner and same-tenant non-owner must both have `file:read`, neither may have the privileged `admin` role, their `tenant_id` values must match, and their `sub` values must differ. The cross-tenant token must have a different tenant. This local payload inspection is not authentication; the API remains responsible for validating each token's RS256 signature and claims. The verifier checks the API's specific `authorization_denied`, `resource_not_found` and `execution_not_found` response codes.
 
 Set the values in the shell environment, not as command-line arguments:
 
@@ -134,7 +134,7 @@ export PACA_VERIFY_API_URL='http://127.0.0.1:8000'
 
 python paca_deploy.py verify
 
-unset PACA_VERIFY_OWNER_TOKEN PACA_VERIFY_SAME_TENANT_NONOWNER_TOKEN \\
+unset PACA_VERIFY_OWNER_TOKEN PACA_VERIFY_SAME_TENANT_NONOWNER_TOKEN \
   PACA_VERIFY_OTHER_TENANT_TOKEN
 ```
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import uuid
 
@@ -33,11 +34,35 @@ class FakeOpener:
         return self.responses.pop(0)
 
 
+def smoke_token(sub: str, tenant_id: str, scopes=None, roles=None) -> str:
+    header = {"alg": "RS256", "typ": "JWT"}
+    claims = {
+        "sub": sub,
+        "tenant_id": tenant_id,
+        "scopes": ["file:read"] if scopes is None else scopes,
+        "roles": [] if roles is None else roles,
+        "iss": "https://identity.example.test/realm",
+        "aud": "paca-api",
+        "exp": 2_000_000_000,
+        "iat": 1_999_999_900,
+        "token_use": "access",
+    }
+
+    def encode(value):
+        return base64.urlsafe_b64encode(
+            json.dumps(value, separators=(",", ":")).encode("utf-8")
+        ).decode("ascii").rstrip("=")
+
+    # The fake transport accepts this fixture. A live API verifies the RS256
+    # signature and registered claims before it authorizes the token.
+    return f"{encode(header)}.{encode(claims)}.test-signature"
+
+
 def valid_environment():
     return {
-        "PACA_VERIFY_OWNER_TOKEN": "owner." + "x" * 64,
-        "PACA_VERIFY_SAME_TENANT_NONOWNER_TOKEN": "nonowner." + "x" * 64,
-        "PACA_VERIFY_OTHER_TENANT_TOKEN": "other." + "x" * 64,
+        "PACA_VERIFY_OWNER_TOKEN": smoke_token("owner-sub", "tenant-a"),
+        "PACA_VERIFY_SAME_TENANT_NONOWNER_TOKEN": smoke_token("different-sub", "tenant-a"),
+        "PACA_VERIFY_OTHER_TENANT_TOKEN": smoke_token("other-sub", "tenant-b"),
         "PACA_VERIFY_RESOURCE_ID": "smoke-file-001",
         "PACA_VERIFY_API_URL": "http://127.0.0.1:8000",
         "PACA_VERIFY_EXPECTED_POLICY_REVISION": "paca-dev-2026-10-23",
@@ -84,7 +109,50 @@ def test_live_verification_checks_allow_execute_status_and_both_denials(monkeypa
     output = capsys.readouterr().out
     assert "passed" in output
     assert "owner read/execution" in output
-    assert "owner.x" not in output
+    assert "same-tenant non-owner authorization denial" in output
+
+
+@pytest.mark.parametrize(
+    ("token", "message"),
+    [
+        (smoke_token("different-sub", "tenant-a", scopes=[]), "file:read scope"),
+        (smoke_token("owner-sub", "tenant-a"), "different sub claim"),
+        (smoke_token("different-sub", "tenant-b"), "tenant_id"),
+        (smoke_token("different-sub", "tenant-a", roles=["admin"]), "admin role"),
+    ],
+)
+def test_live_verification_rejects_invalid_same_tenant_negative_test_identity(token, message):
+    values = valid_environment()
+    values["PACA_VERIFY_SAME_TENANT_NONOWNER_TOKEN"] = token
+    with pytest.raises(paca_deploy.DeployError, match=message):
+        paca_deploy.verify_live_deployment(values)
+
+
+def test_live_verification_rejects_unexpected_forbidden_response_code(monkeypatch):
+    permit_id = str(uuid.uuid4())
+    execution_id = str(uuid.uuid4())
+    opener = FakeOpener(
+        [
+            FakeResponse(201, {"permit_id": permit_id, "policy_revision": "paca-dev-2026-10-23"}),
+            FakeResponse(
+                200,
+                {
+                    "execution_id": execution_id,
+                    "status": "succeeded",
+                    "result": {"content": "smoke-test-content"},
+                },
+            ),
+            FakeResponse(200, {"status": "succeeded"}),
+            FakeResponse(403, {"detail": {"code": "wrong_forbidden_reason"}}),
+        ]
+    )
+    monkeypatch.setattr(
+        paca_deploy.urllib.request,
+        "build_opener",
+        lambda *_handlers: opener,
+    )
+    with pytest.raises(paca_deploy.DeployError, match="authorization_denied"):
+        paca_deploy.verify_live_deployment(valid_environment())
 
 
 def test_live_verification_requires_all_three_identity_tokens():

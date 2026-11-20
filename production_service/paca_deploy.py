@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import ipaddress
 import json
 import os
@@ -273,6 +275,62 @@ def _expect_status(
     return body
 
 
+def _unverified_smoke_token_claims(token: str, variable: str) -> dict[str, Any]:
+    """Decode claims for smoke-scenario checks; the API remains the signature authority."""
+    if len(token) > 16_384 or any(character.isspace() for character in token):
+        raise DeployError(f"{variable} is not a valid bearer-token value.")
+    parts = token.split(".")
+    if len(parts) != 3 or not parts[1]:
+        raise DeployError(f"{variable} must be a compact JWT access token.")
+    try:
+        payload = base64.b64decode(
+            parts[1] + "=" * (-len(parts[1]) % 4), altchars=b"-_", validate=True
+        )
+        claims = json.loads(payload)
+    except (binascii.Error, UnicodeDecodeError, ValueError) as exc:
+        raise DeployError(f"{variable} has an invalid JWT claims payload.") from exc
+    if not isinstance(claims, dict):
+        raise DeployError(f"{variable} must contain a JSON-object claims payload.")
+    return claims
+
+
+def _smoke_claim_set(claims: dict[str, Any], variable: str) -> tuple[str, str, set[str], set[str]]:
+    subject = claims.get("sub")
+    tenant_id = claims.get("tenant_id")
+    if not isinstance(subject, str) or not subject.strip():
+        raise DeployError(f"{variable} must contain a non-empty sub claim.")
+    if not isinstance(tenant_id, str) or not tenant_id.strip():
+        raise DeployError(f"{variable} must contain a non-empty tenant_id claim.")
+
+    roles = claims.get("roles", [])
+    if not isinstance(roles, list) or any(
+        not isinstance(item, str) or not item.strip() or len(item) > 128 for item in roles
+    ):
+        raise DeployError(f"{variable} must contain a valid roles claim.")
+    raw_scopes = claims.get("scopes")
+    if raw_scopes is None:
+        raw_scopes = claims.get("scope", "")
+    if isinstance(raw_scopes, str):
+        scopes = set(raw_scopes.split())
+    elif isinstance(raw_scopes, list) and all(
+        isinstance(item, str) and item.strip() and len(item) <= 128 for item in raw_scopes
+    ):
+        scopes = set(raw_scopes)
+    else:
+        raise DeployError(f"{variable} must contain a valid scopes or scope claim.")
+    return subject, tenant_id, set(roles), scopes
+
+
+def _require_detail_code(body: dict[str, Any], expected: str, context: str) -> None:
+    detail = body.get("detail")
+    actual = detail.get("code") if isinstance(detail, dict) else None
+    if actual != expected:
+        raise DeployError(
+            f"Deployment verification expected API code {expected} for {context}; "
+            f"received {actual if isinstance(actual, str) else 'no code'}."
+        )
+
+
 def verify_live_deployment(environment: dict[str, str] | None = None) -> None:
     values = os.environ if environment is None else environment
     required = (
@@ -287,10 +345,32 @@ def verify_live_deployment(environment: dict[str, str] | None = None) -> None:
             "Set the three PACA_VERIFY_* access-token variables and PACA_VERIFY_RESOURCE_ID; "
             "tokens are read only from the environment, never command-line arguments."
         )
-    for key in required[:3]:
-        token = values[key]
-        if len(token) > 16_384 or any(character.isspace() for character in token):
-            raise DeployError(f"{key} is not a valid bearer-token value.")
+    token_claims = {
+        key: _smoke_claim_set(_unverified_smoke_token_claims(values[key], key), key)
+        for key in required[:3]
+    }
+    owner_sub, owner_tenant, owner_roles, owner_scopes = token_claims["PACA_VERIFY_OWNER_TOKEN"]
+    nonowner_sub, nonowner_tenant, nonowner_roles, nonowner_scopes = token_claims[
+        "PACA_VERIFY_SAME_TENANT_NONOWNER_TOKEN"
+    ]
+    _other_sub, other_tenant, other_roles, other_scopes = token_claims[
+        "PACA_VERIFY_OTHER_TENANT_TOKEN"
+    ]
+    for key, roles, scopes in (
+        ("PACA_VERIFY_OWNER_TOKEN", owner_roles, owner_scopes),
+        ("PACA_VERIFY_SAME_TENANT_NONOWNER_TOKEN", nonowner_roles, nonowner_scopes),
+        ("PACA_VERIFY_OTHER_TENANT_TOKEN", other_roles, other_scopes),
+    ):
+        if "admin" in roles:
+            raise DeployError(f"{key} must not carry the privileged admin role for this smoke test.")
+        if "file:read" not in scopes:
+            raise DeployError(f"{key} must carry the file:read scope for this smoke test.")
+    if nonowner_tenant != owner_tenant:
+        raise DeployError("The same-tenant non-owner token must have the owner's tenant_id.")
+    if nonowner_sub == owner_sub:
+        raise DeployError("The same-tenant non-owner token must have a different sub claim.")
+    if other_tenant == owner_tenant:
+        raise DeployError("The cross-tenant token must have a different tenant_id.")
 
     resource_id = values["PACA_VERIFY_RESOURCE_ID"]
     if (
@@ -388,7 +468,7 @@ def verify_live_deployment(environment: dict[str, str] | None = None) -> None:
     if owner_status.get("status") != "succeeded":
         raise DeployError("The owner could not retrieve the completed execution status.")
 
-    _expect_status(
+    same_tenant_denial = _expect_status(
         _verify_api_request(
             opener, base_url, "POST", authorize_path, same_tenant_token, operation
         ),
@@ -396,7 +476,8 @@ def verify_live_deployment(environment: dict[str, str] | None = None) -> None:
         "POST",
         authorize_path,
     )
-    _expect_status(
+    _require_detail_code(same_tenant_denial, "authorization_denied", "same-tenant non-owner")
+    cross_tenant_resource = _expect_status(
         _verify_api_request(
             opener, base_url, "POST", authorize_path, other_tenant_token, operation
         ),
@@ -404,15 +485,17 @@ def verify_live_deployment(environment: dict[str, str] | None = None) -> None:
         "POST",
         authorize_path,
     )
-    _expect_status(
+    _require_detail_code(cross_tenant_resource, "resource_not_found", "cross-tenant resource lookup")
+    cross_tenant_execution = _expect_status(
         _verify_api_request(opener, base_url, "GET", status_path, other_tenant_token),
         404,
         "GET",
         status_path,
     )
+    _require_detail_code(cross_tenant_execution, "execution_not_found", "cross-tenant execution lookup")
     print(
-        "End-to-end deployment verification passed: owner read/execution, persisted status, "
-        "same-tenant owner denial, and cross-tenant resource/status isolation."
+        "End-to-end deployment verification passed: non-admin owner read/execution, "
+        "same-tenant non-owner authorization denial, and cross-tenant resource/status isolation."
     )
 
 

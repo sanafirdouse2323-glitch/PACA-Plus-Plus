@@ -233,9 +233,10 @@ def _provision_over_direct_dsn(
                 or not role["can_bypass_rls"]
                 or not role["can_insert_resources"]
                 or not role["can_insert_audit"]
+                or not role["can_use_audit_sequence"]
             ):
                 raise ProvisionError(
-                    "Database role lacks the required administrator/BYPASSRLS and INSERT privileges."
+                    "Database role lacks the required administrator/BYPASSRLS, INSERT, or audit-sequence USAGE privileges."
                 )
             for resource in resources:
                 connection.execute(
