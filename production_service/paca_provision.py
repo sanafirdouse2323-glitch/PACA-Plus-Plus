@@ -12,6 +12,7 @@ from typing import Any
 
 import psycopg
 from psycopg.conninfo import conninfo_to_dict
+from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 SERVICE_DIR = Path(__file__).resolve().parent
@@ -206,7 +207,7 @@ def _provision_over_direct_dsn(
         )
 
     try:
-        with psycopg.connect(dsn, connect_timeout=5) as connection:
+        with psycopg.connect(dsn, connect_timeout=5, row_factory=dict_row) as connection:
             with connection.transaction():
                 role = connection.execute(
                     """
