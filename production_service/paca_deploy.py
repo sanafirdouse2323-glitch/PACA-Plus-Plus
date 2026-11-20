@@ -321,7 +321,10 @@ def verify_live_deployment(environment: dict[str, str] | None = None) -> None:
 
     expected_revision = values.get("PACA_VERIFY_EXPECTED_POLICY_REVISION")
     if not expected_revision and ENV_FILE.is_file():
-        expected_revision = read_env().get("PACA_EXPECTED_POLICY_REVISION")
+        try:
+            expected_revision = read_env().get("PACA_EXPECTED_POLICY_REVISION")
+        except OSError as exc:
+            raise DeployError(f"Could not read deployment .env: {exc}") from exc
     base_url = api_url
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
 
