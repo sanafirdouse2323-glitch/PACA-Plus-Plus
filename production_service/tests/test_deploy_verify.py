@@ -103,8 +103,13 @@ def test_live_verification_checks_allow_execute_status_and_both_denials(monkeypa
     assert opener.requests[0][0].full_url.endswith("/v1/authorizations")
     assert opener.requests[1][0].full_url.endswith("/v1/executions")
     assert opener.requests[2][0].full_url.endswith(f"/v1/executions/{execution_id}")
-    assert opener.requests[3][0].get_header("Authorization").startswith("Bearer nonowner.")
-    assert opener.requests[4][0].get_header("Authorization").startswith("Bearer other.")
+    values = valid_environment()
+    assert opener.requests[3][0].get_header("Authorization") == (
+        "Bearer " + values["PACA_VERIFY_SAME_TENANT_NONOWNER_TOKEN"]
+    )
+    assert opener.requests[4][0].get_header("Authorization") == (
+        "Bearer " + values["PACA_VERIFY_OTHER_TENANT_TOKEN"]
+    )
     assert "Idempotency-key" in opener.requests[1][0].headers
     output = capsys.readouterr().out
     assert "passed" in output
