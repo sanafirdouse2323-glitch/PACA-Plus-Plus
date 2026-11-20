@@ -209,61 +209,61 @@ def _provision_over_direct_dsn(
     try:
         with psycopg.connect(dsn, connect_timeout=5, row_factory=dict_row) as connection, connection.transaction():
             role = connection.execute(
+                """
+                SELECT current_user AS role_name,
+                       (r.rolsuper OR r.rolbypassrls) AS can_bypass_rls,
+                       has_table_privilege(current_user, 'public.protected_resources', 'INSERT')
+                           AS can_insert_resources,
+                       has_table_privilege(current_user, 'public.audit_events', 'INSERT')
+                           AS can_insert_audit
+                FROM pg_catalog.pg_roles AS r
+                WHERE r.rolname = current_user
+                """
+            ).fetchone()
+            if (
+                not role
+                or role["role_name"] == "paca_runtime"
+                or not role["can_bypass_rls"]
+                or not role["can_insert_resources"]
+                or not role["can_insert_audit"]
+            ):
+                raise ProvisionError(
+                    "Database role lacks the required administrator/BYPASSRLS and INSERT privileges."
+                )
+            for resource in resources:
+                connection.execute(
                     """
-                    SELECT current_user AS role_name,
-                           (r.rolsuper OR r.rolbypassrls) AS can_bypass_rls,
-                           has_table_privilege(current_user, 'public.protected_resources', 'INSERT')
-                               AS can_insert_resources,
-                           has_table_privilege(current_user, 'public.audit_events', 'INSERT')
-                               AS can_insert_audit
-                    FROM pg_catalog.pg_roles AS r
-                    WHERE r.rolname = current_user
+                    INSERT INTO public.protected_resources
+                        (tenant_id, resource_id, owner_id, kind, status, attributes)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        resource["tenant_id"],
+                        resource["resource_id"],
+                        resource["owner_id"],
+                        resource["kind"],
+                        resource["status"],
+                        Jsonb(json.loads(resource["attributes_json"])),
+                    ),
+                )
+                connection.execute(
                     """
-                ).fetchone()
-                if (
-                    not role
-                    or role["role_name"] == "paca_runtime"
-                    or not role["can_bypass_rls"]
-                    or not role["can_insert_resources"]
-                    or not role["can_insert_audit"]
-                ):
-                    raise ProvisionError(
-                        "Database role lacks the required administrator/BYPASSRLS and INSERT privileges."
-                    )
-                for resource in resources:
-                    connection.execute(
-                        """
-                        INSERT INTO public.protected_resources
-                            (tenant_id, resource_id, owner_id, kind, status, attributes)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            resource["tenant_id"],
-                            resource["resource_id"],
-                            resource["owner_id"],
-                            resource["kind"],
-                            resource["status"],
-                            Jsonb(json.loads(resource["attributes_json"])),
+                    INSERT INTO public.audit_events
+                        (tenant_id, principal_id, event_type, resource_id, details)
+                    VALUES (%s, NULL, 'resource_provisioned', %s, %s)
+                    """,
+                    (
+                        resource["tenant_id"],
+                        resource["resource_id"],
+                        Jsonb(
+                            {
+                                "source": "paca_admin_cli",
+                                "operator": actor,
+                                "resource_kind": resource["kind"],
+                            }
                         ),
-                    )
-                    connection.execute(
-                        """
-                        INSERT INTO public.audit_events
-                            (tenant_id, principal_id, event_type, resource_id, details)
-                        VALUES (%s, NULL, 'resource_provisioned', %s, %s)
-                        """,
-                        (
-                            resource["tenant_id"],
-                            resource["resource_id"],
-                            Jsonb(
-                                {
-                                    "source": "paca_admin_cli",
-                                    "operator": actor,
-                                    "resource_kind": resource["kind"],
-                                }
-                            ),
-                        ),
-                    )
+                    ),
+                )
     except ProvisionError:
         raise
     except psycopg.Error as exc:
