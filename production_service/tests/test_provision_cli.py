@@ -75,13 +75,17 @@ def test_csv_script_keeps_operator_values_in_copy_data_and_audits_each_row():
         manifest(resource(resource_id="id,with,commas", owner_id="owner' ; DROP TABLE audit_events; --"))
     )
     script = paca_provision.build_psql_script(rows, "operator 'quoted'")
-    copy_end = script.index("\\.")
-    sql_header = script[:copy_end]
-    sql_tail = script[copy_end + 2:]
+    copy_header = "FROM STDIN WITH (FORMAT csv);\n"
+    payload_start = script.index(copy_header) + len(copy_header)
+    marker = "\n\\.\n"
+    copy_end = script.index(marker, payload_start)
+    csv_payload = script[payload_start:copy_end]
+    sql_header = script[:payload_start]
+    sql_tail = script[copy_end + len(marker):]
 
     assert "COPY paca_provision_input" in sql_header
-    assert "owner' ; DROP TABLE" not in sql_header
-    assert "owner' ; DROP TABLE" in sql_tail  # appears only in CSV payload before the terminator
+    assert "owner' ; DROP TABLE" in csv_payload
+    assert "owner' ; DROP TABLE" not in sql_tail
     assert "INSERT INTO public.protected_resources" in sql_tail
     assert "INSERT INTO public.audit_events" in sql_tail
     assert "'resource_provisioned'" in sql_tail
