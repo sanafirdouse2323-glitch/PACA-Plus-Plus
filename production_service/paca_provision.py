@@ -137,17 +137,21 @@ DECLARE
     v_can_bypass_rls BOOLEAN;
     v_can_insert_resources BOOLEAN;
     v_can_insert_audit BOOLEAN;
+    v_can_use_audit_sequence BOOLEAN;
 BEGIN
     SELECT (r.rolsuper OR r.rolbypassrls),
            has_table_privilege(current_user, 'public.protected_resources', 'INSERT'),
-           has_table_privilege(current_user, 'public.audit_events', 'INSERT')
-      INTO v_can_bypass_rls, v_can_insert_resources, v_can_insert_audit
+           has_table_privilege(current_user, 'public.audit_events', 'INSERT'),
+           has_sequence_privilege(current_user, 'public.audit_events_event_id_seq', 'USAGE')
+      INTO v_can_bypass_rls, v_can_insert_resources, v_can_insert_audit,
+           v_can_use_audit_sequence
       FROM pg_catalog.pg_roles AS r
      WHERE r.rolname = current_user;
     IF current_user = 'paca_runtime'
        OR NOT COALESCE(v_can_bypass_rls, FALSE)
        OR NOT COALESCE(v_can_insert_resources, FALSE)
-       OR NOT COALESCE(v_can_insert_audit, FALSE) THEN
+       OR NOT COALESCE(v_can_insert_audit, FALSE)
+       OR NOT COALESCE(v_can_use_audit_sequence, FALSE) THEN
         RAISE EXCEPTION 'resource provisioning requires a dedicated BYPASSRLS/superuser administrator with INSERT privileges';
     END IF;
 END
