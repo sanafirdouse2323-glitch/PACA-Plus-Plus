@@ -150,6 +150,7 @@ def test_direct_admin_role_check_rejects_runtime_or_non_bypass_role(monkeypatch)
                 "can_bypass_rls": False,
                 "can_insert_resources": True,
                 "can_insert_audit": True,
+                "can_use_audit_sequence": False,
             }
 
     class Connection:
