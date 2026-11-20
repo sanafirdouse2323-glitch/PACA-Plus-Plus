@@ -23,9 +23,9 @@ For the underlying Compose configuration, manual environment setup and detailed 
 
 ## Provision trusted resource records and verify a deployment
 
-Tenant membership still comes from administrator-controlled identity-provider claims; this repository does not maintain a separate tenants table. Use the administrator-only \`paca_provision.py resources\` command to create trusted \`protected_resources\` rows. It never adds a provisioning endpoint to FastAPI and never grants resource-write privileges to \`paca_runtime\`. The manifest is create-only, duplicate rows abort the transaction, and each inserted resource gets an append-only provisioning audit event.
+Tenant membership still comes from administrator-controlled identity-provider claims; this repository does not maintain a separate tenants table. Use the administrator-only `paca_provision.py resources` command to create trusted `protected_resources` rows. It never adds a provisioning endpoint to FastAPI and never grants resource-write privileges to `paca_runtime`. The manifest is create-only, duplicate rows abort the transaction, and each inserted resource gets an append-only provisioning audit event.
 
-After provisioning a non-sensitive file resource and obtaining dedicated owner, same-tenant non-owner, and other-tenant access tokens, run \`python paca_deploy.py verify\`. It checks a real allowed file read and persisted execution status, a same-tenant ownership denial, and cross-tenant resource/execution isolation. The test tokens are read from environment variables and are not stored in \`.env\`.
+After provisioning a non-sensitive file resource and obtaining dedicated owner, same-tenant non-owner, and other-tenant access tokens, run `python paca_deploy.py verify`. It checks a real allowed file read and persisted execution status, a same-tenant ownership denial, and cross-tenant resource/execution isolation. The test tokens are read from environment variables and are not stored in `.env`.
 
 The full manifest contract, exact commands, admin database requirements, smoke-file preparation and verifier token requirements are documented in [DEPLOYMENT.md](DEPLOYMENT.md#provision-trusted-tenant-resources). Use synthetic resources and short-lived test identities; this single-route check is not a complete security assessment.
 
