@@ -9,7 +9,6 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import psycopg
-
 import pytest
 
 import paca_provision
@@ -259,9 +258,10 @@ def test_psql_provisioning_commits_resource_and_audit_but_runtime_cannot_write()
             assert audit[1]["source"] == "paca_admin_cli"
             assert audit[1]["operator"] == "ci-provisioning-integration"
 
-        with psycopg.connect(runtime_dsn, autocommit=True) as runtime:
-            with pytest.raises(psycopg.errors.InsufficientPrivilege):
-                runtime.execute(
+        with psycopg.connect(runtime_dsn, autocommit=True) as runtime, pytest.raises(
+            psycopg.errors.InsufficientPrivilege
+        ):
+            runtime.execute(
                     """
                     INSERT INTO public.protected_resources
                         (tenant_id, resource_id, owner_id, kind, status, attributes)
