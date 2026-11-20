@@ -219,7 +219,10 @@ def _provision_over_direct_dsn(
                        has_table_privilege(current_user, 'public.protected_resources', 'INSERT')
                            AS can_insert_resources,
                        has_table_privilege(current_user, 'public.audit_events', 'INSERT')
-                           AS can_insert_audit
+                           AS can_insert_audit,
+                       has_sequence_privilege(
+                           current_user, 'public.audit_events_event_id_seq', 'USAGE'
+                       ) AS can_use_audit_sequence
                 FROM pg_catalog.pg_roles AS r
                 WHERE r.rolname = current_user
                 """
