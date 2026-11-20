@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
+import uuid
 from pathlib import Path
 from unittest.mock import Mock
+
+import psycopg
 
 import pytest
 
@@ -51,6 +57,7 @@ def test_manifest_rejects_duplicate_resource_identity():
     [
         resource(status="deleted"),
         resource(status="unknown"),
+        resource(status=[]),
         resource(owner_id=""),
         resource(tenant_id=" tenant-a"),
         resource(attributes=[]),
@@ -179,19 +186,13 @@ def test_read_manifest_requires_exact_top_level_shape(tmp_path: Path):
 
 @pytest.mark.skipif(
     not (
-        __import__("os").getenv("PACA_TEST_ADMIN_DATABASE_URL")
-        and __import__("os").getenv("PACA_TEST_DATABASE_URL")
-        and __import__("shutil").which("psql")
+        os.getenv("PACA_TEST_ADMIN_DATABASE_URL")
+        and os.getenv("PACA_TEST_DATABASE_URL")
+        and shutil.which("psql")
     ),
     reason="requires the isolated admin/runtime PostgreSQL test DSNs and psql client",
 )
 def test_psql_provisioning_commits_resource_and_audit_but_runtime_cannot_write():
-    import os
-    import subprocess
-    import uuid
-
-    import psycopg
-
     admin_dsn = os.environ["PACA_TEST_ADMIN_DATABASE_URL"]
     runtime_dsn = os.environ["PACA_TEST_DATABASE_URL"]
     tenant_id = "paca-provision-e2e-" + uuid.uuid4().hex
