@@ -175,3 +175,101 @@ def test_read_manifest_requires_exact_top_level_shape(tmp_path: Path):
     path.write_text(json.dumps({"resources": [resource()], "tenant": "not-supported"}))
     with pytest.raises(paca_provision.ProvisionError, match="only a 'resources'"):
         paca_provision.read_manifest(path)
+
+
+@pytest.mark.skipif(
+    not (
+        __import__("os").getenv("PACA_TEST_ADMIN_DATABASE_URL")
+        and __import__("os").getenv("PACA_TEST_DATABASE_URL")
+        and __import__("shutil").which("psql")
+    ),
+    reason="requires the isolated admin/runtime PostgreSQL test DSNs and psql client",
+)
+def test_psql_provisioning_commits_resource_and_audit_but_runtime_cannot_write():
+    import os
+    import subprocess
+    import uuid
+
+    import psycopg
+
+    admin_dsn = os.environ["PACA_TEST_ADMIN_DATABASE_URL"]
+    runtime_dsn = os.environ["PACA_TEST_DATABASE_URL"]
+    tenant_id = "paca-provision-e2e-" + uuid.uuid4().hex
+    resource_id = "paca-provision-file-" + uuid.uuid4().hex
+    owner_id = "provisioning-test-owner"
+    attributes = {"relative_path": "provisioning-test/non-sensitive.txt"}
+    rows = paca_provision.validate_manifest(
+        manifest(
+            {
+                "tenant_id": tenant_id,
+                "resource_id": resource_id,
+                "owner_id": owner_id,
+                "kind": "file",
+                "status": "active",
+                "attributes": attributes,
+            }
+        )
+    )
+    script = paca_provision.build_psql_script(rows, "ci-provisioning-integration")
+
+    try:
+        completed = subprocess.run(
+            [
+                "psql",
+                "--no-psqlrc",
+                "--quiet",
+                "--set=ON_ERROR_STOP=1",
+                "--single-transaction",
+                admin_dsn,
+            ],
+            input=script,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr[-4000:]
+
+        with psycopg.connect(admin_dsn) as admin:
+            provisioned = admin.execute(
+                """
+                SELECT tenant_id, resource_id, owner_id, kind, status, attributes
+                FROM public.protected_resources
+                WHERE tenant_id = %s AND resource_id = %s
+                """,
+                (tenant_id, resource_id),
+            ).fetchone()
+            assert provisioned is not None
+            assert provisioned[0:5] == (tenant_id, resource_id, owner_id, "file", "active")
+            assert provisioned[5] == attributes
+
+            audit = admin.execute(
+                """
+                SELECT event_type, details
+                FROM public.audit_events
+                WHERE tenant_id = %s AND resource_id = %s
+                ORDER BY event_id DESC
+                LIMIT 1
+                """,
+                (tenant_id, resource_id),
+            ).fetchone()
+            assert audit is not None
+            assert audit[0] == "resource_provisioned"
+            assert audit[1]["source"] == "paca_admin_cli"
+            assert audit[1]["operator"] == "ci-provisioning-integration"
+
+        with psycopg.connect(runtime_dsn, autocommit=True) as runtime:
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                runtime.execute(
+                    """
+                    INSERT INTO public.protected_resources
+                        (tenant_id, resource_id, owner_id, kind, status, attributes)
+                    VALUES (%s, %s, %s, 'file', 'active', '{}'::jsonb)
+                    """,
+                    (tenant_id, resource_id + "-runtime-write", owner_id),
+                )
+    finally:
+        with psycopg.connect(admin_dsn) as admin:
+            admin.execute(
+                "DELETE FROM public.protected_resources WHERE tenant_id = %s AND resource_id = %s",
+                (tenant_id, resource_id),
+            )
