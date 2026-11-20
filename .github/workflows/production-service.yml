@@ -116,8 +116,8 @@ jobs:
           ALTER FUNCTION public.paca_constant_time_equal(bytea, bytea) OWNER TO paca_runtime;
           ALTER FUNCTION public.paca_reject_audit_mutation() OWNER TO paca_runtime;
           ALTER SCHEMA public OWNER TO paca_runtime;
-          # Schema ownership transfer requires database CREATE; remove this
-          # temporary grant to test the role bootstrap and grants migration separately.
+          -- Schema ownership transfer requires database CREATE; remove this
+          -- temporary grant to test the role bootstrap and grants migration separately.
           REVOKE CREATE ON DATABASE paca_test FROM paca_runtime;
           SQL
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/runtime_grants.sql
