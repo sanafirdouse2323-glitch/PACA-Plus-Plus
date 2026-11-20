@@ -128,6 +128,7 @@ jobs:
           ALTER FUNCTION public.paca_lock_resource_for_execution(text, text) OWNER TO paca_runtime;
           ALTER FUNCTION public.paca_mark_stale_executions_unknown(integer) OWNER TO paca_runtime;
           SQL
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/runtime_grants.sql
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -Atq -v ON_ERROR_STOP=1 \
             -c "SELECT NOT rolbypassrls AND NOT rolreplication FROM pg_roles WHERE rolname = 'paca_runtime'" \
             | grep -qx t
@@ -143,7 +144,6 @@ jobs:
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -Atq -v ON_ERROR_STOP=1 \
             -c "SELECT NOT has_schema_privilege('paca_runtime','public','CREATE') AND NOT has_table_privilege('paca_runtime','public.protected_resources','DELETE') AND NOT has_table_privilege('paca_runtime','public.protected_resources','TRUNCATE') AND NOT has_table_privilege('paca_runtime','public.protected_resources','REFERENCES') AND NOT has_table_privilege('paca_runtime','public.protected_resources','TRIGGER') AND NOT has_sequence_privilege('paca_runtime','public.audit_events_event_id_seq','UPDATE') AND NOT has_function_privilege('paca_runtime','public.paca_constant_time_equal(bytea,bytea)','EXECUTE') AND NOT has_function_privilege('paca_runtime','public.paca_reject_audit_mutation()','EXECUTE')" \
             | grep -qx t
-          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/runtime_grants.sql
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 \
             -v context_key_id="$PACA_TENANT_CONTEXT_KEY_ID" \
             -v context_key="$PACA_TENANT_CONTEXT_HMAC_KEY" <<'SQL'
@@ -161,6 +161,7 @@ jobs:
           # database. This must preserve existing data and restore the intended
           # restricted runtime privileges on repeated application.
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/schema.sql
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/runtime_grants.sql
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -Atq -v ON_ERROR_STOP=1 \
             -c "SELECT NOT rolbypassrls AND NOT rolreplication FROM pg_roles WHERE rolname = 'paca_runtime'" \
             | grep -qx t
@@ -176,7 +177,6 @@ jobs:
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -Atq -v ON_ERROR_STOP=1 \
             -c "SELECT NOT has_schema_privilege('paca_runtime','public','CREATE') AND NOT has_table_privilege('paca_runtime','public.protected_resources','DELETE') AND NOT has_table_privilege('paca_runtime','public.protected_resources','TRUNCATE') AND NOT has_table_privilege('paca_runtime','public.protected_resources','REFERENCES') AND NOT has_table_privilege('paca_runtime','public.protected_resources','TRIGGER') AND NOT has_sequence_privilege('paca_runtime','public.audit_events_event_id_seq','UPDATE') AND NOT has_function_privilege('paca_runtime','public.paca_constant_time_equal(bytea,bytea)','EXECUTE') AND NOT has_function_privilege('paca_runtime','public.paca_reject_audit_mutation()','EXECUTE')" \
             | grep -qx t
-          psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/runtime_grants.sql
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 \
             -v context_key_id="$PACA_TENANT_CONTEXT_KEY_ID" \
             -v context_key="$PACA_TENANT_CONTEXT_HMAC_KEY" <<'SQL'
