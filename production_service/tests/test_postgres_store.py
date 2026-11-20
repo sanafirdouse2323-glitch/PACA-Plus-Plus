@@ -91,7 +91,7 @@ class TestPostgresStoreIntegration:
         with self.store.pool.connection() as conn:
             role = conn.execute(
                 """
-                SELECT rolsuper, rolcreatedb, rolcreaterole, rolbypassrls
+                SELECT rolsuper, rolcreatedb, rolcreaterole, rolbypassrls, rolreplication
                 FROM pg_roles WHERE rolname = current_user
                 """
             ).fetchone()
@@ -101,9 +101,23 @@ class TestPostgresStoreIntegration:
                     has_table_privilege(current_user, 'protected_resources', 'SELECT') AS can_read_resources,
                     has_table_privilege(current_user, 'protected_resources', 'INSERT') AS can_insert_resources,
                     has_table_privilege(current_user, 'protected_resources', 'UPDATE') AS can_update_resources,
+                    has_table_privilege(current_user, 'protected_resources', 'DELETE') AS can_delete_resources,
+                    has_table_privilege(current_user, 'protected_resources', 'TRUNCATE') AS can_truncate_resources,
+                    has_table_privilege(current_user, 'protected_resources', 'REFERENCES') AS can_reference_resources,
+                    has_table_privilege(current_user, 'protected_resources', 'TRIGGER') AS can_trigger_resources,
+                    has_table_privilege(current_user, 'authz_permits', 'DELETE') AS can_delete_permits,
+                    has_table_privilege(current_user, 'authz_executions', 'DELETE') AS can_delete_executions,
                     has_table_privilege(current_user, 'audit_events', 'SELECT') AS can_read_audit,
                     has_table_privilege(current_user, 'audit_events', 'UPDATE') AS can_update_audit,
-                    has_table_privilege(current_user, 'audit_events', 'DELETE') AS can_delete_audit
+                    has_table_privilege(current_user, 'audit_events', 'DELETE') AS can_delete_audit,
+                    has_table_privilege(current_user, 'audit_events', 'TRUNCATE') AS can_truncate_audit,
+                    has_table_privilege(current_user, 'audit_events', 'REFERENCES') AS can_reference_audit,
+                    has_table_privilege(current_user, 'audit_events', 'TRIGGER') AS can_trigger_audit,
+                    has_sequence_privilege(current_user, 'public.audit_events_event_id_seq', 'USAGE') AS can_use_audit_sequence,
+                    has_sequence_privilege(current_user, 'public.audit_events_event_id_seq', 'SELECT') AS can_select_audit_sequence,
+                    has_sequence_privilege(current_user, 'public.audit_events_event_id_seq', 'UPDATE') AS can_update_audit_sequence,
+                    has_function_privilege(current_user, 'public.paca_constant_time_equal(bytea, bytea)', 'EXECUTE') AS can_call_constant_time_helper,
+                    has_function_privilege(current_user, 'public.paca_reject_audit_mutation()', 'EXECUTE') AS can_call_audit_trigger_function
                 """
             ).fetchone()
             rls_rows = conn.execute(
@@ -120,17 +134,45 @@ class TestPostgresStoreIntegration:
                   )
                 """
             ).fetchall()
+            ownership = conn.execute(
+                """
+                SELECT (n.nspowner = r.oid) AS runtime_owns_public_schema,
+                       (seq.relowner = r.oid) AS runtime_owns_audit_sequence
+                FROM pg_roles AS r
+                JOIN pg_namespace AS n ON n.nspname = 'public'
+                JOIN pg_class AS seq ON seq.oid = 'public.audit_events_event_id_seq'::regclass
+                WHERE r.rolname = current_user
+                """
+            ).fetchone()
         assert role is not None
         assert role["rolsuper"] is False
         assert role["rolcreatedb"] is False
         assert role["rolcreaterole"] is False
         assert role["rolbypassrls"] is False
+        assert role["rolreplication"] is False
         assert privileges["can_read_resources"] is True
         assert privileges["can_insert_resources"] is False
         assert privileges["can_update_resources"] is False
+        assert privileges["can_delete_resources"] is False
+        assert privileges["can_truncate_resources"] is False
+        assert privileges["can_reference_resources"] is False
+        assert privileges["can_trigger_resources"] is False
+        assert privileges["can_delete_permits"] is False
+        assert privileges["can_delete_executions"] is False
         assert privileges["can_read_audit"] is True
         assert privileges["can_update_audit"] is False
         assert privileges["can_delete_audit"] is False
+        assert privileges["can_truncate_audit"] is False
+        assert privileges["can_reference_audit"] is False
+        assert privileges["can_trigger_audit"] is False
+        assert privileges["can_use_audit_sequence"] is True
+        assert privileges["can_select_audit_sequence"] is True
+        assert privileges["can_update_audit_sequence"] is False
+        assert privileges["can_call_constant_time_helper"] is False
+        assert privileges["can_call_audit_trigger_function"] is False
+        assert ownership is not None
+        assert ownership["runtime_owns_public_schema"] is False
+        assert ownership["runtime_owns_audit_sequence"] is False
         rls = {row["relname"]: row for row in rls_rows}
         assert set(rls) == {
             "protected_resources", "authz_permits", "authz_executions", "audit_events"
@@ -138,6 +180,46 @@ class TestPostgresStoreIntegration:
         for table, details in rls.items():
             assert details["relrowsecurity"] is True, table
             assert details["runtime_is_owner"] is False, table
+
+
+    def test_authorization_tables_have_only_canonical_rls_policies_and_triggers(self):
+        expected_policies = {
+            ("protected_resources", "protected_resources_tenant_isolation"),
+            ("authz_permits", "authz_permits_tenant_isolation"),
+            ("authz_executions", "authz_executions_tenant_isolation"),
+            ("audit_events", "audit_events_tenant_isolation"),
+        }
+        expected_triggers = {("audit_events", "audit_events_no_update")}
+        with self.store.pool.connection() as conn:
+            policies = conn.execute(
+                """
+                SELECT cls.relname, pol.polname
+                FROM pg_policy AS pol
+                JOIN pg_class AS cls ON cls.oid = pol.polrelid
+                JOIN pg_namespace AS ns ON ns.oid = cls.relnamespace
+                WHERE ns.nspname = 'public'
+                  AND cls.relname IN (
+                      'protected_resources', 'authz_permits',
+                      'authz_executions', 'audit_events'
+                  )
+                """
+            ).fetchall()
+            triggers = conn.execute(
+                """
+                SELECT cls.relname, trg.tgname
+                FROM pg_trigger AS trg
+                JOIN pg_class AS cls ON cls.oid = trg.tgrelid
+                JOIN pg_namespace AS ns ON ns.oid = cls.relnamespace
+                WHERE ns.nspname = 'public'
+                  AND cls.relname IN (
+                      'protected_resources', 'authz_permits',
+                      'authz_executions', 'audit_events'
+                  )
+                  AND NOT trg.tgisinternal
+                """
+            ).fetchall()
+        assert {(row["relname"], row["polname"]) for row in policies} == expected_policies
+        assert {(row["relname"], row["tgname"]) for row in triggers} == expected_triggers
 
     def test_rls_prevents_cross_tenant_direct_reads_updates_and_mismatched_execution_links(self):
         other_tenant = "other-" + uuid4().hex

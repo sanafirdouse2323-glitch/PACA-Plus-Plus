@@ -201,7 +201,21 @@ CREATE TABLE IF NOT EXISTS authz_permits (
 
 ALTER TABLE protected_resources ENABLE ROW LEVEL SECURITY;
 ALTER TABLE protected_resources FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS protected_resources_tenant_isolation ON protected_resources;
+DO $paca_reset_resource_policies$
+DECLARE
+    existing_policy record;
+BEGIN
+    FOR existing_policy IN
+        SELECT polname FROM pg_policy
+        WHERE polrelid = 'public.protected_resources'::regclass
+    LOOP
+        EXECUTE format(
+            'DROP POLICY %I ON public.protected_resources',
+            existing_policy.polname
+        );
+    END LOOP;
+END
+$paca_reset_resource_policies$;
 CREATE POLICY protected_resources_tenant_isolation ON protected_resources
     USING (tenant_id = public.paca_current_tenant_id())
     WITH CHECK (tenant_id = public.paca_current_tenant_id());
@@ -267,13 +281,41 @@ END
 $paca$;
 
 ALTER TABLE public.authz_permits ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS authz_permits_tenant_isolation ON public.authz_permits;
+DO $paca_reset_permit_policies$
+DECLARE
+    existing_policy record;
+BEGIN
+    FOR existing_policy IN
+        SELECT polname FROM pg_policy
+        WHERE polrelid = 'public.authz_permits'::regclass
+    LOOP
+        EXECUTE format(
+            'DROP POLICY %I ON public.authz_permits',
+            existing_policy.polname
+        );
+    END LOOP;
+END
+$paca_reset_permit_policies$;
 CREATE POLICY authz_permits_tenant_isolation ON public.authz_permits
     USING (tenant_id = public.paca_current_tenant_id())
     WITH CHECK (tenant_id = public.paca_current_tenant_id());
 
 ALTER TABLE public.authz_executions ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS authz_executions_tenant_isolation ON public.authz_executions;
+DO $paca_reset_execution_policies$
+DECLARE
+    existing_policy record;
+BEGIN
+    FOR existing_policy IN
+        SELECT polname FROM pg_policy
+        WHERE polrelid = 'public.authz_executions'::regclass
+    LOOP
+        EXECUTE format(
+            'DROP POLICY %I ON public.authz_executions',
+            existing_policy.polname
+        );
+    END LOOP;
+END
+$paca_reset_execution_policies$;
 CREATE POLICY authz_executions_tenant_isolation ON public.authz_executions
     USING (tenant_id = public.paca_current_tenant_id())
     WITH CHECK (tenant_id = public.paca_current_tenant_id());
@@ -307,7 +349,21 @@ CREATE INDEX IF NOT EXISTS audit_events_subject_idx
 -- Audit rows are tenant-scoped too. Legacy/system rows with a NULL tenant are not
 -- visible to the application runtime role through this policy.
 ALTER TABLE public.audit_events ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS audit_events_tenant_isolation ON public.audit_events;
+DO $paca_reset_audit_policies$
+DECLARE
+    existing_policy record;
+BEGIN
+    FOR existing_policy IN
+        SELECT polname FROM pg_policy
+        WHERE polrelid = 'public.audit_events'::regclass
+    LOOP
+        EXECUTE format(
+            'DROP POLICY %I ON public.audit_events',
+            existing_policy.polname
+        );
+    END LOOP;
+END
+$paca_reset_audit_policies$;
 CREATE POLICY audit_events_tenant_isolation ON public.audit_events
     USING (tenant_id = public.paca_current_tenant_id())
     WITH CHECK (tenant_id = public.paca_current_tenant_id());
@@ -320,6 +376,36 @@ BEGIN
     RAISE EXCEPTION 'audit_events is append-only';
 END;
 $$;
+
+-- Remove every non-internal trigger from authorization tables. These tables
+-- have a single canonical application trigger: the append-only audit guard
+-- recreated below. Preserve PostgreSQL's internal FK/constraint triggers.
+DO $paca_reset_application_triggers$
+DECLARE
+    existing_trigger record;
+BEGIN
+    FOR existing_trigger IN
+        SELECT ns.nspname, cls.relname, trg.tgname
+        FROM pg_trigger AS trg
+        JOIN pg_class AS cls ON cls.oid = trg.tgrelid
+        JOIN pg_namespace AS ns ON ns.oid = cls.relnamespace
+        WHERE trg.tgrelid IN (
+            'public.protected_resources'::regclass,
+            'public.authz_permits'::regclass,
+            'public.authz_executions'::regclass,
+            'public.audit_events'::regclass
+        )
+          AND NOT trg.tgisinternal
+    LOOP
+        EXECUTE format(
+            'DROP TRIGGER %I ON %I.%I',
+            existing_trigger.tgname,
+            existing_trigger.nspname,
+            existing_trigger.relname
+        );
+    END LOOP;
+END
+$paca_reset_application_triggers$;
 
 DROP TRIGGER IF EXISTS audit_events_no_update ON audit_events;
 CREATE TRIGGER audit_events_no_update
