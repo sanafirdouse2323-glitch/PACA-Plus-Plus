@@ -67,17 +67,17 @@ See [IDENTITY_PROVIDER.md](IDENTITY_PROVIDER.md) for the complete claim contract
 
 ## Provision trusted tenant resources
 
-PACA++ currently has no separate tenant registry table. The identity provider supplies the trusted \`tenant_id\` claim; each provisioned protected resource stores that exact tenant ID and the owner's exact access-token \`sub\`. Creating an identity-provider tenant, assigning users, and issuing trusted claims remain identity-administration tasks. The tool below creates only \`protected_resources\` rows; it does not create users, roles, scopes, API clients, files or external resources.
+PACA++ currently has no separate tenant registry table. The identity provider supplies the trusted `tenant_id` claim; each provisioned protected resource stores that exact tenant ID and the owner's exact access-token `sub`. Creating an identity-provider tenant, assigning users, and issuing trusted claims remain identity-administration tasks. The tool below creates only `protected_resources` rows; it does not create users, roles, scopes, API clients, files or external resources.
 
 Install the service dependencies from this directory:
 
-\`\`\`sh
+```sh
 python -m pip install -e .
-\`\`\`
+```
 
 Create a reviewed JSON manifest outside source control. For example:
 
-\`\`\`json
+```json
 {
   "resources": [
     {
@@ -92,37 +92,37 @@ Create a reviewed JSON manifest outside source control. For example:
     }
   ]
 }
-\`\`\`
+```
 
-The sample values are placeholders. Replace them with the exact trusted tenant ID and subject from your identity-provider configuration. For a \`file\` resource, place a non-sensitive test file at that relative path under the configured \`PACA_FILE_ROOT\` before running the smoke check. The path is trusted metadata, not a caller-supplied path.
+The sample values are placeholders. Replace them with the exact trusted tenant ID and subject from your identity-provider configuration. For a `file` resource, place a non-sensitive test file at that relative path under the configured `PACA_FILE_ROOT` before running the smoke check. The path is trusted metadata, not a caller-supplied path.
 
-Provision from \`production_service/\`:
+Provision from `production_service/`:
 
-\`\`\`sh
+```sh
 python paca_provision.py resources \\
   --manifest ./resources.json \\
   --actor "operator@example.org"
-\`\`\`
+```
 
-With the local Compose deployment, the tool uses \`docker compose exec\` to connect to the database container over its local socket as the bootstrap database administrator; it does not publish a database port or put the administrator password in the API container. For a separately managed PostgreSQL deployment, set \`PACA_ADMIN_DATABASE_URL\` in the process environment to a dedicated administrative connection string containing \`sslmode=verify-full\`. That role must have \`BYPASSRLS\` (or superuser) and INSERT privileges on \`public.protected_resources\` and \`public.audit_events\`. The tool explicitly rejects \`paca_runtime\` and roles without those privileges.
+With the local Compose deployment, the tool uses `docker compose exec` to connect to the database container over its local socket as the bootstrap database administrator; it does not publish a database port or put the administrator password in the API container. For a separately managed PostgreSQL deployment, set `PACA_ADMIN_DATABASE_URL` in the process environment to a dedicated administrative connection string containing `sslmode=verify-full`. That role must have `BYPASSRLS` (or superuser), INSERT privileges on `public.protected_resources` and `public.audit_events`, and `USAGE` on `public.audit_events_event_id_seq`. The tool explicitly rejects `paca_runtime` and roles without those privileges.
 
-The provisioning operation is intentionally create-only. The manifest is limited to 500 resources, each attributes object is limited to 64 KiB, only \`active\` or \`inactive\` initial states are accepted, and duplicate tenant/resource identities fail rather than changing an existing owner or authorization context. The whole manifest and its audit rows are committed in one database transaction; any insert failure rolls the full batch back. Each resource receives an append-only \`resource_provisioned\` audit event containing the operator label and provisioning source. The \`--actor\` value is an operator-supplied audit label, not cryptographic proof of the person's identity; protect the host, shell access and administrative credential accordingly.
+The provisioning operation is intentionally create-only. The manifest is limited to 500 resources, each attributes object is limited to 64 KiB, only `active` or `inactive` initial states are accepted, and duplicate tenant/resource identities fail rather than changing an existing owner or authorization context. The whole manifest and its audit rows are committed in one database transaction; any insert failure rolls the full batch back. Each resource receives an append-only `resource_provisioned` audit event containing the operator label and provisioning source. The `--actor` value is an operator-supplied audit label, not cryptographic proof of the person's identity; protect the host, shell access and administrative credential accordingly.
 
-Do not add a provisioning API route or grant INSERT/UPDATE on \`protected_resources\` to the application role. Trusted resource ownership, status, kind and attributes are authorization inputs.
+Do not add a provisioning API route or grant INSERT/UPDATE on `protected_resources` to the application role. Trusted resource ownership, status, kind and attributes are authorization inputs.
 
 ## Verify a live deployment end to end
 
 After the API is ready and a non-sensitive smoke-test file has been provisioned, obtain three short-lived access tokens from your real identity provider:
 
-- an owner token whose \`sub\` and \`tenant_id\` match the provisioned resource;
-- a different subject in the same tenant with the same \`file:read\` scope, without the privileged \`admin\` role;
+- an owner token whose `sub` and `tenant_id` match the provisioned resource;
+- a different subject in the same tenant with the same `file:read` scope, without the privileged `admin` role;
 - a token for a different tenant.
 
-All three tokens must otherwise satisfy the configured RS256, issuer, audience, expiry and \`token_use=access\` contract. Use dedicated test identities and never use real customer content. The same-tenant token must have the required scope; otherwise a scope denial could be mistaken for an ownership denial.
+All three tokens must otherwise satisfy the configured RS256, issuer, audience, expiry and `token_use=access` contract. Use dedicated test identities and never use real customer content. The same-tenant token must have the required scope; otherwise a scope denial could be mistaken for an ownership denial.
 
 Set the values in the shell environment, not as command-line arguments:
 
-\`\`\`sh
+```sh
 export PACA_VERIFY_OWNER_TOKEN='<short-lived owner access token>'
 export PACA_VERIFY_SAME_TENANT_NONOWNER_TOKEN='<short-lived same-tenant non-owner token>'
 export PACA_VERIFY_OTHER_TENANT_TOKEN='<short-lived other-tenant access token>'
@@ -136,9 +136,9 @@ python paca_deploy.py verify
 
 unset PACA_VERIFY_OWNER_TOKEN PACA_VERIFY_SAME_TENANT_NONOWNER_TOKEN \\
   PACA_VERIFY_OTHER_TENANT_TOKEN
-\`\`\`
+```
 
-The verifier sends a real \`file.read\` authorization request with the owner token, executes the resulting short-lived permit with a fresh idempotency key, and checks the persisted execution status. It then expects a 403 for the same-tenant non-owner and 404 for the other tenant attempting to access both the resource and the owner's execution. It checks the policy revision returned by the authorization response against the configured revision when that value is available. File contents are checked for a successful response but are never printed.
+The verifier sends a real `file.read` authorization request with the owner token, executes the resulting short-lived permit with a fresh idempotency key, and checks the persisted execution status. It then expects a 403 for the same-tenant non-owner and 404 for the other tenant attempting to access both the resource and the owner's execution. It checks the policy revision returned by the authorization response against the configured revision when that value is available. File contents are checked for a successful response but are never printed.
 
 For a remote API URL, use HTTPS. The command does not mint tokens, configure the identity provider or provision the resource/file for you. It also does not exercise every protected action, every downstream adapter, remote OPA authentication, host-level bypass, backup/restore or operational controls. It is a deployment smoke check for one real file-read route, not a penetration test or production certification. Always use dedicated synthetic identities and data; avoid running it against customer resources. Treat the tokens as secrets and unset them after the check.
 
