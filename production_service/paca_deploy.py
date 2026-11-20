@@ -13,7 +13,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 
 from paca_service.config import ConfigurationError, Settings
 
