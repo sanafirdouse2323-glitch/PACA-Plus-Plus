@@ -207,9 +207,8 @@ def _provision_over_direct_dsn(
         )
 
     try:
-        with psycopg.connect(dsn, connect_timeout=5, row_factory=dict_row) as connection:
-            with connection.transaction():
-                role = connection.execute(
+        with psycopg.connect(dsn, connect_timeout=5, row_factory=dict_row) as connection, connection.transaction():
+            role = connection.execute(
                     """
                     SELECT current_user AS role_name,
                            (r.rolsuper OR r.rolbypassrls) AS can_bypass_rls,
