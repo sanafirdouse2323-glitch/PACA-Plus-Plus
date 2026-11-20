@@ -63,7 +63,7 @@ def validate_manifest(document: Any) -> list[dict[str, Any]]:
         owner_id = _identifier(item["owner_id"], f"Resource {index} owner_id", 512)
         kind = _identifier(item["kind"], f"Resource {index} kind", 128)
         status = item.get("status", "active")
-        if status not in {"active", "inactive"}:
+        if not isinstance(status, str) or status not in {"active", "inactive"}:
             raise ProvisionError(f"Resource {index} status must be 'active' or 'inactive'.")
         attributes = item.get("attributes", {})
         if not isinstance(attributes, dict):
@@ -72,7 +72,7 @@ def validate_manifest(document: Any) -> list[dict[str, Any]]:
             attributes_json = json.dumps(
                 attributes, ensure_ascii=True, allow_nan=False, separators=(",", ":")
             )
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, RecursionError) as exc:
             raise ProvisionError(f"Resource {index} attributes must contain finite JSON values.") from exc
         if len(attributes_json.encode("utf-8")) > MAX_ATTRIBUTES_BYTES:
             raise ProvisionError(f"Resource {index} attributes exceed the 64 KiB limit.")
@@ -103,8 +103,8 @@ def read_manifest(path: Path) -> list[dict[str, Any]]:
         raise ProvisionError("Manifest exceeds the 4 MiB size limit.")
     try:
         document = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ProvisionError("Manifest must be valid UTF-8 JSON.") from exc
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise ProvisionError("Manifest must be valid UTF-8 JSON within the supported nesting depth.") from exc
     return validate_manifest(document)
 
 
