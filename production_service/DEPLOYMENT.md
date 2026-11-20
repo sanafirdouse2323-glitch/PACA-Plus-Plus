@@ -4,6 +4,8 @@
 
 This guide and `paca_deploy.py` provide one repeatable setup and operating path for the existing production-service gateway. They do **not** replace or weaken the authorization architecture.
 
+The database schema migration restores the canonical RLS policy and trigger set on the four authorization tables. Existing custom policies and non-internal triggers on those tables are removed during schema reapplication; these tables do not support operator-added policies or triggers.
+
 The Compose stack still includes:
 
 - the FastAPI gateway and verified access-token checks;

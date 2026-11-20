@@ -181,6 +181,46 @@ class TestPostgresStoreIntegration:
             assert details["relrowsecurity"] is True, table
             assert details["runtime_is_owner"] is False, table
 
+
+    def test_authorization_tables_have_only_canonical_rls_policies_and_triggers(self):
+        expected_policies = {
+            ("protected_resources", "protected_resources_tenant_isolation"),
+            ("authz_permits", "authz_permits_tenant_isolation"),
+            ("authz_executions", "authz_executions_tenant_isolation"),
+            ("audit_events", "audit_events_tenant_isolation"),
+        }
+        expected_triggers = {("audit_events", "audit_events_no_update")}
+        with self.store.pool.connection() as conn:
+            policies = conn.execute(
+                """
+                SELECT cls.relname, pol.polname
+                FROM pg_policy AS pol
+                JOIN pg_class AS cls ON cls.oid = pol.polrelid
+                JOIN pg_namespace AS ns ON ns.oid = cls.relnamespace
+                WHERE ns.nspname = 'public'
+                  AND cls.relname IN (
+                      'protected_resources', 'authz_permits',
+                      'authz_executions', 'audit_events'
+                  )
+                """
+            ).fetchall()
+            triggers = conn.execute(
+                """
+                SELECT cls.relname, trg.tgname
+                FROM pg_trigger AS trg
+                JOIN pg_class AS cls ON cls.oid = trg.tgrelid
+                JOIN pg_namespace AS ns ON ns.oid = cls.relnamespace
+                WHERE ns.nspname = 'public'
+                  AND cls.relname IN (
+                      'protected_resources', 'authz_permits',
+                      'authz_executions', 'audit_events'
+                  )
+                  AND NOT trg.tgisinternal
+                """
+            ).fetchall()
+        assert {(row["relname"], row["polname"]) for row in policies} == expected_policies
+        assert {(row["relname"], row["tgname"]) for row in triggers} == expected_triggers
+
     def test_rls_prevents_cross_tenant_direct_reads_updates_and_mismatched_execution_links(self):
         other_tenant = "other-" + uuid4().hex
         other_principal = "other-user-" + uuid4().hex

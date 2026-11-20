@@ -116,6 +116,11 @@ jobs:
           ALTER FUNCTION public.paca_constant_time_equal(bytea, bytea) OWNER TO paca_runtime;
           ALTER FUNCTION public.paca_reject_audit_mutation() OWNER TO paca_runtime;
           ALTER SCHEMA public OWNER TO paca_runtime;
+          CREATE POLICY paca_legacy_permissive_policy ON public.authz_permits
+            USING (true) WITH CHECK (true);
+          CREATE TRIGGER paca_legacy_probe_trigger
+            BEFORE INSERT ON public.authz_permits
+            FOR EACH ROW EXECUTE FUNCTION public.paca_reject_audit_mutation();
           -- Schema ownership transfer requires database CREATE; remove this
           -- temporary grant to test the role bootstrap and grants migration separately.
           REVOKE CREATE ON DATABASE paca_test FROM paca_runtime;
@@ -161,6 +166,15 @@ jobs:
           # database. This must preserve existing data and restore the intended
           # restricted runtime privileges on repeated application.
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/schema.sql
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -Atq -v ON_ERROR_STOP=1 \
+            -c "SELECT count(*) = 0 FROM pg_policy WHERE polrelid = 'public.authz_permits'::regclass AND polname = 'paca_legacy_permissive_policy'" \
+            | grep -qx t
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -Atq -v ON_ERROR_STOP=1 \
+            -c "SELECT count(*) = 0 FROM pg_trigger WHERE tgrelid = 'public.authz_permits'::regclass AND tgname = 'paca_legacy_probe_trigger' AND NOT tgisinternal" \
+            | grep -qx t
+          psql "$PACA_TEST_ADMIN_DATABASE_URL" -Atq -v ON_ERROR_STOP=1 \
+            -c "SELECT count(*) = 1 FROM pg_trigger WHERE tgrelid = 'public.audit_events'::regclass AND tgname = 'audit_events_no_update' AND NOT tgisinternal" \
+            | grep -qx t
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f production_service/paca_service/runtime_grants.sql
           psql "$PACA_TEST_ADMIN_DATABASE_URL" -Atq -v ON_ERROR_STOP=1 \
             -c "SELECT NOT rolbypassrls AND NOT rolreplication FROM pg_roles WHERE rolname = 'paca_runtime'" \
