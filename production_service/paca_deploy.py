@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import secrets
@@ -9,9 +10,10 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from paca_service.config import ConfigurationError, Settings
 
@@ -212,6 +214,205 @@ def check_ready() -> bool:
         return False
 
 
+def _verify_api_request(
+    opener: Any,
+    base_url: str,
+    method: str,
+    path: str,
+    token: str,
+    payload: dict[str, Any] | None = None,
+    idempotency_key: str | None = None,
+) -> tuple[int, dict[str, Any]]:
+    headers = {"Accept": "application/json", "Authorization": f"Bearer {token}"}
+    data = None
+    if payload is not None:
+        data = json.dumps(payload, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    if idempotency_key:
+        headers["Idempotency-Key"] = idempotency_key
+    request = urllib.request.Request(
+        base_url + path, data=data, headers=headers, method=method
+    )
+    try:
+        with opener.open(request, timeout=10) as response:
+            status = response.status
+            body = response.read(16_385)
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+        body = exc.read(16_385)
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise DeployError(f"Deployment verification could not reach the API ({method} {path}).") from exc
+    if len(body) > 16_384:
+        raise DeployError(f"Deployment verification received an oversized response ({method} {path}).")
+    if not body:
+        return status, {}
+    try:
+        document = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise DeployError(f"Deployment verification received invalid JSON ({method} {path}).") from exc
+    if not isinstance(document, dict):
+        raise DeployError(f"Deployment verification received an unexpected response ({method} {path}).")
+    return status, document
+
+
+def _expect_status(
+    actual: tuple[int, dict[str, Any]],
+    expected: int,
+    method: str,
+    path: str,
+) -> dict[str, Any]:
+    status, body = actual
+    if status != expected:
+        detail = body.get("detail")
+        code = detail.get("code") if isinstance(detail, dict) else None
+        suffix = f"; API code: {code}" if isinstance(code, str) and len(code) <= 128 else ""
+        raise DeployError(
+            f"Deployment verification expected HTTP {expected} for {method} {path}, "
+            f"received HTTP {status}{suffix}."
+        )
+    return body
+
+
+def verify_live_deployment(environment: dict[str, str] | None = None) -> None:
+    values = os.environ if environment is None else environment
+    required = (
+        "PACA_VERIFY_OWNER_TOKEN",
+        "PACA_VERIFY_SAME_TENANT_NONOWNER_TOKEN",
+        "PACA_VERIFY_OTHER_TENANT_TOKEN",
+        "PACA_VERIFY_RESOURCE_ID",
+    )
+    missing = [key for key in required if not values.get(key)]
+    if missing:
+        raise DeployError(
+            "Set the three PACA_VERIFY_* access-token variables and PACA_VERIFY_RESOURCE_ID; "
+            "tokens are read only from the environment, never command-line arguments."
+        )
+    for key in required[:3]:
+        token = values[key]
+        if len(token) > 16_384 or any(character.isspace() for character in token):
+            raise DeployError(f"{key} is not a valid bearer-token value.")
+
+    resource_id = values["PACA_VERIFY_RESOURCE_ID"]
+    if (
+        not resource_id.strip()
+        or len(resource_id) > 256
+        or any(ord(character) < 32 or character == "\x00" for character in resource_id)
+    ):
+        raise DeployError("PACA_VERIFY_RESOURCE_ID must be a non-empty safe resource identifier.")
+
+    api_url = values.get("PACA_VERIFY_API_URL", "http://127.0.0.1:8000").rstrip("/")
+    parts = urlsplit(api_url)
+    if (
+        parts.scheme not in {"http", "https"}
+        or not parts.hostname
+        or parts.username
+        or parts.password
+        or parts.path not in {"", "/"}
+        or parts.query
+        or parts.fragment
+    ):
+        raise DeployError("PACA_VERIFY_API_URL must be an origin-only HTTP(S) URL.")
+    try:
+        loopback = ipaddress.ip_address(parts.hostname).is_loopback or parts.hostname == "localhost"
+    except ValueError:
+        loopback = parts.hostname == "localhost"
+    if parts.scheme == "http" and not loopback:
+        raise DeployError("Use HTTPS for a non-loopback PACA_VERIFY_API_URL.")
+
+    expected_revision = values.get("PACA_VERIFY_EXPECTED_POLICY_REVISION")
+    if not expected_revision and ENV_FILE.is_file():
+        expected_revision = read_env().get("PACA_EXPECTED_POLICY_REVISION")
+    base_url = api_url
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+
+    authorize_path = "/v1/authorizations"
+    owner_token = values["PACA_VERIFY_OWNER_TOKEN"]
+    same_tenant_token = values["PACA_VERIFY_SAME_TENANT_NONOWNER_TOKEN"]
+    other_tenant_token = values["PACA_VERIFY_OTHER_TENANT_TOKEN"]
+    operation = {"action": "file.read", "resource_id": resource_id, "arguments": {}}
+
+    authorized = _expect_status(
+        _verify_api_request(opener, base_url, "POST", authorize_path, owner_token, operation),
+        201,
+        "POST",
+        authorize_path,
+    )
+    permit_id = authorized.get("permit_id")
+    try:
+        uuid.UUID(str(permit_id))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise DeployError("Deployment verification received an invalid permit identifier.") from exc
+    policy_revision = authorized.get("policy_revision")
+    if not isinstance(policy_revision, str) or not policy_revision:
+        raise DeployError("Authorization response did not include a policy revision.")
+    if expected_revision and policy_revision != expected_revision:
+        raise DeployError("Live authorization policy revision does not match the deployment configuration.")
+
+    idempotency_key = "paca-smoke-" + secrets.token_hex(16)
+    execute_path = "/v1/executions"
+    execution = _expect_status(
+        _verify_api_request(
+            opener,
+            base_url,
+            "POST",
+            execute_path,
+            owner_token,
+            {**operation, "permit_id": permit_id},
+            idempotency_key,
+        ),
+        200,
+        "POST",
+        execute_path,
+    )
+    result = execution.get("result")
+    execution_id = execution.get("execution_id")
+    if execution.get("status") != "succeeded" or not isinstance(result, dict):
+        raise DeployError("The permitted file.read operation did not complete successfully.")
+    if not isinstance(result.get("content"), str):
+        raise DeployError("The permitted file.read adapter did not return file content.")
+    try:
+        uuid.UUID(str(execution_id))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise DeployError("Execution response did not include a valid execution identifier.") from exc
+
+    status_path = "/v1/executions/" + str(execution_id)
+    owner_status = _expect_status(
+        _verify_api_request(opener, base_url, "GET", status_path, owner_token),
+        200,
+        "GET",
+        status_path,
+    )
+    if owner_status.get("status") != "succeeded":
+        raise DeployError("The owner could not retrieve the completed execution status.")
+
+    _expect_status(
+        _verify_api_request(
+            opener, base_url, "POST", authorize_path, same_tenant_token, operation
+        ),
+        403,
+        "POST",
+        authorize_path,
+    )
+    _expect_status(
+        _verify_api_request(
+            opener, base_url, "POST", authorize_path, other_tenant_token, operation
+        ),
+        404,
+        "POST",
+        authorize_path,
+    )
+    _expect_status(
+        _verify_api_request(opener, base_url, "GET", status_path, other_tenant_token),
+        404,
+        "GET",
+        status_path,
+    )
+    print(
+        "End-to-end deployment verification passed: owner read/execution, persisted status, "
+        "same-tenant owner denial, and cross-tenant resource/status isolation."
+    )
+
+
 def check() -> None:
     if not ENV_FILE.is_file():
         raise DeployError("No .env found. Run: python paca_deploy.py init")
@@ -250,6 +451,10 @@ def main(argv: list[str] | None = None) -> int:
     init_parser.add_argument("--audience")
     for name in ("check", "up", "status", "logs", "down"):
         commands.add_parser(name)
+    commands.add_parser(
+        "verify",
+        help="Verify a live deployment using three pre-obtained test access tokens and a provisioned file.",
+    )
 
     args = parser.parse_args(argv)
     try:
@@ -271,6 +476,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "down":
             compose("down")
             print("Services stopped; named database and file volumes were preserved.")
+        elif args.command == "verify":
+            verify_live_deployment()
         return 0
     except DeployError as exc:
         print(f"Deployment error: {exc}", file=sys.stderr)
