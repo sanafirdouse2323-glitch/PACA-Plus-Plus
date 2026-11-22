@@ -1,0 +1,11 @@
+{
+  "paca_opa_auth": {
+    "issuer": "https://identity.example.org/",
+    "audience": "https://opa.example.org/",
+    "client_id": "paca-opa-client",
+    "required_scope": "opa.decide",
+    "jwks": {
+      "keys": []
+    }
+  }
+}

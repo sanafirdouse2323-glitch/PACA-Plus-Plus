@@ -15,6 +15,7 @@ from paca_service.adapters import (
     ToolRegistryAdapter,
 )
 from paca_service.auth import Principal
+from paca_service.service_tokens import ClientCredentialsTokenProvider
 
 
 def request(
@@ -253,7 +254,7 @@ def test_http_adapter_rejects_unsafe_transport_and_bad_no_effect_contract():
             timeout_seconds=1, client=redirecting_client,
         )
     redirecting_client.close()
-    with pytest.raises(ValueError, match="upstream_bearer_token_required"):
+    with pytest.raises(ValueError, match="service_credential_required"):
         HttpAPIAdapter("https://api.example", routes, timeout_seconds=1)
     with pytest.raises(ValueError, match="timeout_must_be_positive"):
         HttpAPIAdapter(
@@ -284,3 +285,110 @@ def test_http_adapter_rejects_unsafe_transport_and_bad_no_effect_contract():
             bearer_token="test-service-token",
             timeout_seconds=1,
         )
+
+
+def test_http_api_adapter_uses_automatically_refreshed_service_tokens():
+    now = [100.0]
+    token_calls = 0
+    resource_authorizations = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal token_calls
+        if request.url.path == "/oauth/token":
+            token_calls += 1
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": f"api-token-{token_calls}",
+                    "token_type": "Bearer",
+                    "expires_in": 100,
+                },
+            )
+        resource_authorizations.append(request.headers.get("authorization"))
+        return httpx.Response(200, json={"updated": True})
+
+    transport = httpx.MockTransport(handler)
+    token_provider = ClientCredentialsTokenProvider(
+        "https://identity.example.org/oauth/token",
+        "paca-api-client",
+        "api-client-secret",
+        client=httpx.Client(transport=transport),
+        clock=lambda: now[0],
+        refresh_skew_seconds=20,
+    )
+    adapter = HttpAPIAdapter(
+        "https://api.example.org",
+        {
+            "document.update": {
+                "method": "PATCH",
+                "path": "/v1/documents/{resource_id}",
+                "args_mode": "json",
+            }
+        },
+        timeout_seconds=1,
+        client=httpx.Client(transport=transport),
+        token_provider=token_provider,
+    )
+    try:
+        assert adapter.execute(
+            request(
+                "document.update", "doc-1", {"title": "first"},
+                {"resource": {"kind": "document"}},
+            )
+        )["body"] == {"updated": True}
+        now[0] = 191.0
+        assert adapter.execute(
+            request(
+                "document.update", "doc-2", {"title": "second"},
+                {"resource": {"kind": "document"}},
+            )
+        )["body"] == {"updated": True}
+        assert token_calls == 2
+        assert resource_authorizations == [
+            "Bearer api-token-1",
+            "Bearer api-token-2",
+        ]
+    finally:
+        adapter.close()
+
+
+def test_downstream_oauth_failure_stops_before_effect_request():
+    observed_effect_requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth/token":
+            return httpx.Response(503, json={"error": "temporarily_unavailable"})
+        observed_effect_requests.append(request)
+        return httpx.Response(200, json={"unexpected": True})
+
+    transport = httpx.MockTransport(handler)
+    token_provider = ClientCredentialsTokenProvider(
+        "https://identity.example.org/oauth/token",
+        "paca-api-client",
+        "api-client-secret",
+        client=httpx.Client(transport=transport),
+    )
+    adapter = HttpAPIAdapter(
+        "https://api.example.org",
+        {
+            "document.update": {
+                "method": "PATCH",
+                "path": "/v1/documents/{resource_id}",
+                "args_mode": "json",
+            }
+        },
+        timeout_seconds=1,
+        client=httpx.Client(transport=transport),
+        token_provider=token_provider,
+    )
+    try:
+        with pytest.raises(EffectRejected, match="upstream_credentials_unavailable"):
+            adapter.execute(
+                request(
+                    "document.update", "doc-1", {"title": "change"},
+                    {"resource": {"kind": "document"}},
+                )
+            )
+        assert observed_effect_requests == []
+    finally:
+        adapter.close()
