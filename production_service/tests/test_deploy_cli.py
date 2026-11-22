@@ -89,6 +89,68 @@ def test_oidc_discovery_rejects_http():
         paca_deploy.oidc_metadata("http://id.example.test/.well-known/openid-configuration")
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "$HOME",
+        "value#comment",
+        "value'quoted",
+        'value"quoted',
+        r"value\\escaped",
+        "line\\nbreak",
+        "nul\\x00value",
+    ],
+)
+def test_replace_env_value_rejects_compose_metacharacters(value):
+    with pytest.raises(paca_deploy.DeployError, match="safely set"):
+        paca_deploy.replace_env_value("PACA_VALUE=original\\n", "PACA_VALUE", value)
+
+
+def test_replace_env_value_accepts_percent_encoded_url_characters():
+    result = paca_deploy.replace_env_value(
+        "PACA_JWT_ISSUER=https://placeholder\\n",
+        "PACA_JWT_ISSUER",
+        "https://id.example.test/realms/paca%24production%23issuer",
+    )
+    assert result == (
+        "PACA_JWT_ISSUER=https://id.example.test/realms/paca%24production%23issuer\\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "unsafe_url"),
+    [
+        ("issuer", "https://user@id.example.test/realms/paca"),
+        ("issuer", "https://id.example.test/realms/paca?query=1"),
+        ("issuer", "https://id.example.test/realms/paca#fragment"),
+        ("jwks_uri", "https://user@id.example.test/realms/paca/keys"),
+        ("jwks_uri", "https://id.example.test/realms/paca/keys?query=1"),
+        ("jwks_uri", "https://id.example.test/realms/paca/keys#fragment"),
+    ],
+)
+def test_oidc_discovery_rejects_metadata_urls_with_userinfo_query_or_fragment(
+    monkeypatch, field, unsafe_url
+):
+    metadata = {
+        "issuer": "https://id.example.test/realms/paca",
+        "jwks_uri": "https://id.example.test/realms/paca/keys",
+    }
+    metadata[field] = unsafe_url
+    response = MagicMock()
+    response.__enter__.return_value = response
+    response.read.return_value = json.dumps(metadata).encode("utf-8")
+    opener = Mock()
+    opener.open.return_value = response
+    monkeypatch.setattr(
+        paca_deploy.urllib.request, "build_opener", lambda *_args: opener
+    )
+
+    with pytest.raises(paca_deploy.DeployError):
+        paca_deploy.oidc_metadata(
+            "https://id.example.test/realms/paca/.well-known/openid-configuration"
+        )
+
+
 def test_write_env_is_restrictive_and_does_not_overwrite(tmp_path, monkeypatch):
     env_path = tmp_path / ".env"
     monkeypatch.setattr(paca_deploy, "ENV_FILE", env_path)
