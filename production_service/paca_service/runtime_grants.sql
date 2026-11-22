@@ -1,22 +1,44 @@
+-- Run using the trusted database migration administrator, never paca_runtime.
+BEGIN;
+DO $paca_migration_guard$
+BEGIN
+    IF current_user = 'paca_runtime' THEN
+        RAISE EXCEPTION 'runtime_grants.sql must run as a trusted database administrator';
+    END IF;
+END
+$paca_migration_guard$;
+
+-- CREATE OR REPLACE does not change existing object owners. Reclaim the public
+-- application objects before revoking old ACLs or granting runtime access.
+ALTER SCHEMA public OWNER TO CURRENT_USER;
+ALTER TABLE public.protected_resources OWNER TO CURRENT_USER;
+ALTER TABLE public.authz_permits OWNER TO CURRENT_USER;
+ALTER TABLE public.authz_executions OWNER TO CURRENT_USER;
+ALTER TABLE public.audit_events OWNER TO CURRENT_USER;
+ALTER SEQUENCE public.audit_events_event_id_seq OWNER TO CURRENT_USER;
+ALTER FUNCTION public.paca_constant_time_equal(bytea, bytea) OWNER TO CURRENT_USER;
+ALTER FUNCTION public.paca_reject_audit_mutation() OWNER TO CURRENT_USER;
+
 -- Runtime can invoke the verifier/setter but cannot read the private HMAC key.
 REVOKE ALL ON SCHEMA paca_private FROM PUBLIC;
 REVOKE ALL ON SCHEMA paca_private FROM paca_runtime;
 REVOKE ALL ON TABLE paca_private.tenant_context_keys FROM PUBLIC;
 REVOKE ALL ON TABLE paca_private.tenant_context_keys FROM paca_runtime;
-REVOKE ALL ON FUNCTION public.paca_constant_time_equal(bytea, bytea) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.paca_context_is_valid() FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.paca_current_tenant_id() FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.paca_set_tenant_context(text, text, integer, text, bigint, bigint, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.paca_constant_time_equal(bytea, bytea) FROM PUBLIC, paca_runtime;
+REVOKE ALL ON FUNCTION public.paca_context_is_valid() FROM PUBLIC, paca_runtime;
+REVOKE ALL ON FUNCTION public.paca_current_tenant_id() FROM PUBLIC, paca_runtime;
+REVOKE ALL ON FUNCTION public.paca_set_tenant_context(text, text, integer, text, bigint, bigint, text, text) FROM PUBLIC, paca_runtime;
 
 GRANT EXECUTE ON FUNCTION public.paca_context_is_valid() TO paca_runtime;
 GRANT EXECUTE ON FUNCTION public.paca_current_tenant_id() TO paca_runtime;
 GRANT EXECUTE ON FUNCTION public.paca_set_tenant_context(text, text, integer, text, bigint, bigint, text, text) TO paca_runtime;
 
 -- Apply as the schema owner / migration administrator after schema.sql.
-REVOKE CREATE ON SCHEMA public FROM PUBLIC;
-REVOKE ALL ON protected_resources, authz_permits, authz_executions, audit_events FROM PUBLIC;
-REVOKE ALL ON SEQUENCE audit_events_event_id_seq FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.paca_reject_audit_mutation() FROM PUBLIC;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC, paca_runtime;
+REVOKE ALL ON TABLE public.protected_resources, public.authz_permits,
+    public.authz_executions, public.audit_events FROM PUBLIC, paca_runtime;
+REVOKE ALL ON SEQUENCE public.audit_events_event_id_seq FROM PUBLIC, paca_runtime;
+REVOKE ALL ON FUNCTION public.paca_reject_audit_mutation() FROM PUBLIC, paca_runtime;
 
 -- Lock trusted resource rows for the duration of an execution-claim transaction
 -- without granting the API UPDATE privilege on the resource table.
@@ -44,7 +66,7 @@ AS $paca_lock$
     FOR SHARE
 $paca_lock$;
 
-REVOKE ALL ON FUNCTION public.paca_lock_resource_for_execution(text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.paca_lock_resource_for_execution(text, text) FROM PUBLIC, paca_runtime;
 GRANT EXECUTE ON FUNCTION public.paca_lock_resource_for_execution(text, text) TO paca_runtime;
 
 -- The startup recovery sweep is the only cross-tenant operation exposed to the
@@ -117,8 +139,7 @@ BEGIN
 END
 $paca_function_owners$;
 
-REVOKE ALL ON FUNCTION public.paca_mark_stale_executions_unknown(integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.paca_mark_stale_executions_unknown(integer) FROM paca_runtime;
+REVOKE ALL ON FUNCTION public.paca_mark_stale_executions_unknown(integer) FROM PUBLIC, paca_runtime;
 -- Global stale-execution recovery is intentionally owner/admin-only.
 
 GRANT USAGE ON SCHEMA public TO paca_runtime;
@@ -129,3 +150,4 @@ GRANT SELECT, INSERT, UPDATE ON authz_permits TO paca_runtime;
 GRANT SELECT, INSERT, UPDATE ON authz_executions TO paca_runtime;
 GRANT SELECT, INSERT ON audit_events TO paca_runtime;
 GRANT USAGE, SELECT ON SEQUENCE audit_events_event_id_seq TO paca_runtime;
+COMMIT;
