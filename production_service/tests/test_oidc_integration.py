@@ -17,6 +17,7 @@ from agent.langgraph_adapter import (
     PACAOperation,
     build_paca_langgraph_agent,
 )
+from agent.operation_ledger import InMemoryOperationLedger
 from agent.paca_client import PACAClient
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -459,6 +460,7 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
                     operations=[operation],
                     checkpointer=InMemorySaver(),
                     store=InMemoryStore(),
+                    operation_ledger=InMemoryOperationLedger(),
                 )
                 graph_started = time.perf_counter()
                 graph_result = graph.invoke(

@@ -6,6 +6,7 @@ on:
       - main
       - audit/paca-consistency-runtime-safety
       - security/oauth-service-token-lifecycle
+      - security/postgres-langgraph-ledger
       - security/adversarial-benchmark
   pull_request:
     branches:
