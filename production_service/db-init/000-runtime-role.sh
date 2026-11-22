@@ -10,14 +10,15 @@ set -Eeuo pipefail
 # Idempotent so an administrator can re-run this after backing up an existing volume.
 psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   --set=ON_ERROR_STOP=1 --set=runtime_password="$PACA_RUNTIME_PASSWORD" <<'SQL'
+BEGIN;
 SELECT format(
-  'CREATE ROLE paca_runtime LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT',
+  'CREATE ROLE paca_runtime LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION',
   :'runtime_password'
 )
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'paca_runtime')
 \gexec
 ALTER ROLE paca_runtime LOGIN PASSWORD :'runtime_password'
-  NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+  NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS NOREPLICATION;
 
 -- A pre-existing runtime role may have been granted membership in another
 -- role. NOINHERIT alone is insufficient because membership can still permit
@@ -47,4 +48,5 @@ BEGIN
   EXECUTE 'REVOKE CREATE ON DATABASE ' || quote_ident(current_database()) || ' FROM PUBLIC';
 END
 $paca_revoke_database_create$;
+COMMIT;
 SQL

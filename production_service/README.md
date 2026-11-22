@@ -4,25 +4,30 @@ This directory contains a separate FastAPI authorization gateway that combines R
 
 **Status:** controlled-evaluation scaffold. It is not production-certified and the setup instructions are not a substitute for a deployment-specific security review. For repository-wide positioning and the boundaries between this service, the prototype, compiler and agent integration, see [the architecture and scope contract](../docs/ARCHITECTURE_AND_SCOPE.md).
 
-## Fresh local setup
+## Quick deployment setup
 
-1. Copy `.env.example` to `.env`. Generate three independent secrets with `openssl rand -hex 32`; put them in `POSTGRES_PASSWORD`, `PACA_RUNTIME_PASSWORD`, and `PACA_TENANT_CONTEXT_HMAC_KEY`. The first is the PostgreSQL bootstrap/admin password, the second authenticates the restricted `paca_runtime` role, and the third signs tenant context in the API and is provisioned into a private database table. Set `PACA_TENANT_CONTEXT_KEY_ID=v1` unless you are deliberately rotating keys. The checked-in example HMAC key is public test material and must be replaced.
-2. Set `PACA_JWT_ISSUER`, `PACA_JWT_AUDIENCE`, and `PACA_JWT_JWKS_URL` to your actual test identity provider. The example `identity.example.org` settings are placeholders.
-3. Ensure the policy revision equals `production_service/opa/data.json`. In this service, `protected_resources.owner_id` is compared with the verified OIDC `sub`; provision the owner value accordingly, and only trust role/scope/tool claims from an issuer that controls them.
-4. For a newly initialized local database volume, start the stack:
+For a guided setup, use the standard-library helper from this directory:
 
-   ```sh
-   docker compose up --build --wait
-   ```
+```sh
+python paca_deploy.py init
+python paca_deploy.py check
+python paca_deploy.py up
+python paca_deploy.py status
+```
 
-5. Check both endpoints:
+The initializer reads the issuer and JWKS URI from your HTTPS OIDC discovery document, generates independent database and tenant-context secrets, and reads the expected policy revision from the checked-in OPA data. It creates a local `.env` file with restrictive permissions where supported. The helper does not create or configure your identity-provider tenant, users, claims or roles.
 
-   ```sh
-   curl --fail http://127.0.0.1:8000/healthz
-   curl --fail http://127.0.0.1:8000/readyz
-   ```
+See [DEPLOYMENT.md](DEPLOYMENT.md) for prerequisites, non-interactive setup, daily operations, volume safety and enterprise deployment gates. Do not commit `.env`. The `down` command preserves persistent volumes; never use `down -v` as an upgrade shortcut.
 
-   `/healthz` only indicates that the process is alive. `/readyz` verifies PostgreSQL connectivity and signed tenant-context verification, plus a real OPA deny-by-default decision that must carry the configured policy revision.
+For the underlying Compose configuration, manual environment setup and detailed security behavior, continue with the sections below.
+
+## Provision trusted resource records and verify a deployment
+
+Tenant membership still comes from administrator-controlled identity-provider claims; this repository does not maintain a separate tenants table. Use the administrator-only `paca_provision.py resources` command to create trusted `protected_resources` rows. It never adds a provisioning endpoint to FastAPI and never grants resource-write privileges to `paca_runtime`. The manifest is create-only, duplicate rows abort the transaction, and each inserted resource gets an append-only provisioning audit event.
+
+After provisioning a non-sensitive file resource and obtaining dedicated owner, same-tenant non-owner, and other-tenant access tokens, run `python paca_deploy.py verify`. It checks a real allowed file read and persisted execution status, a same-tenant ownership denial, and cross-tenant resource/execution isolation. The test tokens are read from environment variables and are not stored in `.env`.
+
+The full manifest contract, exact commands, admin database requirements, smoke-file preparation and verifier token requirements are documented in [DEPLOYMENT.md](DEPLOYMENT.md#provision-trusted-tenant-resources). Use synthetic resources and short-lived test identities; this single-route check is not a complete security assessment.
 
 All tenant-scoped tables (`protected_resources`, `authz_permits`, `authz_executions`, and `audit_events`) have PostgreSQL row-level-security policies that call a database-side verifier. Before each tenant-scoped operation, the API signs the tenant, verified principal, PostgreSQL backend PID, current transaction ID, issue/expiry times, and key ID with HMAC-SHA-256. PostgreSQL verifies the signature using a key in the administrator-owned `paca_private` schema, checks the backend and transaction binding, and accepts only a short-lived context (maximum 60 seconds; the API issues 30-second contexts). RLS does not trust a caller-set tenant GUC by itself. The runtime role can call the verifier/setter functions but cannot read the signing key. Execution rows retain their composite foreign key tying tenant/principal to the referenced permit. Global stale-execution recovery is an administrator-only `SECURITY DEFINER` operation. The API runtime role cannot execute it, and API startup does not run a cross-tenant recovery sweep.
 
@@ -112,7 +117,7 @@ docker compose exec database bash -lc 'source /docker-entrypoint-initdb.d/003-te
 docker compose up --build -d
 ```
 
-The role-creation script is idempotent so it can be rerun for a controlled upgrade; it also removes every direct role membership from an existing `paca_runtime` role, because `NOINHERIT` alone does not prevent `SET ROLE`. The grants migration explicitly reassigns the `SECURITY DEFINER` functions to the trusted migration administrator because `CREATE OR REPLACE FUNCTION` does not change an existing function's owner. The schema migration replaces the old GUC-only RLS policies with signed-context verification. The grants migration exposes only the verifier/setter functions to the runtime role and explicitly revokes any legacy runtime grant on global recovery; the final command provisions the HMAC key. Do not start the updated API until the key row exists and the runtime grants are applied. If the old database administrator credential is unavailable, stop and recover access before changing roles. **Do not run `docker compose down -v`** to solve a permission error: that deletes persistent volumes.
+The role-creation script is idempotent so it can be rerun for a controlled upgrade; it removes every direct role membership and resets `BYPASSRLS` and replication privileges on an existing `paca_runtime` role. `NOINHERIT` alone does not prevent `SET ROLE`, and omitting `NOBYPASSRLS` would leave a legacy RLS bypass enabled. The grants migration restores trusted ownership of the public schema, application tables, audit sequence and sensitive helper functions before revoking legacy direct runtime grants. Reapplying the schema also removes all existing RLS policies and non-internal triggers on the four authorization tables, then recreates the canonical tenant-isolation policies and append-only audit trigger. Do not attach custom policies or triggers to these application tables; such customizations are intentionally removed by the controlled upgrade. It explicitly reassigns the `SECURITY DEFINER` functions to the trusted migration administrator because `CREATE OR REPLACE FUNCTION` does not change an existing function's owner. The schema migration replaces the old GUC-only RLS policies with signed-context verification. The grants migration exposes only the verifier/setter functions to the runtime role and explicitly revokes any legacy runtime grant on global recovery; the final command provisions the HMAC key. Do not start the updated API until the key row exists and the runtime grants are applied. If the old database administrator credential is unavailable, stop and recover access before changing roles. **Do not run `docker compose down -v`** to solve a permission error: that deletes persistent volumes.
 
 ## Test and lint
 
