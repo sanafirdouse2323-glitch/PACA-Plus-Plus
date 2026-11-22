@@ -5,10 +5,12 @@ on:
     branches:
       - main
       - audit/paca-consistency-runtime-safety
+      - security/oauth-service-token-lifecycle
       - security/postgres-langgraph-ledger
   pull_request:
     branches:
       - main
+      - integration/langgraph-paca-gateway
 
 permissions:
   contents: read
@@ -211,6 +213,125 @@ jobs:
               client.close()
           print("Real OPA client smoke test passed.")
           PY
+      - name: Generate test JWKS and audience-bound service access tokens
+        env:
+          PACA_REMOTE_OPA_AUTH_ROOT: ${{ runner.temp }}/paca-remote-opa-auth
+        run: |
+          set -euo pipefail
+          mkdir -p "$PACA_REMOTE_OPA_AUTH_ROOT/bundle/policies" "$PACA_REMOTE_OPA_AUTH_ROOT/tokens"
+          openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
+            -keyout "$PACA_REMOTE_OPA_AUTH_ROOT/server.key" \
+            -out "$PACA_REMOTE_OPA_AUTH_ROOT/server.crt" \
+            -subj "/CN=localhost" \
+            -addext "subjectAltName=DNS:localhost" \
+            -addext "basicConstraints=critical,CA:TRUE" \
+            -addext "extendedKeyUsage=serverAuth"
+          chmod 644 "$PACA_REMOTE_OPA_AUTH_ROOT/server.key"  # Ephemeral CI-only test key for the OPA container.
+          cp production_service/opa/policies/authz.rego "$PACA_REMOTE_OPA_AUTH_ROOT/bundle/policies/authz.rego"
+          cp production_service/opa/remote_auth/system_authz.rego "$PACA_REMOTE_OPA_AUTH_ROOT/bundle/policies/system_authz.rego"
+          python - <<'PY'
+          import json
+          import os
+          import time
+          import uuid
+          from pathlib import Path
+
+          import jwt
+          from cryptography.hazmat.primitives.asymmetric import rsa
+          from cryptography.hazmat.primitives import serialization
+          from jwt.algorithms import RSAAlgorithm
+
+          root = Path(os.environ["PACA_REMOTE_OPA_AUTH_ROOT"])
+          bundle = root / "bundle"
+          tokens = root / "tokens"
+          key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+          private_pem = key.private_bytes(
+              encoding=serialization.Encoding.PEM,
+              format=serialization.PrivateFormat.PKCS8,
+              encryption_algorithm=serialization.NoEncryption(),
+          )
+          key_id = "paca-opa-ci-key"
+          public_jwk = json.loads(RSAAlgorithm.to_jwk(key.public_key()))
+          public_jwk.update({"kid": key_id, "use": "sig", "alg": "RS256"})
+          data = json.loads(Path("production_service/opa/data.json").read_text(encoding="utf-8"))
+          data["paca_opa_auth"] = {
+              "issuer": "https://identity.example.org/",
+              "audience": "https://opa.example.org/",
+              "client_id": "paca-opa-client",
+              "required_scope": "opa.decide",
+              "jwks": {"keys": [public_jwk]},
+          }
+          (bundle / "data.json").write_text(json.dumps(data), encoding="utf-8")
+
+          now = int(time.time())
+          base_claims = {
+              "iss": "https://identity.example.org/",
+              "aud": "https://opa.example.org/",
+              "sub": "paca-opa-client",
+              "client_id": "paca-opa-client",
+              "scope": "opa.decide",
+              "iat": now,
+              "exp": now + 300,
+              "jti": str(uuid.uuid4()),
+          }
+
+          def issue(name, overrides):
+              claims = {**base_claims, **overrides, "jti": str(uuid.uuid4())}
+              token = jwt.encode(
+                  claims,
+                  private_pem,
+                  algorithm="RS256",
+                  headers={"kid": key_id, "typ": "at+JWT"},
+              )
+              (tokens / name).write_text(token, encoding="utf-8")
+
+          issue("valid.jwt", {})
+          issue("wrong-audience.jwt", {"aud": "https://api.example.org/"})
+          issue("wrong-client.jwt", {"client_id": "unapproved-client"})
+          issue("wrong-scope.jwt", {"scope": "documents.write"})
+          PY
+      - name: Start remote OPA with bearer JWT authentication and default-deny API authorization
+        env:
+          PACA_REMOTE_OPA_AUTH_ROOT: ${{ runner.temp }}/paca-remote-opa-auth
+        run: |
+          set -euo pipefail
+          docker run -d --name paca-opa-auth-test -p 127.0.0.1:8182:8182 \
+            -v "$PACA_REMOTE_OPA_AUTH_ROOT/bundle:/bundle:ro" \
+            -v "$PACA_REMOTE_OPA_AUTH_ROOT/server.crt:/run/opa/server.crt:ro" \
+            -v "$PACA_REMOTE_OPA_AUTH_ROOT/server.key:/run/opa/server.key:ro" \
+            openpolicyagent/opa:1.21.3@sha256:22a9db16423b94d2acbd4a94da3bebeb79583ed6a52ac15cad459d3de2dbbc4d \
+            run --server --addr=https://0.0.0.0:8182 \
+            --tls-cert-file=/run/opa/server.crt --tls-private-key-file=/run/opa/server.key \
+            --authentication=token --authorization=basic --log-format=json /bundle
+          token="$(cat "$PACA_REMOTE_OPA_AUTH_ROOT/tokens/valid.jwt")"
+          ready=false
+          for attempt in $(seq 1 30); do
+            status="$(curl --silent --cacert "$PACA_REMOTE_OPA_AUTH_ROOT/server.crt" --output /dev/null --write-out '%{http_code}' \
+              -X POST https://localhost:8182/v1/data/paca/authz/decision \
+              -H "Authorization: Bearer $token" \
+              -H "Content-Type: application/json" \
+              --data '{"input":{"principal":{"id":"alice","tenant_id":"t1","roles":[],"scopes":["file:read"],"tools":[]},"action":"file.read","resource":{"id":"f1","tenant_id":"t1","owner_id":"alice","kind":"file","status":"active","attributes":{}},"arguments":{}}}' || true)"
+            if [ "$status" = "200" ]; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then
+            docker logs paca-opa-auth-test
+            exit 1
+          fi
+      - name: Verify authenticated remote OPA, resource audience and default-deny bypasses
+        env:
+          PACA_RUN_REMOTE_OPA_AUTH_INTEGRATION: "1"
+          PACA_TEST_REMOTE_OPA_URL: https://localhost:8182
+          PACA_TEST_REMOTE_OPA_AUTH_DIR: ${{ runner.temp }}/paca-remote-opa-auth/tokens
+          PACA_TEST_REMOTE_OPA_CA_FILE: ${{ runner.temp }}/paca-remote-opa-auth/server.crt
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/production_service
+        run: pytest production_service/tests/test_remote_opa_auth.py -q
+      - name: Clean up authenticated remote OPA test service
+        if: always()
+        run: docker rm -f paca-opa-auth-test || true
       - name: Start a real Keycloak OIDC provider for end-to-end identity validation
         run: |
           set -euo pipefail
@@ -265,5 +386,11 @@ jobs:
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/production_service/opa:/policies:ro" \
+            openpolicyagent/opa:1.21.3@sha256:22a9db16423b94d2acbd4a94da3bebeb79583ed6a52ac15cad459d3de2dbbc4d \
+            test --bundle /policies -v
+      - name: Test the remote OPA JWT authentication policy
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/production_service/opa/remote_auth:/policies:ro" \
             openpolicyagent/opa:1.21.3@sha256:22a9db16423b94d2acbd4a94da3bebeb79583ed6a52ac15cad459d3de2dbbc4d \
             test --bundle /policies -v
