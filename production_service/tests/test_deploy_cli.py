@@ -96,9 +96,9 @@ def test_oidc_discovery_rejects_http():
         "value#comment",
         "value'quoted",
         'value"quoted',
-        r"value\\escaped",
-        "line\\nbreak",
-        "nul\\x00value",
+        r"value\escaped",
+        "line\nbreak",
+        "nul\x00value",
     ],
 )
 def test_replace_env_value_rejects_compose_metacharacters(value):
@@ -108,7 +108,7 @@ def test_replace_env_value_rejects_compose_metacharacters(value):
 
 def test_replace_env_value_accepts_percent_encoded_url_characters():
     result = paca_deploy.replace_env_value(
-        "PACA_JWT_ISSUER=https://placeholder\\n",
+        "PACA_JWT_ISSUER=https://placeholder",
         "PACA_JWT_ISSUER",
         "https://id.example.test/realms/paca%24production%23issuer",
     )
