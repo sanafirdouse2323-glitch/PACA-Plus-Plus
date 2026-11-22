@@ -15,7 +15,7 @@ The central enforcement sequence is:
 5. At execution, verify the permit, request fingerprint, current context and current policy revision.
 6. Atomically claim local execution/idempotency state before invoking the configured adapter.
 7. Persist the outcome or mark it unknown when the remote outcome cannot safely be determined.
-8. Record audit information and export it to independently controlled storage where required.
+8. Persist audit information in the relevant component's audit store. The prototype includes a separate at-least-once outbox exporter that requires an independently operated HTTPS receiver. The production service persists structured audit events but does not provision an independent WORM/SIEM receiver; deployments requiring independent retention must integrate and verify that export path.
 
 This is an authorization architecture. It is not itself an identity provider or a replacement for an organization's complete IAM lifecycle.
 
@@ -39,7 +39,7 @@ The production service validates tokens from one configured OIDC issuer/audience
 
 | Component | Owns | Does not imply |
 |---|---|---|
-| `production_service/` | FastAPI gateway, RS256 access-token validation including access-only token-purpose claim, OPA decisions, PostgreSQL permits/executions, signed tenant context/RLS, configured adapters, OAuth client-credentials renewal for separate outbound OPA/API clients | Features from the prototype, complete IAM, deployment-specific sender-constrained tokens, arbitrary agent-framework execution inside the service |
+| `production_service/` | FastAPI gateway, RS256 access-token validation including access-only token-purpose claim, OPA decisions, PostgreSQL permits/executions, signed tenant context/RLS, configured adapters, and separately configured pre-provisioned bearer credentials for remote OPA and downstream HTTP routes | Features from the prototype, complete IAM, automatic OAuth token acquisition or renewal, deployment-specific sender-constrained tokens, arbitrary agent-framework execution inside the service |
 | `prototype/` | Research prototype, legacy in-memory example, separate OPA/OIDC hardening path, agent boundaries/reference runtime and prototype stores | Same schema, same identity model or same RLS guarantees as production_service |
 | `compiler/` | Experimental parser/emitter for an explicitly limited policy subset | Complete ALFA/UCON+ support or semantic equivalence between ASP and Cedar |
 | `legacy_policy_engine/` | Preserved historical implementation | Supported production API or root-CI coverage unless explicitly wired into CI |
@@ -62,7 +62,7 @@ For ambiguous timeouts, connection loss or process crashes, the safe state may b
 
 ## 6. AI-agent security boundary
 
-The prototype reference runtime and boundary modules can constrain configured retrieval, tool invocation, inter-agent messages and output release. Separately, `agent/langgraph_adapter.py` provides a LangGraph `StateGraph`/`ToolNode` path in which the declared side-effecting tools route through the production PACA API and journal the permit/idempotency key before execution. The LangGraph tests use in-memory checkpoint/store components; the documented PostgreSQL-backed LangGraph persistence path has not been validated end-to-end. Neither implementation understands every prompt injection, guarantees all host paths are guarded, or makes untrusted retrieved/tool content safe. A real deployment must integrate its actual model and tool adapters, authenticate the host/agent identity, bind tools and resources server-side, and ensure there is no alternate path to protected effects.
+The prototype includes a synchronous `GuardedAgentRuntime` that composes configured retrieval/provenance checks, tool-boundary invocation and output release. It also includes a separate `InterAgentMessageBoundary` utility; `GuardedAgentRuntime` does not call or automatically enforce that utility. A host using inter-agent messages must authenticate the sender at its transport boundary and explicitly invoke the message boundary before passing the message into the agent flow. The message boundary itself uses in-memory replay tracking and does not provide cross-process replay persistence or semantic prompt-injection detection. Separately, `agent/langgraph_adapter.py` provides a LangGraph `StateGraph`/`ToolNode` path in which the declared side-effecting tools route through the production PACA API and journal the permit/idempotency key before execution. The LangGraph tests use in-memory checkpoint/store components; the documented PostgreSQL-backed LangGraph persistence path has not been validated end-to-end. Neither implementation understands every prompt injection, guarantees all host paths are guarded, or makes untrusted retrieved/tool content safe. A real deployment must integrate its actual model and tool adapters, authenticate the host/agent identity, bind tools and resources server-side, and ensure there is no alternate path to protected effects.
 
 The production-service gateway is an authorization/effect service; it is not by itself a full autonomous-agent runtime.
 
