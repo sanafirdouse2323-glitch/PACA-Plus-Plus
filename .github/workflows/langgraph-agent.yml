@@ -3,6 +3,7 @@ name: PACA++ LangGraph adapter checks
 on:
   push:
     branches:
+      - main
       - integration/langgraph-paca-gateway
       - security/postgres-langgraph-ledger
   pull_request:
