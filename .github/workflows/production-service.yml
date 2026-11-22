@@ -8,6 +8,7 @@ on:
       - security/oauth-service-token-lifecycle
       - security/postgres-langgraph-ledger
       - security/audit-worm-export
+      - security/adversarial-benchmark
   pull_request:
     branches:
       - main
@@ -427,12 +428,20 @@ jobs:
             docker logs paca-keycloak-test
             exit 1
           fi
-      - name: Verify real OIDC discovery, signed tokens, authorization, execution and isolation
+      - name: Verify real OIDC discovery, signed tokens, authorization, execution, isolation and security benchmark
         env:
           PACA_TEST_OIDC_REALM_URL: http://localhost:8081/realms/paca
           PACA_TEST_OPA_URL: http://127.0.0.1:8181
+          PACA_BENCHMARK_REPORT_PATH: ${{ runner.temp }}/paca-security-benchmark.json
           PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/production_service
         run: pytest production_service/tests/test_oidc_integration.py -q
+      - name: Upload measured OIDC/OPA/PostgreSQL/LangGraph benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paca-real-service-security-benchmark
+          path: ${{ runner.temp }}/paca-security-benchmark.json
+          if-no-files-found: ignore
       - name: Clean up Keycloak OIDC test provider
         if: always()
         run: docker rm -f paca-keycloak-test || true
