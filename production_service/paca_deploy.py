@@ -79,6 +79,10 @@ def oidc_metadata(discovery_url: str) -> dict[str, str]:
         issuer_parts is None
         or issuer_parts.scheme != "https"
         or not issuer_parts.hostname
+        or issuer_parts.username
+        or issuer_parts.password
+        or issuer_parts.query
+        or issuer_parts.fragment
         or (issuer_parts.scheme, issuer_parts.hostname, issuer_parts.port)
         != (parts.scheme, parts.hostname, parts.port)
     ):
@@ -99,14 +103,17 @@ def oidc_metadata(discovery_url: str) -> dict[str, str]:
 def replace_env_value(template: str, key: str, value: str) -> str:
     lines = template.splitlines()
     matches = [i for i, line in enumerate(lines) if line.startswith(f"{key}=")]
-    if len(matches) != 1 or any(ch in value for ch in "\r\n"):
+    # Values are written unquoted into a Docker Compose .env file. Reject
+    # interpolation, comment, quoting, escape and line-control characters.
+    unsafe_env_characters = "\\r\\n\\x00$#'\\"\\\\"
+    if len(matches) != 1 or any(ch in value for ch in unsafe_env_characters):
         raise DeployError(f"Could not safely set {key} in .env.example.")
     lines[matches[0]] = f"{key}={value}"
     return "\n".join(lines) + "\n"
 
 
 def make_environment(discovery: dict[str, str], audience: str) -> str:
-    if not audience or any(ch.isspace() or ord(ch) in (34, 35, 36, 39) for ch in audience):
+    if not audience or any(ch.isspace() or ord(ch) in (34, 35, 36, 39, 92) for ch in audience):
         raise DeployError("Choose a simple API audience without whitespace or .env metacharacters.")
     try:
         template = ENV_EXAMPLE.read_text(encoding="utf-8")
