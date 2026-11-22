@@ -9,9 +9,6 @@ on:
   pull_request:
     branches:
       - main
-    paths:
-      - "agent/**"
-      - ".github/workflows/langgraph-agent.yml"
 
 permissions:
   contents: read
