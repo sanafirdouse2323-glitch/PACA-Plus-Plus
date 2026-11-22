@@ -105,7 +105,7 @@ def replace_env_value(template: str, key: str, value: str) -> str:
     matches = [i for i, line in enumerate(lines) if line.startswith(f"{key}=")]
     # Values are written unquoted into a Docker Compose .env file. Reject
     # interpolation, comment, quoting, escape and line-control characters.
-    unsafe_env_characters = "\\r\\n\\x00$#'\\"\\\\"
+    unsafe_env_characters = "\r\n\x00$#'\"\\"
     if len(matches) != 1 or any(ch in value for ch in unsafe_env_characters):
         raise DeployError(f"Could not safely set {key} in .env.example.")
     lines[matches[0]] = f"{key}={value}"
