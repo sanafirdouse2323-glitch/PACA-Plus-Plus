@@ -141,3 +141,17 @@ PostgreSQL integration tests need both `PACA_TEST_DATABASE_URL` (restricted runt
 - Passing CI is not a penetration test, formal proof, independent audit, external benchmark, standards-compliance claim, or proof of research novelty.
 
 See [THREAT_MODEL.md](THREAT_MODEL.md) for trust boundaries and deployment gates.
+
+
+## Independent audit retention exporter
+
+The production PostgreSQL audit table is tenant-scoped and append-only for the PACA runtime role. For retention outside that database's administrative boundary, an optional exporter is available:
+
+- Apply `paca_service/audit_export.sql` as the trusted database migration administrator. It creates a separate `paca_audit_exporter` role with read-only access to `audit_events` and write-only delivery-state permissions in the separate `paca_audit.exported_events` schema. It does not grant access to permits, executions, protected resources or the private signing-key schema.
+- Install with `pip install -e ".[audit-export]"` and run `paca-audit-export` using a login role that can `SET ROLE paca_audit_exporter`.
+- Configure an S3 bucket owned by a different AWS account or independently administered security boundary. Create it with Object Lock enabled and versioning enabled. Supply a customer-managed KMS key and configure the exporter to write objects with per-object COMPLIANCE retention.
+- Required settings: `PACA_AUDIT_EXPORT_DATABASE_URL`, `PACA_AUDIT_S3_BUCKET`, `PACA_AUDIT_S3_KMS_KEY_ID`, `PACA_AUDIT_RETENTION_DAYS` and `AWS_REGION`. Optional settings: `PACA_AUDIT_S3_PREFIX`, `PACA_AUDIT_EXPORT_BATCH_SIZE`, `PACA_AUDIT_EXPORT_POLL_SECONDS`.
+
+The exporter is at-least-once. Each event has a deterministic object key and canonical JSON SHA-256 digest. If the process stops after the S3 write but before the local delivery checkpoint, the next run validates the existing object's checksum, COMPLIANCE lock mode and retention before recording delivery. It does not delete or update source audit rows and it does not advance a numeric high-water cursor.
+
+The AWS bucket, KMS key, account boundary, IAM policy, retention period, lifecycle rules and monitoring must be created and administered outside this repository. The exporter role must not be allowed to delete S3 objects or versions, bypass Object Lock retention, alter bucket policy, or administer the KMS key. The identity used by the exporter needs the S3 permissions required to verify bucket Lock/versioning, read object retention, put retained objects, and use the configured KMS key. This code does not create the customer's AWS resources, and a CI mock-S3 test does not prove that a live external bucket is independently controlled or compliant.
