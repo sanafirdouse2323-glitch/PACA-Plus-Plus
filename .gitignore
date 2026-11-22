@@ -12,6 +12,10 @@ venv/
 .coverage
 htmlcov/
 
+# Local deployment secrets (keep example templates tracked)
+.env
+production_service/.env
+
 # Editors and operating systems
 .vscode/
 .DS_Store
