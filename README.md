@@ -1,70 +1,95 @@
-# PACA++ — Policy-Aware Authorization and Controlled Action
+# PACA++: Policy Enforcement Gateway for AI Agents & Services
 
-**PACA++** is an enterprise-grade Policy Enforcement Point (PEP) and Controlled Action Gateway designed to secure microservices and autonomous AI agent tool boundaries. 
+PACA++ is an authorization gateway designed to stop AI agents and microservices from taking unauthorized or unintended actions.
 
-The core architectural problem PACA++ solves is **preventing unauthorized, duplicated, or parameter-tampered effects** by cryptographically binding authorization decisions to the verified principal, tenant, action, resource, argument digest, and policy revision at the exact moment of execution.
+### The Problem It Solves
+When an autonomous AI agent decides to execute a tool—whether that's writing to a customer database, sending an email, or triggering an API payment—how do you know the action actually matches the authenticated user's permissions and hasn't been altered?
 
----
+Most agent guardrails today try to inspect prompt text to catch attacks. But if a clever prompt injection slips through, the model will still try to run the tool. 
 
-## Repository Lineage & Sister Project
-
-* **PACA++ (This Repository):** Focuses on **Service-Level Policy Enforcement & Multi-Tenant Isolation** using FastAPI, Open Policy Agent (OPA), PostgreSQL Row-Level Security (RLS), and LangGraph execution adapters.
-* **[PACA-Plus-Plus-New](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus-New):** A distinct sibling research project focusing on **Provenance-Anchored Continuous Authorization**—an in-process reference monitor that tracks data taint and capability attenuation across multi-turn LLM reasoning.
-
-*Do not conflate the two implementations: this repository enforces policy at the network/service boundary, whereas PACA-Plus-Plus-New enforces policy inside the agent's internal cognitive pipeline.*
+PACA++ takes a deterministic approach: it sits between the AI agent and your sensitive systems. Even if an agent's internal reasoning gets hijacked, it cannot touch a protected resource without passing strict, server-side policy checks.
 
 ---
 
-## Architectural Components
+## How It Works (The Two-Phase Check)
+
+Instead of letting an agent call an external API directly, PACA++ uses a two-step handshake:
 
 ```
-PACA-Plus-Plus/
-├── production_service/    # [Core] Production FastAPI Gateway + OPA + PostgreSQL RLS
-├── agent/                 # [Integration] LangGraph StateGraph/ToolNode adapter & client
-├── prototype/             # [Research] In-memory & SQLite research prototype
-├── compiler/              # [Experimental] ALFA to ASP / Cedar transpiler subset
-└── legacy_policy_engine/  # [Archival] Historical policy parser & evaluator
+[ AI Agent / Client ]                [ PACA++ Gateway ]               [ Policy & DB ]
+        |                                    |                                |
+        |--- 1. POST /v1/authorizations ---->|                                |
+        |    (Action, Resource, Arguments)   |--- Evaluate with OPA --------->|
+        |<-- 2. Returns short-lived permit --|    (Returns permit_id)         |
+        |                                    |                                |
+        |--- 3. POST /v1/executions -------->|                                |
+        |    (Permit_id + Idempotency-Key)   |--- Re-verify context & hash -->|
+        |                                    |--- Lock & check tenant RLS --->|
+        |                                    |--- Run Action via Adapter ---->|
+        |<-- 4. Returns execution result ----|                                |
 ```
 
-### 1. `production_service/` (Core Enterprise Gateway)
-The primary deployable artifact. It implements a hardened Policy Enforcement Point:
-* **Token Authentication:** Verifies RS256 JWTs against a configured HTTPS JWKS endpoint, enforcing issuer, audience, expiration, and strict `token_use=access` claims.
-* **Policy Decision Point (PDP):** Communicates with an Open Policy Agent (OPA) instance evaluating Rego policies against trusted server-side resource facts.
-* **Two-Phase Enforcement Protocol:**
-  1. `POST /v1/authorizations`: Evaluates request context and returns a short-lived cryptographic `permit_id`.
-  2. `POST /v1/executions`: Re-verifies the permit, argument hash, and policy revision before invoking the target adapter.
-* **Database Multi-Tenant Isolation:** PostgreSQL Row-Level Security (RLS) driven by a short-lived HMAC-signed session context bound to `(tenant_id, principal_id, backend_pid, txid)`.
-* **Durable Idempotency:** Tracks execution states to prevent duplicate external actions during network retries.
-
-### 2. `agent/` (AI-Agent Boundary Integration)
-* **Standard Library Client (`paca_client.py`):** Dependency-free client executing the two-phase `/authorize` → `/execute` flow.
-* **LangGraph Adapter (`langgraph_adapter.py`):** Configures a LangGraph `ToolNode` / `StateGraph` where registered tools automatically route through the PACA authorization gateway before execution.
-
-### 3. `prototype/`, `compiler/`, & `legacy_policy_engine/`
-Historical and experimental research packages preserved for reference:
-* `prototype/`: In-memory sandbox for local policy experiments.
-* `compiler/transpiler.py`: Experimental 172-line transpiler mapping a small ALFA subset to ASP (Clingo) and Cedar.
-*(Note: These packages are separate from the production gateway; policies written in ALFA cannot be evaluated by the OPA-based production service).*
+1. **Step 1: Authorization (`/v1/authorizations`)**  
+   The agent submits what it wants to do (the action, target resource, and arguments) along with its verified JWT access token. PACA++ checks the request against Open Policy Agent (OPA) rules. If allowed, it returns a temporary, cryptographically bound `permit_id`.
+2. **Step 2: Execution (`/v1/executions`)**  
+   The agent submits the `permit_id` along with an idempotency key. PACA++ re-verifies that the arguments and policy revision haven't changed, confirms tenant isolation in PostgreSQL, and only then triggers the actual downstream action. If a network drop happens, the idempotency key prevents duplicate execution.
 
 ---
 
-## Enterprise Zero-Trust Evaluation
+## What's in This Repository
 
-| Enterprise Requirement | Implemented Architecture | Production Deployment Requirement |
-|---|---|---|
-| **Zero Trust Access** | Callers authenticated per-request via RS256 JWT; decisions made by OPA | Connect to enterprise IdP (Okta, Entra ID, Keycloak) with strict claim mapping |
-| **Cross-Tenant Isolation** | PostgreSQL RLS with HMAC-signed session context | Separate runtime DB credentials from migration roles; enable DB TLS |
-| **Agent Action Safety** | LangGraph tool adapter forces calls through PEP | Isolate agent host containers to prevent raw socket/shell bypass |
-| **Replay & Concurrency** | Two-phase permit validation with idempotency keys | Ensure downstream APIs support idempotent deduplication |
-| **Audit Integrity** | Append-only execution and audit logging | Stream audit logs to enterprise SIEM / WORM storage |
+This repository contains several components developed across our research:
+
+* **`production_service/` (The Core Gateway):**  
+  The main deployable FastAPI service. It handles RS256 JWT authentication, calls OPA for Rego policy decisions, enforces PostgreSQL Row-Level Security (RLS) using HMAC session tokens, and records audit logs.
+* **`agent/` (AI Agent Integration):**  
+  A Python client and reference adapter for **LangGraph** (`StateGraph` / `ToolNode`). When registered, the agent's tools automatically route through PACA++ before running.
+* **`prototype/` (Research Prototype):**  
+  An earlier in-memory and SQLite testbed used for local experiments.
+* **`compiler/` & `legacy_policy_engine/`:**  
+  Historical experiments exploring how to compile high-level ALFA policies into ASP (Answer Set Programming) and Amazon Cedar. *(Note: policies in the production service use OPA Rego, not ALFA).*
 
 ---
 
-## Enterprise Production-Hardening Checklist (Priority 0 Gaps)
+## Relationship with `PACA-Plus-Plus-New`
 
-Before deploying this gateway to process sensitive corporate workloads:
-1. **Secrets Management:** Replace all checked-in HMAC and database keys with credentials managed by AWS Secrets Manager, Azure Key Vault, or HashiCorp Vault.
-2. **Sender-Constrained Tokens:** Upgrade from bearer JWTs to DPoP (RFC 9449) or mutual TLS (mTLS) to prevent token theft and replay attacks.
-3. **Token Revocation:** Integrate an active token revocation check / denylist service at the gateway ingress.
-4. **Approval Workflows:** For destructive actions (e.g. fund transfers, data deletion), attach an asynchronous human-in-the-loop (HITL) approval service to the permit verification stage.
-5. **Host Isolation:** Sandbox the AI agent execution host (e.g., via gVisor or microVMs) to ensure the LLM cannot bypass the LangGraph adapter via unmanaged network or shell tools.
+We have two separate repositories under the PACA++ research project:
+
+1. **This repository (`PACA-Plus-Plus`):** Focuses on the **external gateway**. It treats the agent as an untrusted client and enforces policies at the HTTP and database boundary using OPA and PostgreSQL.
+2. **[`PACA-Plus-Plus-New`](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus-New):** Focuses on the **agent's internal reasoning**. It is a standalone Python reference monitor that tracks data taint (provenance) across multi-turn LLM reasoning to prevent sensitive data from reaching unauthorized tools.
+
+The two projects complement each other: one protects the outer network/API boundary, while the other monitors the inner agent data flow.
+
+---
+
+## Running It Locally
+
+### Requirements
+* Python 3.10+
+* Docker and Docker Compose (for OPA and PostgreSQL)
+
+### Quick Start
+```bash
+# Clone the repository
+git clone https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus.git
+cd PACA-Plus-Plus/production_service
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Start local PostgreSQL and OPA containers
+docker compose up -d
+
+# Run tests
+pytest
+```
+
+---
+
+## What You Need for a Real Production Deployment
+
+If you are planning to deploy this gateway in an enterprise environment, here is what you need to set up first:
+1. **Identity Provider:** Connect a real OIDC provider (Okta, Keycloak, or Microsoft Entra ID) to issue RS256 access tokens.
+2. **Secrets:** Replace the example HMAC keys and database passwords with secrets from your cloud secret manager (AWS Secrets Manager, Azure Key Vault, or HashiCorp Vault).
+3. **Database Roles:** Apply the PostgreSQL schema migrations and set up least-privilege runtime credentials.
+4. **Agent Sandboxing:** Run your AI agents in isolated containers (e.g. Docker or gVisor) so they cannot bypass the gateway by opening raw network sockets or running shell commands directly.
