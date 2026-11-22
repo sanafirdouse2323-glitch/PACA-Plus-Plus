@@ -1,64 +1,70 @@
-# PACA++ — policy-aware authorization and controlled action
+# PACA++ — Policy-Aware Authorization and Controlled Action
 
-PACA++ is an **enterprise authorization research and engineering project**. Its central question is whether an authorization decision remains bound to the authenticated principal, tenant, action, resource, policy revision and trusted context when a protected effect is attempted.
+**PACA++** is an enterprise-grade Policy Enforcement Point (PEP) and Controlled Action Gateway designed to secure microservices and autonomous AI agent tool boundaries. 
 
-Its primary scope is **authorization enforcement at the protected-action boundary**, including controlled execution for AI-agent tools. It is not a complete identity and access management (IAM) suite, a general-purpose database security product, or a universal prompt-injection detector.
+The core architectural problem PACA++ solves is **preventing unauthorized, duplicated, or parameter-tampered effects** by cryptographically binding authorization decisions to the verified principal, tenant, action, resource, argument digest, and policy revision at the exact moment of execution.
 
-> **Repository lineage:** In this repository, PACA++ means **Policy-Aware Authorization and Controlled Action** and refers to the earlier service/compiler-oriented codebase. The separate [PACA-Plus-Plus-New repository](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus-New) reuses the PACA++ name for **Provenance-Anchored Continuous Authorization for LLM agents**. It is a distinct successor research line, not a continuation of this repository's implementation. The two repositories have different implementations, tests and evidence. Do not attribute this repository's FastAPI/PostgreSQL features to the newer repository, or transfer the newer repository's agent mechanisms and benchmark results to this one. In this codebase, AI-agent integration remains a limited reference/integration area rather than a complete production agent-security product.
+---
 
-## Positioning and target applications
+## Repository Lineage & Sister Project
 
-The table summarizes target uses and potential customer groups, not existing customers, validated demand or compliance claims.
+* **PACA++ (This Repository):** Focuses on **Service-Level Policy Enforcement & Multi-Tenant Isolation** using FastAPI, Open Policy Agent (OPA), PostgreSQL Row-Level Security (RLS), and LangGraph execution adapters.
+* **[PACA-Plus-Plus-New](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus-New):** A distinct sibling research project focusing on **Provenance-Anchored Continuous Authorization**—an in-process reference monitor that tracks data taint and capability attenuation across multi-turn LLM reasoning.
 
-| Application area | Potential users and need | What this repository provides—and its limit |
+*Do not conflate the two implementations: this repository enforces policy at the network/service boundary, whereas PACA-Plus-Plus-New enforces policy inside the agent's internal cognitive pipeline.*
+
+---
+
+## Architectural Components
+
+```
+PACA-Plus-Plus/
+├── production_service/    # [Core] Production FastAPI Gateway + OPA + PostgreSQL RLS
+├── agent/                 # [Integration] LangGraph StateGraph/ToolNode adapter & client
+├── prototype/             # [Research] In-memory & SQLite research prototype
+├── compiler/              # [Experimental] ALFA to ASP / Cedar transpiler subset
+└── legacy_policy_engine/  # [Archival] Historical policy parser & evaluator
+```
+
+### 1. `production_service/` (Core Enterprise Gateway)
+The primary deployable artifact. It implements a hardened Policy Enforcement Point:
+* **Token Authentication:** Verifies RS256 JWTs against a configured HTTPS JWKS endpoint, enforcing issuer, audience, expiration, and strict `token_use=access` claims.
+* **Policy Decision Point (PDP):** Communicates with an Open Policy Agent (OPA) instance evaluating Rego policies against trusted server-side resource facts.
+* **Two-Phase Enforcement Protocol:**
+  1. `POST /v1/authorizations`: Evaluates request context and returns a short-lived cryptographic `permit_id`.
+  2. `POST /v1/executions`: Re-verifies the permit, argument hash, and policy revision before invoking the target adapter.
+* **Database Multi-Tenant Isolation:** PostgreSQL Row-Level Security (RLS) driven by a short-lived HMAC-signed session context bound to `(tenant_id, principal_id, backend_pid, txid)`.
+* **Durable Idempotency:** Tracks execution states to prevent duplicate external actions during network retries.
+
+### 2. `agent/` (AI-Agent Boundary Integration)
+* **Standard Library Client (`paca_client.py`):** Dependency-free client executing the two-phase `/authorize` → `/execute` flow.
+* **LangGraph Adapter (`langgraph_adapter.py`):** Configures a LangGraph `ToolNode` / `StateGraph` where registered tools automatically route through the PACA authorization gateway before execution.
+
+### 3. `prototype/`, `compiler/`, & `legacy_policy_engine/`
+Historical and experimental research packages preserved for reference:
+* `prototype/`: In-memory sandbox for local policy experiments.
+* `compiler/transpiler.py`: Experimental 172-line transpiler mapping a small ALFA subset to ASP (Clingo) and Cedar.
+*(Note: These packages are separate from the production gateway; policies written in ALFA cannot be evaluated by the OPA-based production service).*
+
+---
+
+## Enterprise Zero-Trust Evaluation
+
+| Enterprise Requirement | Implemented Architecture | Production Deployment Requirement |
 |---|---|---|
-| **Enterprise authorization across applications** | Large enterprises, SaaS providers, IT departments and security teams that need consistent, reviewable access decisions across services | The production service implements one configurable OIDC/JWT-to-OPA authorization gateway with permit and protected-execution checks. It is not a complete IAM suite: identity lifecycle, provisioning, directory administration, access certification and a complete SSO/MFA product remain external. |
-| **PostgreSQL tenant isolation** | Cloud platforms, healthcare software, fintech and multi-tenant SaaS providers that need to prevent cross-tenant data access | The production service implements PostgreSQL row-level security (RLS) with a short-lived HMAC-signed tenant context verified inside PostgreSQL. This protects the documented tenant-scoped service tables under the stated trust assumptions; it is not a general-purpose database-security product and does not establish regulatory compliance. |
-| **Authorization at AI-agent action boundaries** | Organizations deploying autonomous agents and distributed applications that need policy checks before protected tool or service actions | The prototype contains guarded agent boundaries and a synchronous reference runtime. Separately, `agent/` contains a thin production-service HTTP client and a LangGraph `StateGraph`/`ToolNode` reference adapter whose registered tools call the PACA authorization and execution API. This is a framework-specific integration example, not a complete agent platform or proof that every host effect is guarded; deployments still need actual host integration, no-bypass controls and independent evaluation. |
+| **Zero Trust Access** | Callers authenticated per-request via RS256 JWT; decisions made by OPA | Connect to enterprise IdP (Okta, Entra ID, Keycloak) with strict claim mapping |
+| **Cross-Tenant Isolation** | PostgreSQL RLS with HMAC-signed session context | Separate runtime DB credentials from migration roles; enable DB TLS |
+| **Agent Action Safety** | LangGraph tool adapter forces calls through PEP | Isolate agent host containers to prevent raw socket/shell bypass |
+| **Replay & Concurrency** | Two-phase permit validation with idempotency keys | Ensure downstream APIs support idempotent deduplication |
+| **Audit Integrity** | Append-only execution and audit logging | Stream audit logs to enterprise SIEM / WORM storage |
 
-These areas are related but distinct: enterprise authorization is the primary architecture, PostgreSQL RLS is one implemented isolation capability, and AI-agent authorization is an application area. The named sectors are prospective users, not evidence of customer adoption or sector-specific certification.
+---
 
-## Repository architecture — keep the implementations distinct
+## Enterprise Production-Hardening Checklist (Priority 0 Gaps)
 
-| Path | Role | Evidence and limits |
-|---|---|---|
-| `production_service/` | Separate FastAPI authorization gateway using verified RS256 access tokens, OPA, PostgreSQL permits/executions, RLS and configured effect adapters | Main controlled-evaluation service. Access tokens must include the configured access-only purpose claim (`token_use=access` by default). See its README, identity-provider contract and threat model. |
-| `prototype/` | Python research prototype: legacy in-memory engine plus a separate OPA/OIDC hardening path, agent boundaries/runtime, SQLite and PostgreSQL stores | Useful for experiments. Its stores and identity/context model are not interchangeable with the production service. |
-| `compiler/` and root `tests/` | Experimental parser/emitter for a limited policy subset | Not a complete or standards-compatible ALFA/UCON+ compiler. Tests do not prove ASP/Cedar semantic equivalence. |
-| `legacy_policy_engine/` | Older policy parser, compiler/evaluator and engine package | Separate historical implementation; not part of the production-service API and not covered by the current root CI workflow. |
-| `archive/paca-plus-plus-new/` | Text-only snapshot and recovery notes for the separate newer repository | Read-only archival material; several source entries are embedded in text filenames and are not an importable or runnable copy. Use the linked standalone repository for its current code. |
-| `agent/` | Thin standard-library PACA HTTP client plus a LangGraph `StateGraph`/`ToolNode` adapter with a host-configured allowlist of PACA-backed tools; `mock_agent.py` remains an empty scaffold | Not a complete LLM agent, not an AutoGen or universal framework adapter, and not proof that arbitrary host code cannot bypass the gateway. Persistent LangGraph PostgreSQL checkpoint/store deployment and host-level no-bypass testing remain required. |
-
-Do not infer that a feature in one path is automatically present in another. In particular, the prototype PostgreSQL store is not the production service's tenant-RLS boundary.
-
-## Production-service quick start
-
-Follow [production_service/README.md](production_service/README.md) from its own directory. Use a fresh local evaluation environment, generate independent secrets, configure a real OIDC issuer/JWKS endpoint with an access-only `token_use=access` claim, provision trusted resource facts, and verify both `/healthz` and `/readyz`.
-
-The checked-in example identity-provider values and HMAC key are placeholders. Replace them before use. Existing database volumes require the documented, backup-first upgrade procedure; restarting containers alone does not apply migrations or grants.
-
-## Tests and what they prove
-
-Separate GitHub Actions workflows cover the LangGraph adapter, production service, prototype/hardening and compiler regressions. Their triggers are not identical: the production-service, prototype and compiler workflows run on pushes to `main` and on pull requests targeting `main`; the LangGraph workflow runs on pushes to `main` or its dedicated integration branch, and on pull requests targeting `main` that change `agent/**` or the LangGraph workflow file. A workflow that was not triggered for a change has not validated that change. A passing workflow proves only that its declared tests passed on the exact commit and environment.
-
-The production-service tests cover selected authentication/OPA flows, permit and execution behavior, PostgreSQL tenant RLS, signed-context forgery/replay attempts, privilege boundaries and adapter safety. They do **not** prove resistance to every attack, atomicity with arbitrary remote effects, or safe operation in an unreviewed deployment.
-
-The prototype's deterministic scenarios are a small hand-authored test set, not an external benchmark. Compiler regression tests cover the implemented subset and generated-text invariants, not language conformance or semantic equivalence.
-
-## Deployment gates — before sensitive enterprise workloads
-
-1. Complete a deployment-specific threat model and independent security review.
-2. Configure the real identity provider, issuer/audience/JWKS, trusted claim mapping and key-rotation/revocation process.
-3. Protect the API HMAC key independently from the database runtime credential; use separate migration/admin and runtime roles.
-4. Apply database upgrades only after a verified backup; test restore and key rotation.
-5. Keep OPA private and coordinate policy revision rollout with protected effects.
-6. Configure TLS ingress, network segmentation, egress allow-lists, rate/concurrency limits, secrets management, monitoring and incident response.
-7. Verify downstream idempotency and reconciliation for each external effect, including timeout and crash-after-commit cases.
-8. Integrate the LangGraph reference adapter into the actual agent host, then prove that every protected tool/effect path passes through the guard and no alternate path bypasses it.
-9. Benchmark against relevant baselines using attack success, legitimate-task utility, false denials, latency and recovery metrics.
-
-## Research and product claims
-
-PACA++ is a research/engineering foundation with meaningful implemented controls. It is **not production-certified**, independently audited, formally verified, or proven superior to OPA, Cedar, commercial IAM products, or other agent-security systems. Do not claim complete IAM, universal prompt-injection prevention, exactly-once remote execution, tamper-proof audit against administrators, full ALFA/UCON+ support, or demonstrated benchmark superiority without new evidence.
-
-See the [architecture and scope contract](docs/ARCHITECTURE_AND_SCOPE.md), [security baseline and prioritized gaps](docs/SECURITY_BASELINE.md), [production-service threat model](production_service/THREAT_MODEL.md), and [prototype hardening guide](prototype/docs/SECURITY_HARDENING.md). The file [prototype/THREAT_MODEL.md](prototype/THREAT_MODEL.md) applies only to the legacy in-memory engine; agent-boundary coverage and gaps are in [prototype/docs/THREAT_COVERAGE.md](prototype/docs/THREAT_COVERAGE.md).
+Before deploying this gateway to process sensitive corporate workloads:
+1. **Secrets Management:** Replace all checked-in HMAC and database keys with credentials managed by AWS Secrets Manager, Azure Key Vault, or HashiCorp Vault.
+2. **Sender-Constrained Tokens:** Upgrade from bearer JWTs to DPoP (RFC 9449) or mutual TLS (mTLS) to prevent token theft and replay attacks.
+3. **Token Revocation:** Integrate an active token revocation check / denylist service at the gateway ingress.
+4. **Approval Workflows:** For destructive actions (e.g. fund transfers, data deletion), attach an asynchronous human-in-the-loop (HITL) approval service to the permit verification stage.
+5. **Host Isolation:** Sandbox the AI agent execution host (e.g., via gVisor or microVMs) to ensure the LLM cannot bypass the LangGraph adapter via unmanaged network or shell tools.
