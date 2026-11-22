@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -29,6 +30,7 @@ from pydantic import Field
 from paca_service.adapters import AdapterRouter, SandboxedFileAdapter
 from paca_service.app import create_app
 from paca_service.auth import AuthenticationError, JWTAuthenticator
+from paca_service.benchmarks.security_benchmark import SecurityBenchmarkRecorder
 from paca_service.config import Settings
 from paca_service.opa import OPAClient
 from paca_service.store import PostgresStore
@@ -192,22 +194,37 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
     try:
         with TestClient(app) as client:
             auth_headers = {"Authorization": f"Bearer {token}"}
+            benchmark = SecurityBenchmarkRecorder()
 
+            started = time.perf_counter()
             unauthorized = client.post(
                 "/v1/authorizations",
                 headers={"Authorization": f"Bearer {wrong_audience_token}"},
                 json={"action": "file.read", "resource_id": resource_id, "arguments": {}},
             )
+            benchmark.record_attack(
+                "wrong_audience_token",
+                status_code=unauthorized.status_code,
+                attack_succeeded=unauthorized.status_code == 201,
+                latency_ms=(time.perf_counter() - started) * 1000,
+            )
             assert unauthorized.status_code == 401, unauthorized.text
 
+            started = time.perf_counter()
             cross_tenant = client.post(
                 "/v1/authorizations",
                 headers={"Authorization": f"Bearer {other_tenant_token}"},
                 json={"action": "file.read", "resource_id": resource_id, "arguments": {}},
             )
+            benchmark.record_attack(
+                "cross_tenant_resource_read",
+                status_code=cross_tenant.status_code,
+                attack_succeeded=cross_tenant.status_code == 201,
+                latency_ms=(time.perf_counter() - started) * 1000,
+            )
             assert cross_tenant.status_code == 404, cross_tenant.text
 
-            # Real provider token -> trusted PostgreSQL resource -> live OPA decision -> permit.
+            allowed_started = time.perf_counter()
             authorization = client.post(
                 "/v1/authorizations",
                 headers=auth_headers,
@@ -217,50 +234,120 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
             permit_id = authorization.json()["permit_id"]
             assert authorization.json()["policy_revision"] == POLICY_REVISION
 
-            # Execute the permit against the real sandboxed file adapter and persistent PostgreSQL store.
-            execution = client.post(
+            started = time.perf_counter()
+            rebound = client.post(
                 "/v1/executions",
-                headers={**auth_headers, "Idempotency-Key": "oidc-e2e-" + uuid.uuid4().hex},
+                headers={**auth_headers, "Idempotency-Key": "oidc-e2e-rebind-" + uuid.uuid4().hex},
+                json={
+                    "permit_id": permit_id,
+                    "action": "file.create",
+                    "resource_id": resource_id,
+                    "arguments": {},
+                },
+            )
+            benchmark.record_attack(
+                "permit_action_rebinding",
+                status_code=rebound.status_code,
+                attack_succeeded=(
+                    rebound.status_code == 200 and rebound.json().get("status") == "succeeded"
+                ),
+                latency_ms=(time.perf_counter() - started) * 1000,
+            )
+            assert rebound.status_code == 409, rebound.text
+
+            started = time.perf_counter()
+            tampered = client.post(
+                "/v1/executions",
+                headers={**auth_headers, "Idempotency-Key": "oidc-e2e-tamper-" + uuid.uuid4().hex},
                 json={
                     "permit_id": permit_id,
                     "action": "file.read",
                     "resource_id": resource_id,
-                    "arguments": {},
+                    "arguments": {"tampered": True},
                 },
+            )
+            benchmark.record_attack(
+                "permit_argument_tampering",
+                status_code=tampered.status_code,
+                attack_succeeded=(
+                    tampered.status_code == 200 and tampered.json().get("status") == "succeeded"
+                ),
+                latency_ms=(time.perf_counter() - started) * 1000,
+            )
+            assert tampered.status_code == 409, tampered.text
+
+            execution_key = "oidc-e2e-" + uuid.uuid4().hex
+            execution_payload = {
+                "permit_id": permit_id,
+                "action": "file.read",
+                "resource_id": resource_id,
+                "arguments": {},
+            }
+            execution = client.post(
+                "/v1/executions",
+                headers={**auth_headers, "Idempotency-Key": execution_key},
+                json=execution_payload,
             )
             assert execution.status_code == 200, execution.text
             result = execution.json()
             assert result["status"] == "succeeded"
             assert result["result"]["content"] == content
             execution_id = result["execution_id"]
-
-            # The persistent execution status route uses the same real authenticated identity.
-            status = client.get(
-                f"/v1/executions/{execution_id}",
-                headers=auth_headers,
+            benchmark.record_legitimate(
+                "authorized_file_read",
+                status_code=execution.status_code,
+                task_succeeded=result["status"] == "succeeded",
+                latency_ms=(time.perf_counter() - allowed_started) * 1000,
             )
+
+            started = time.perf_counter()
+            replay = client.post(
+                "/v1/executions",
+                headers={**auth_headers, "Idempotency-Key": execution_key},
+                json=execution_payload,
+            )
+            assert replay.status_code == 200, replay.text
+            assert replay.json()["execution_id"] == execution_id
+            assert replay.json()["idempotent_replay"] is True
+            benchmark.record_reliability(
+                "same_idempotency_key_replay",
+                passed=True,
+                status_code=replay.status_code,
+                latency_ms=(time.perf_counter() - started) * 1000,
+            )
+
+            status = client.get(f"/v1/executions/{execution_id}", headers=auth_headers)
             assert status.status_code == 200, status.text
             assert status.json()["status"] == "succeeded"
 
+            started = time.perf_counter()
             cross_tenant_status = client.get(
                 f"/v1/executions/{execution_id}",
                 headers={"Authorization": f"Bearer {other_tenant_token}"},
             )
+            benchmark.record_attack(
+                "cross_tenant_execution_status",
+                status_code=cross_tenant_status.status_code,
+                attack_succeeded=cross_tenant_status.status_code == 200,
+                latency_ms=(time.perf_counter() - started) * 1000,
+            )
             assert cross_tenant_status.status_code == 404, cross_tenant_status.text
 
-            # A valid identity cannot read another principal's resource just because it shares a tenant.
+            started = time.perf_counter()
             denied = client.post(
                 "/v1/authorizations",
                 headers=auth_headers,
-                json={
-                    "action": "file.read",
-                    "resource_id": denied_resource_id,
-                    "arguments": {},
-                },
+                json={"action": "file.read", "resource_id": denied_resource_id, "arguments": {}},
+            )
+            benchmark.record_attack(
+                "same_tenant_wrong_owner",
+                status_code=denied.status_code,
+                attack_succeeded=denied.status_code == 201,
+                latency_ms=(time.perf_counter() - started) * 1000,
             )
             assert denied.status_code == 403, denied.text
 
-            # Tenant is derived from the signed provider claim; an unknown tenant-scoped resource stays hidden.
+            started = time.perf_counter()
             wrong_tenant = client.post(
                 "/v1/authorizations",
                 headers=auth_headers,
@@ -270,12 +357,32 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
                     "arguments": {},
                 },
             )
+            benchmark.record_attack(
+                "unknown_tenant_resource",
+                status_code=wrong_tenant.status_code,
+                attack_succeeded=wrong_tenant.status_code == 201,
+                latency_ms=(time.perf_counter() - started) * 1000,
+            )
             assert wrong_tenant.status_code == 404, wrong_tenant.text
 
-            # Exercise the same protected file.read action through an actual LangGraph
-            # StateGraph/ToolNode and the real FastAPI + OIDC + OPA + PostgreSQL service.
-            # PACAClient uses urllib, so this local HTTP bridge forwards its requests
-            # into the live TestClient app rather than faking gateway responses.
+            started = time.perf_counter()
+            unknown_action = client.post(
+                "/v1/authorizations",
+                headers=auth_headers,
+                json={
+                    "action": "shell.exec",
+                    "resource_id": resource_id,
+                    "arguments": {"command": "id"},
+                },
+            )
+            benchmark.record_attack(
+                "unregistered_execution_action",
+                status_code=unknown_action.status_code,
+                attack_succeeded=unknown_action.status_code == 201,
+                latency_ms=(time.perf_counter() - started) * 1000,
+            )
+            assert unknown_action.status_code == 403, unknown_action.text
+
             class PACAClientBridgeHandler(BaseHTTPRequestHandler):
                 def _forward(self, method: str) -> None:
                     raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
@@ -355,6 +462,7 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
                     store=InMemoryStore(),
                     operation_ledger=InMemoryOperationLedger(),
                 )
+                graph_started = time.perf_counter()
                 graph_result = graph.invoke(
                     {"messages": [HumanMessage(content="Read the authorized OIDC test file.")]},
                     {"configurable": {"thread_id": "oidc-e2e-langgraph-thread"}},
@@ -363,6 +471,19 @@ def test_keycloak_oidc_token_runs_the_real_authorization_and_execution_flow(
                     "LangGraph received the PACA-authorized file."
                 )
                 assert [tool.name for tool in model.tools] == ["read_file"]
+                benchmark.record_legitimate(
+                    "langgraph_tool_file_read",
+                    status_code=200,
+                    task_succeeded=True,
+                    latency_ms=(time.perf_counter() - graph_started) * 1000,
+                )
+                report = benchmark.report()
+                assert report["paca_plus_plus"]["attack_attempts"] == 8
+                assert report["paca_plus_plus"]["attack_successes"] == 0
+                assert report["paca_plus_plus"]["legitimate_task_success_rate"] == 1.0
+                report_path = os.environ.get("PACA_BENCHMARK_REPORT_PATH")
+                if report_path:
+                    benchmark.write(report_path)
             finally:
                 bridge.shutdown()
                 bridge_thread.join()
