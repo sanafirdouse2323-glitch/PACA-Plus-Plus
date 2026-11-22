@@ -103,7 +103,7 @@ def test_oidc_discovery_rejects_http():
 )
 def test_replace_env_value_rejects_compose_metacharacters(value):
     with pytest.raises(paca_deploy.DeployError, match="safely set"):
-        paca_deploy.replace_env_value("PACA_VALUE=original\\n", "PACA_VALUE", value)
+        paca_deploy.replace_env_value("PACA_VALUE=original", "PACA_VALUE", value)
 
 
 def test_replace_env_value_accepts_percent_encoded_url_characters():
@@ -113,7 +113,7 @@ def test_replace_env_value_accepts_percent_encoded_url_characters():
         "https://id.example.test/realms/paca%24production%23issuer",
     )
     assert result == (
-        "PACA_JWT_ISSUER=https://id.example.test/realms/paca%24production%23issuer\\n"
+        "PACA_JWT_ISSUER=https://id.example.test/realms/paca%24production%23issuer\n"
     )
 
 
