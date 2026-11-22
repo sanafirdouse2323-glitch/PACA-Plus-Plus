@@ -14,6 +14,7 @@ from agent.langgraph_adapter import (
     PACAOperation,
     build_paca_langgraph_agent,
 )
+from agent.operation_ledger import InMemoryOperationLedger
 from agent.paca_client import PACAClient
 
 PERMIT_ID = "00000000-0000-0000-0000-000000000123"
@@ -117,6 +118,7 @@ def test_langgraph_calls_real_paca_client_authorize_and_execute_http_endpoints()
             operations=[operation],
             checkpointer=InMemorySaver(),
             store=InMemoryStore(),
+            operation_ledger=InMemoryOperationLedger(),
         )
         config = {"configurable": {"thread_id": "http-contract-thread"}}
         result = graph.invoke(
