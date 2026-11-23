@@ -119,6 +119,12 @@ docker compose up --build -d
 
 The role-creation script is idempotent so it can be rerun for a controlled upgrade; it removes every direct role membership and resets `BYPASSRLS` and replication privileges on an existing `paca_runtime` role. `NOINHERIT` alone does not prevent `SET ROLE`, and omitting `NOBYPASSRLS` would leave a legacy RLS bypass enabled. The grants migration restores trusted ownership of the public schema, application tables, audit sequence and sensitive helper functions before revoking legacy direct runtime grants. Reapplying the schema also removes all existing RLS policies and non-internal triggers on the four authorization tables, then recreates the canonical tenant-isolation policies and append-only audit trigger. Do not attach custom policies or triggers to these application tables; such customizations are intentionally removed by the controlled upgrade. It explicitly reassigns the `SECURITY DEFINER` functions to the trusted migration administrator because `CREATE OR REPLACE FUNCTION` does not change an existing function's owner. The schema migration replaces the old GUC-only RLS policies with signed-context verification. The grants migration exposes only the verifier/setter functions to the runtime role and explicitly revokes any legacy runtime grant on global recovery; the final command provisions the HMAC key. Do not start the updated API until the key row exists and the runtime grants are applied. If the old database administrator credential is unavailable, stop and recover access before changing roles. **Do not run `docker compose down -v`** to solve a permission error: that deletes persistent volumes.
 
+## Interactive gateway console
+
+The FastAPI service also serves a same-origin browser console at `/demo` for isolated test instances. After configuring and starting the service, open `http://127.0.0.1:8000/demo`, provide a short-lived access token from the configured test identity provider, and exercise the existing authorize/execute/status endpoints.
+
+The console does not mint tokens, provision trusted resource facts, or simulate OPA decisions. It requires an administrator-provisioned resource and a configured effect adapter. It is intended for local testing only; do not expose the Compose stack publicly or use production credentials. See [the gateway demo guide](../docs/GATEWAY_DEMO.md) for setup requirements, response semantics and security boundaries.
+
 ## Test and lint
 
 From this directory:
@@ -141,17 +147,3 @@ PostgreSQL integration tests need both `PACA_TEST_DATABASE_URL` (restricted runt
 - Passing CI is not a penetration test, formal proof, independent audit, external benchmark, standards-compliance claim, or proof of research novelty.
 
 See [THREAT_MODEL.md](THREAT_MODEL.md) for trust boundaries and deployment gates.
-
-
-## Independent audit retention exporter
-
-The production PostgreSQL audit table is tenant-scoped and append-only for the PACA runtime role. For retention outside that database's administrative boundary, an optional exporter is available:
-
-- Apply `paca_service/audit_export.sql` as the trusted database migration administrator. It creates a separate `paca_audit_exporter` role with read-only access to `audit_events` and write-only delivery-state permissions in the separate `paca_audit.exported_events` schema. It does not grant access to permits, executions, protected resources or the private signing-key schema.
-- Install with `pip install -e ".[audit-export]"` and run `paca-audit-export` using a login role that can `SET ROLE paca_audit_exporter`.
-- Configure an S3 bucket owned by a different AWS account or independently administered security boundary. Create it with Object Lock enabled and versioning enabled. Supply a customer-managed KMS key and configure the exporter to write objects with per-object COMPLIANCE retention.
-- Required settings: `PACA_AUDIT_EXPORT_DATABASE_URL`, `PACA_AUDIT_S3_BUCKET`, `PACA_AUDIT_S3_KMS_KEY_ID`, `PACA_AUDIT_RETENTION_DAYS` and `AWS_REGION`. Optional settings: `PACA_AUDIT_S3_PREFIX`, `PACA_AUDIT_EXPORT_BATCH_SIZE`, `PACA_AUDIT_EXPORT_POLL_SECONDS`.
-
-The exporter is at-least-once. Each event has a deterministic object key and canonical JSON SHA-256 digest. If the process stops after the S3 write but before the local delivery checkpoint, the next run validates the existing object's checksum, COMPLIANCE lock mode and retention before recording delivery. It does not delete or update source audit rows and it does not advance a numeric high-water cursor.
-
-The AWS bucket, KMS key, account boundary, IAM policy, retention period, lifecycle rules and monitoring must be created and administered outside this repository. The exporter role must not be allowed to delete S3 objects or versions, bypass Object Lock retention, alter bucket policy, or administer the KMS key. The identity used by the exporter needs the S3 permissions required to verify bucket Lock/versioning, read object retention, put retained objects, and use the configured KMS key. This code does not create the customer's AWS resources, and a CI mock-S3 test does not prove that a live external bucket is independently controlled or compliant.
