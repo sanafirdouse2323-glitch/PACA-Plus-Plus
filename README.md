@@ -41,7 +41,7 @@ Instead of letting an agent call an external API directly, PACA++ uses a two-ste
 This repository contains several components developed across our research:
 
 * **`production_service/` (The Core Gateway):**  
-  The main deployable FastAPI service. It handles RS256 JWT authentication, calls OPA for Rego policy decisions, enforces PostgreSQL Row-Level Security (RLS) using HMAC session tokens, and records audit logs.
+  The main deployable FastAPI service. It handles RS256 JWT authentication, calls OPA for Rego policy decisions, enforces PostgreSQL Row-Level Security (RLS) using HMAC session tokens, and records audit logs. Includes RFC 9449 DPoP sender-constrained token validation, W3C distributed tracing context propagation (`traceparent`), and isolated container network configurations (`compose.sandbox.yaml`).
 * **`agent/` (AI Agent Integration):**  
   A Python client and reference adapter for **LangGraph** (`StateGraph` / `ToolNode`). When registered, the agent's tools automatically route through PACA++ before running.
 * **`prototype/` (Research Prototype):**  
@@ -61,6 +61,21 @@ We have two separate repositories under the PACA++ research project:
 The two projects complement each other: one protects the outer network/API boundary, while the other monitors the inner agent data flow.
 
 ---
+
+---
+
+## Enterprise Hardening & Isolation Controls
+
+Beyond basic API gateway routing, deploying an authorization proxy for autonomous agents in enterprise environments requires defending against agent compromise, token theft, and network bypass:
+
+1. **Agent Network Egress Isolation (`production_service/compose.sandbox.yaml` & `docs/AGENT_NETWORK_ISOLATION.md`)**:
+   If an LLM agent has unrestricted network access or raw shell capabilities, it can bypass local application adapters and talk to internal services directly. PACA++ specifies a strict network sandbox (`internal: true` bridge network) where agent containers have zero direct internet or intranet access; all outbound HTTP/tool traffic must traverse the PACA++ enforcement proxy.
+
+2. **Sender-Constrained Proofs via RFC 9449 DPoP (`production_service/paca_service/dpop.py`)**:
+   Bearer tokens present an exfiltration risk if logged or intercepted. PACA++ implements Demonstrating Proof-of-Possession (DPoP) at the HTTP layer, binding each access token to an ephemeral client RSA/EC key pair, verifying `jkt` thumbprints, HTTP method/URI signatures, and server-issued nonces to eliminate token replay attacks.
+
+3. **End-to-End W3C Distributed Tracing (`production_service/paca_service/telemetry.py`)**:
+   Every agent action request carries a standard W3C `traceparent` identifier. The gateway propagates this trace across the OPA policy check, PostgreSQL permit generation, and downstream tool execution, ensuring a verifiable causal audit trail from agent prompt reasoning to final database write.
 
 ## Running It Locally
 
