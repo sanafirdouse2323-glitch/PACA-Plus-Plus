@@ -1,56 +1,48 @@
-# PACA++: Policy Enforcement Gateway for AI Agents & Services
+# PACA++: Enterprise Policy Enforcement Gateway for Autonomous AI Agents
 
-PACA++ is an authorization gateway designed to stop AI agents and microservices from taking unauthorized or unintended actions.
-
-### The Problem It Solves
-When an autonomous AI agent decides to execute a tool—whether that's writing to a customer database, sending an email, or triggering an API payment—how do you know the action actually matches the authenticated user's permissions and hasn't been altered?
-
-Most agent guardrails today try to inspect prompt text to catch attacks. But if a clever prompt injection slips through, the model will still try to run the tool. 
-
-PACA++ takes a deterministic approach: it sits between the AI agent and your sensitive systems. Even if an agent's internal reasoning gets hijacked, it cannot touch a protected resource without passing strict, server-side policy checks.
+> **Enterprise Security Specifically Built for the AI Era.**  
+> An "Action Firewall" and continuous Policy Enforcement Point (PEP) that takes away ambient master API keys from autonomous LLMs and prevents unauthorized database writes, cross-tenant data leaks, and hijacked tool invocations.
 
 ---
 
-### Why It Is Effective: Deterministic Systems vs. Probabilistic Guardrails
+### Where It Fits: The Evolution of Enterprise Security
 
-Most industry agent guardrails attempt to filter prompts or classify model outputs using secondary LLMs or pattern matching. This approach is fundamentally probabilistic: an adaptive prompt injection or indirect document exploit can bypass the filter and still trigger the tool.
+To understand where PACA++ fits in your infrastructure, look at how enterprise security boundaries have evolved:
 
-PACA++ shifts security from the probabilistic AI layer down to the **operating system kernel, cryptographic signatures, and database engine**:
-
-```
-[ Probabilistic Guardrails (Fragile) ]
-User Prompt ──> [ Secondary LLM Filter ] ──> Direct Tool Execution
-                 ▲ Fails on adaptive prompt injection (~30%+ error rate)
-
-[ PACA++ Architecture (Deterministic Defense-in-Depth) ]
-User Prompt ──> [ Untrusted Agent ]
-                      │
-                      ▼ (Raw socket & direct egress blocked by OS Kernel / iptables)
-              [ PACA++ Gateway ]
-                      │ (Requires RFC 9449 DPoP + RS256 JWT)
-              [ Open Policy Agent (OPA) ]
-                      │ (Strict Default-Deny Rego Policy)
-              [ PostgreSQL Multi-Tenant RLS ]
-                      │ (HMAC-SHA256 Session Signature bound to PID & Transaction ID)
-                      ▼
-              [ Protected Downstream Tool / Database ]
-```
+1. **For Networks:** Firewalls & Zero-Trust (Palo Alto Networks, Cisco, Cloudflare)
+2. **For Humans:** Identity & Access Management / SSO (Okta, Microsoft Entra ID, Ping)
+3. **For Microservices:** API Gateways & Service Meshes (Kong, Apigee, Envoy, Istio)
+4. **For Autonomous AI Agents:** 👉 **PACA++ (Action Firewall & Policy Enforcement Point)**
 
 ---
 
-### What PACA++ Guarantees (The Threat Model)
+### The Problem Enterprises Have Right Now
 
-| Attack / Threat Vector | Without PACA++ | With PACA++ Gateway & Sandbox | Guarantee |
-| :--- | :--- | :--- | :---: |
-| **Direct Socket / Egress Bypass** | Agent opens raw TCP sockets to internal microservices or external C2. | **Kernel Egress Containment** (`compose.sandbox.yaml`): Agent container runs on an internal bridge with no default gateway; packets dropped by OS kernel. | **Deterministic (100%)** |
-| **TOCTOU Parameter Tampering** | Agent requests permission for a safe argument, then executes a destructive one. | **Canonical Digest Verification** (`security.py`): Re-hashes arguments with RFC 8785 canonical JSON; mismatches rejected with HTTP 409. | **Cryptographic (SHA-256)** |
-| **Bearer Token Exfiltration** | Token leaks into agent memory, prompt logs, or tool output and is replayed. | **RFC 9449 DPoP** (`paca_service/dpop.py`): Tokens bound to client key thumbprint (`jkt`) and server nonces; stolen tokens cannot be used elsewhere. | **Cryptographic (DPoP)** |
-| **Connection-Pool Tenant Leak** | Pooled PostgreSQL connection leaks another tenant's session state. | **HMAC Context Verification** (`schema.sql`): Context signed with HMAC-SHA256 binding `tenant_id`, `principal_id`, backend PID, and transaction ID. | **Cryptographic (HMAC)** |
-| **Network Timeout Double-Execution** | Agent loses connection during an action and blindly retries, double-charging. | **Atomic Idempotency State Machine** (`app.py`): Ambiguous outcomes marked `unknown` with HTTP 202 `retry_safe: False`; never auto-retries non-idempotent work. | **Durable State Guarantee** |
-| **Audit Trail Manipulation** | Injected agent attempts to delete or modify audit records. | **In-Database Trigger** (`schema.sql`): `audit_events_no_update` aborts any SQL `UPDATE` or `DELETE` transaction. | **Database Constraint** |
+Every major enterprise—in banking, healthcare, SaaS, and cloud infrastructure—is deploying **Autonomous AI Agents** (LangGraph, AutoGen, CrewAI, OpenAI Swarm) to automate operational workflows:
+* Agents that write to production SQL/NoSQL databases.
+* Agents that trigger invoice payments and wire transfers.
+* Agents that read and modify patient clinical records.
+* Agents that execute shell commands and modify cloud infrastructure.
 
-#### Realistic Operational Boundary:
-* **Infrastructure PEP vs. Cognitive Intent:** PACA++ enforces *access control* (whether Principal $X$ is allowed to perform Action $Y$ on Resource $Z$). If an agent is authorized to write to a resource and is tricked into writing low-quality text, PACA++ permits the write because the permission is valid. Preventing data laundering inside multi-turn reasoning is the exact role of our companion in-process monitor, [`PACA-Plus-Plus-New`](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus-New).
+#### The CISO's Nightmare: The Ambient Authority Trap
+Enterprise security teams currently cannot safely deploy these autonomous agents because of one critical architectural blindspot:
+
+> **Traditional IAM (Okta, OAuth, API keys) only checks if the agent is authenticated.**  
+> Once the agent is authenticated, it holds broad ambient authority. If an adversary tricks the agent with a hidden prompt injection embedded inside an email, a PDF invoice, or a web scrape, the agent uses its master keys to leak confidential data, execute unauthorized fund transfers, or drop database tables.
+
+---
+
+### Where PACA++ Fits in the Enterprise
+
+PACA++ acts as an **Action Firewall (PEP)** positioned strictly between the AI Agent runtime and your backend enterprise systems:
+
+* **Eliminates Master API Keys from AI Models:** The LLM agent never holds direct database credentials or high-privilege API tokens.
+* **Enforces Enterprise Policy-as-Code:** Central security teams define fine-grained rules in Open Policy Agent (OPA/Rego) completely decoupled from prompt engineering (e.g., *"No agent may modify records for Tenant B while handling a session for Tenant A"*).
+* **Guarantees Parameter Integrity with Two-Phase Permits:** The agent must request authorization first, obtain a temporary cryptographic permit, and prove arguments were not altered before execution occurs.
+* **Guarantees Database Multi-Tenancy:** Leverages PostgreSQL Row-Level Security (RLS) backed by HMAC-SHA-256 session signatures tied to backend PIDs and transaction IDs, mathematically preventing cross-tenant leakage.
+* **Provides a Tamper-Proof Audit Trail for Compliance:** Generates durable, append-only audit ledgers required for **SOC 2, ISO 27001, HIPAA, and NIST Zero-Trust (SP 800-207)** compliance audits.
+
+> **Comprehensive Security Audit Available:** For an exhaustive, sentence-by-sentence systems analysis conducted by a 20-year distributed systems and access control specialist, read [docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md).
 
 ---
 
