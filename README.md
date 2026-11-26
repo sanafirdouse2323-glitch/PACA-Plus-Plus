@@ -11,6 +11,49 @@ PACA++ takes a deterministic approach: it sits between the AI agent and your sen
 
 ---
 
+### Why It Is Effective: Deterministic Systems vs. Probabilistic Guardrails
+
+Most industry agent guardrails attempt to filter prompts or classify model outputs using secondary LLMs or pattern matching. This approach is fundamentally probabilistic: an adaptive prompt injection or indirect document exploit can bypass the filter and still trigger the tool.
+
+PACA++ shifts security from the probabilistic AI layer down to the **operating system kernel, cryptographic signatures, and database engine**:
+
+```
+[ Probabilistic Guardrails (Fragile) ]
+User Prompt ──> [ Secondary LLM Filter ] ──> Direct Tool Execution
+                 ▲ Fails on adaptive prompt injection (~30%+ error rate)
+
+[ PACA++ Architecture (Deterministic Defense-in-Depth) ]
+User Prompt ──> [ Untrusted Agent ]
+                      │
+                      ▼ (Raw socket & direct egress blocked by OS Kernel / iptables)
+              [ PACA++ Gateway ]
+                      │ (Requires RFC 9449 DPoP + RS256 JWT)
+              [ Open Policy Agent (OPA) ]
+                      │ (Strict Default-Deny Rego Policy)
+              [ PostgreSQL Multi-Tenant RLS ]
+                      │ (HMAC-SHA256 Session Signature bound to PID & Transaction ID)
+                      ▼
+              [ Protected Downstream Tool / Database ]
+```
+
+---
+
+### What PACA++ Guarantees (The Threat Model)
+
+| Attack / Threat Vector | Without PACA++ | With PACA++ Gateway & Sandbox | Guarantee |
+| :--- | :--- | :--- | :---: |
+| **Direct Socket / Egress Bypass** | Agent opens raw TCP sockets to internal microservices or external C2. | **Kernel Egress Containment** (`compose.sandbox.yaml`): Agent container runs on an internal bridge with no default gateway; packets dropped by OS kernel. | **Deterministic (100%)** |
+| **TOCTOU Parameter Tampering** | Agent requests permission for a safe argument, then executes a destructive one. | **Canonical Digest Verification** (`security.py`): Re-hashes arguments with RFC 8785 canonical JSON; mismatches rejected with HTTP 409. | **Cryptographic (SHA-256)** |
+| **Bearer Token Exfiltration** | Token leaks into agent memory, prompt logs, or tool output and is replayed. | **RFC 9449 DPoP** (`paca_service/dpop.py`): Tokens bound to client key thumbprint (`jkt`) and server nonces; stolen tokens cannot be used elsewhere. | **Cryptographic (DPoP)** |
+| **Connection-Pool Tenant Leak** | Pooled PostgreSQL connection leaks another tenant's session state. | **HMAC Context Verification** (`schema.sql`): Context signed with HMAC-SHA256 binding `tenant_id`, `principal_id`, backend PID, and transaction ID. | **Cryptographic (HMAC)** |
+| **Network Timeout Double-Execution** | Agent loses connection during an action and blindly retries, double-charging. | **Atomic Idempotency State Machine** (`app.py`): Ambiguous outcomes marked `unknown` with HTTP 202 `retry_safe: False`; never auto-retries non-idempotent work. | **Durable State Guarantee** |
+| **Audit Trail Manipulation** | Injected agent attempts to delete or modify audit records. | **In-Database Trigger** (`schema.sql`): `audit_events_no_update` aborts any SQL `UPDATE` or `DELETE` transaction. | **Database Constraint** |
+
+#### Realistic Operational Boundary:
+* **Infrastructure PEP vs. Cognitive Intent:** PACA++ enforces *access control* (whether Principal $X$ is allowed to perform Action $Y$ on Resource $Z$). If an agent is authorized to write to a resource and is tricked into writing low-quality text, PACA++ permits the write because the permission is valid. Preventing data laundering inside multi-turn reasoning is the exact role of our companion in-process monitor, [`PACA-Plus-Plus-New`](https://github.com/sanafirdouse2323-glitch/PACA-Plus-Plus-New).
+
+---
+
 ## How It Works (The Two-Phase Check)
 
 Instead of letting an agent call an external API directly, PACA++ uses a two-step handshake:
