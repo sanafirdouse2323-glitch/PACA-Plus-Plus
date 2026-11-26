@@ -1,0 +1,93 @@
+# PACA++ Sandbox Deployment Profile with Egress Containment
+# Enforces strict network isolation on the agent runtime container.
+
+services:
+  agent-runtime:
+    build:
+      context: ..
+      dockerfile: agent/Dockerfile
+    restart: unless-stopped
+    environment:
+      PACA_BASE_URL: http://paca-gateway:8000
+      PYTHONUNBUFFERED: "1"
+    networks:
+      - agent-isolated
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  paca-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      PACA_PORT: 8000
+      PACA_DATABASE_URL: postgresql://paca_runtime:${PACA_RUNTIME_PASSWORD}@database:5432/paca
+      PACA_OPA_URL: http://opa:8181/v1/data/paca/authz
+      PACA_OIDC_ISSUER: ${PACA_OIDC_ISSUER}
+      PACA_OIDC_AUDIENCE: ${PACA_OIDC_AUDIENCE}
+      PACA_OIDC_JWKS_URL: ${PACA_OIDC_JWKS_URL}
+      PACA_TENANT_CONTEXT_HMAC_KEY: ${PACA_TENANT_CONTEXT_HMAC_KEY}
+    networks:
+      - agent-isolated
+      - control-plane
+      - external-egress
+    depends_on:
+      database:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
+
+  database:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: paca
+      POSTGRES_USER: paca
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PACA_RUNTIME_PASSWORD: ${PACA_RUNTIME_PASSWORD}
+      PACA_TENANT_CONTEXT_HMAC_KEY: ${PACA_TENANT_CONTEXT_HMAC_KEY}
+    volumes:
+      - paca-db:/var/lib/postgresql/data
+      - ./db-init/000-runtime-role.sh:/docker-entrypoint-initdb.d/000-runtime-role.sh:ro
+      - ./paca_service/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+      - ./paca_service/runtime_grants.sql:/docker-entrypoint-initdb.d/002-runtime-grants.sql:ro
+      - ./db-init/003-tenant-context-key.sh:/docker-entrypoint-initdb.d/003-tenant-context-key.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paca -d paca"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - control-plane
+
+  opa:
+    image: openpolicyagent/opa:1.21.3
+    restart: unless-stopped
+    command:
+      - "run"
+      - "--server"
+      - "--addr=0.0.0.0:8181"
+      - "/policies"
+    volumes:
+      - ./opa/policies:/policies:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8181/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - control-plane
+
+networks:
+  agent-isolated:
+    internal: true # Disables default gateway; no internet access for agent
+  control-plane:
+    internal: true # Isolates DB and OPA from external traffic
+  external-egress:
+    driver: bridge # Only PACA gateway can reach upstream target APIs
+
+volumes:
+  paca-db:
